@@ -2,9 +2,10 @@
 //!
 //! Wire and permutation polynomials are blinded with random multiples of the vanishing polynomial
 //! (b1..b9 of the paper) and the quotient parts with b10, b11, so a proof reveals nothing about the
-//! assignment. The quotient is computed on a coset of size 4n.
+//! assignment. The quotient is computed on a coset of size 4n, walked as four cosets of the domain so
+//! that no array of the prover or of its key is larger than the quotient itself.
 
-use super::keys::{commit, coset4, domain, ProvingKey};
+use super::keys::{commit, coset4, domain, quarter, ProvingKey};
 use super::{transcript, Proof};
 use ark_bn254::Fr;
 use ark_ff::{batch_inversion, Field, One, UniformRand, Zero};
@@ -55,7 +56,6 @@ pub fn prove(pk: &ProvingKey, values: &[Fr], rng: &mut impl RngCore) -> Result<P
     }
     let vk = &pk.vk;
     let dom = domain(n);
-    let dom4 = coset4(n);
     let (k1, k2) = (vk.k1, vk.k2);
     let omega = dom.group_gen();
     let srs = &pk.srs_g1;
@@ -97,40 +97,60 @@ pub fn prove(pk: &ProvingKey, values: &[Fr], rng: &mut impl RngCore) -> Result<P
     // ── round 3: quotient polynomial ──
     let alpha = transcript::alpha(&beta, &gamma, &cm_z);
     let alpha2 = alpha.square();
-    let w4: [Vec<Fr>; 3] = std::array::from_fn(|j| dom4.fft(&pw[j]));
-    let z4 = dom4.fft(&pz);
     let mut pi_h = vec![Fr::zero(); n];
     for (i, x) in publics.iter().enumerate() {
         pi_h[i] = -*x;
     }
-    let pi4 = dom4.fft(&dom.ifft(&pi_h));
-    let xs: Vec<Fr> = dom4.elements().collect();
-    // Z_H takes four values on the coset
-    let zh: [Fr; 4] = std::array::from_fn(|i| xs[i].pow([n as u64]) - Fr::one());
-    let zh_inv: [Fr; 4] = std::array::from_fn(|i| zh[i].inverse().expect("coset outside the domain"));
-    // L1(x) = (x^n − 1) / (n·(x − 1))
+    let p_pi = dom.ifft(&pi_h);
+    drop(pi_h);
     let n_fr = Fr::from(n as u64);
-    let mut l1_den: Vec<Fr> = xs.iter().map(|x| n_fr * (*x - Fr::one())).collect();
-    batch_inversion(&mut l1_den);
-
-    let [ql4, qr4, qo4, qm4, qc4] = &pk.q4;
-    let [s1_4, s2_4, s3_4] = &pk.sigma4;
+    let [ql, qr, qo, qm, qc] = &pk.q;
     let m = 4 * n;
-    let quotient_at = |i: usize| -> Fr {
-        let (a, bb, c, zz, zw) = (w4[0][i], w4[1][i], w4[2][i], z4[i], z4[(i + 4) % m]);
-        let gate = a * bb * qm4[i] + a * ql4[i] + bb * qr4[i] + c * qo4[i] + qc4[i] + pi4[i];
-        let bx = beta * xs[i];
-        let p1 = (a + bx + gamma) * (bb + bx * k1 + gamma) * (c + bx * k2 + gamma) * zz;
-        let p2 = (a + beta * s1_4[i] + gamma) * (bb + beta * s2_4[i] + gamma) * (c + beta * s3_4[i] + gamma) * zw;
-        let l1 = zh[i % 4] * l1_den[i];
-        (gate + alpha * (p1 - p2) + alpha2 * (zz - Fr::one()) * l1) * zh_inv[i % 4]
-    };
-    #[cfg(feature = "parallel")]
-    let t4: Vec<Fr> = (0..m).into_par_iter().map(quotient_at).collect();
-    #[cfg(not(feature = "parallel"))]
-    let t4: Vec<Fr> = (0..m).map(quotient_at).collect();
-    drop((w4, z4, pi4, xs, l1_den));
-    let pt = dom4.ifft(&t4);
+    let mut t4 = vec![Fr::zero(); m];
+    for j in 0..4 {
+        // the coset shift·H: on it Z_H is the constant shift^n − 1, and a polynomial of degree ≥ n
+        // folds onto n coefficients (x^(n+k) = shift^n·x^k)
+        let coset = quarter(n, j);
+        let shift_n = coset.coset_offset().pow([n as u64]);
+        let on_coset = |p: &[Fr]| -> Vec<Fr> {
+            if p.len() <= n {
+                return coset.fft(p);
+            }
+            let mut folded = p[..n].to_vec();
+            for (k, c) in p[n..].iter().enumerate() {
+                folded[k] += shift_n * c;
+            }
+            coset.fft(&folded)
+        };
+        let (a, b_, c, z) = (on_coset(&pw[0]), on_coset(&pw[1]), on_coset(&pw[2]), on_coset(&pz));
+        let (e_ql, e_qr, e_qo, e_qm, e_qc) = (on_coset(ql), on_coset(qr), on_coset(qo), on_coset(qm), on_coset(qc));
+        let (s1, s2, s3) = (on_coset(&pk.sigma[0]), on_coset(&pk.sigma[1]), on_coset(&pk.sigma[2]));
+        let pi = on_coset(&p_pi);
+        let xs: Vec<Fr> = coset.elements().collect();
+        let zh = shift_n - Fr::one();
+        let zh_inv = zh.inverse().expect("coset outside the domain");
+        // L1(x) = (x^n − 1) / (n·(x − 1))
+        let mut l1_den: Vec<Fr> = xs.iter().map(|x| n_fr * (*x - Fr::one())).collect();
+        batch_inversion(&mut l1_den);
+
+        let quotient_at = |i: usize| -> Fr {
+            let (va, vb, vc, vz, vzw) = (a[i], b_[i], c[i], z[i], z[(i + 1) % n]);
+            let gate = va * vb * e_qm[i] + va * e_ql[i] + vb * e_qr[i] + vc * e_qo[i] + e_qc[i] + pi[i];
+            let bx = beta * xs[i];
+            let p1 = (va + bx + gamma) * (vb + bx * k1 + gamma) * (vc + bx * k2 + gamma) * vz;
+            let p2 = (va + beta * s1[i] + gamma) * (vb + beta * s2[i] + gamma) * (vc + beta * s3[i] + gamma) * vzw;
+            (gate + alpha * (p1 - p2) + alpha2 * (vz - Fr::one()) * zh * l1_den[i]) * zh_inv
+        };
+        #[cfg(feature = "parallel")]
+        let part: Vec<Fr> = (0..n).into_par_iter().map(quotient_at).collect();
+        #[cfg(not(feature = "parallel"))]
+        let part: Vec<Fr> = (0..n).map(quotient_at).collect();
+        for (i, v) in part.into_iter().enumerate() {
+            t4[4 * i + j] = v;
+        }
+    }
+    drop(p_pi);
+    let pt = coset4(n).ifft(&t4);
     drop(t4);
     if pt[3 * n + 6..].iter().any(|c| !c.is_zero()) {
         return Err("the assignment does not satisfy the circuit".into());
@@ -169,7 +189,6 @@ pub fn prove(pk: &ProvingKey, values: &[Fr], rng: &mut impl RngCore) -> Result<P
     let r0 = pi - l1 * alpha2 - alpha * sa * sb * (eval_c + gamma) * eval_zw;
 
     // linearisation r(X) plus the batched wire and permutation openings at ξ
-    let [ql, qr, qo, qm, qc] = &pk.q;
     let (v2, v3, v4, v5) = (v * v, v * v * v, v.square().square(), v.square().square() * v);
     let mut r = vec![Fr::zero(); n + 6];
     let eab = eval_a * eval_b;

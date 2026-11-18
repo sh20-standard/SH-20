@@ -4,18 +4,37 @@
 //!
 //!   sh20_alloc(len) → ptr            sh20_free(ptr, len)
 //!   sh20_verify(vk, vk_len, publics, proof, proof_len) → 1 valid | 0 invalid | −1 malformed key or inputs
+//!   sh20_load_key(pk, pk_len) → key handle (0 on error)        the shipped proving key, digest checked
 //!   sh20_keygen(srs, srs_len) → key handle (0 on error)        sh20_key_free(handle)
 //!   sh20_vk(handle, out[712])        sh20_vk_digest(handle, out[32])
 //!   sh20_prove(handle, witness[3232], seed[32], out[480]) → 1 proved | 0 witness rejected
 //!   sh20_sample_witness(seed[32], out[3232])                    (benchmarks)
+//!   sh20_threads(n) → threads in use                            starts the thread pool (threaded build only)
 //!
 //! `publics` is nine 32-byte little-endian field elements in verifier order; the witness layout is
 //! `SpendWitness::to_bytes`.
 
 use crate::model::{SpendWitness, WITNESS_BYTES};
 use crate::plonk::{self, keys::VK_BYTES, ProvingKey, Srs, VerifyingKey, PROOF_BYTES};
-use crate::{fixture, keygen, prove, verify, Fr, N_PUBLIC};
+use crate::{fixture, keygen, load_key, prove, verify, Fr, N_PUBLIC};
 use ark_std::rand::{rngs::StdRng, SeedableRng};
+
+/// Starts the prover's thread pool with `n` threads and returns the number of threads in use.
+/// Without the `parallel` feature there is one thread and this does nothing.
+#[no_mangle]
+pub extern "C" fn sh20_threads(n: usize) -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        // an error means the pool already exists: its size is what counts
+        let _ = rayon::ThreadPoolBuilder::new().num_threads(n.max(1)).build_global();
+        rayon::current_num_threads()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = n;
+        1
+    }
+}
 
 unsafe fn bytes<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
     std::slice::from_raw_parts(ptr, len)
@@ -49,6 +68,16 @@ pub unsafe extern "C" fn sh20_verify(vk: *const u8, vk_len: usize, publics: *con
         }
     }
     verify(&vk, &inputs, bytes(proof, proof_len)) as i32
+}
+
+/// # Safety
+/// `pk` is valid for `pk_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn sh20_load_key(pk: *const u8, pk_len: usize) -> *mut ProvingKey {
+    match load_key(bytes(pk, pk_len)) {
+        Ok(pk) => Box::into_raw(Box::new(pk)),
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
 /// # Safety

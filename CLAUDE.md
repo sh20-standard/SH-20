@@ -38,6 +38,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` (for the vault and relayers) |
 | `circuit/` | the spend circuit: PLONK prover and verifier in Rust, WebAssembly build, measurements ([`circuit/README.md`](circuit/README.md)) |
 | `circuit/circom/` | the same relation in circom, used only to cross-check the Rust circuit |
+| `circuit/web/` | the phone test page, and the host side of the threaded WebAssembly prover |
 
 ```sh
 cd indexer
@@ -46,8 +47,10 @@ npm run vectors     # regenerate the vectors (must be byte-identical across runs
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
 cd circuit
-cargo test --release    # 16 tests; uses build/hermez-pot18-2p17.srs when present (see circuit/README.md)
-./build-wasm.sh         # prover and verifier as one WebAssembly module, no imports
+cargo test --release    # 18 tests, with the shipped proving key (artifacts/spend.pk)
+./build-wasm.sh         # two WebAssembly builds: one thread with no imports, and a thread pool over Web Workers
+bench/cross-check.sh    # snarkjs against our verifier, both ways (hard requirement 4)
+web/build.sh            # the phone test page, in web/dist/ (see circuit/web/README.md)
 ```
 
 ## Status (draft v0.2)
@@ -70,34 +73,42 @@ Done in `circuit/` (2026-11-18):
   and snarkjs' own PLONK prover (73–80 s) were measured and set aside. Table and method: `circuit/README.md`.
 - The relation of `docs/SPEC-WIRE.md` §4 as 86,232 PLONK gates (domain 2^17), with its reference model, a prover, a verifier,
   deterministic key generation and the pinned digest `da847145…a302492d`.
-- Measured on an M1 Pro laptop: proving 1.6 s (10 threads), 8.6 s (1 thread), 22 s as single-thread WebAssembly in Node;
-  verification 1.5 ms; TRANSFER reveal transaction 340 vB.
-- Checks: 26 adversarial witnesses, every variable pinned by a gate, snarkjs' verifier accepts the proofs,
-  circomlib's statement of the relation accepts the witnesses.
+- Measured on an M1 Pro laptop: proving 1.8 s (10 threads), 9.6 s (1 thread); as WebAssembly 25 s on one thread,
+  7.2 s on 4 threads, 4.4 s on 10; verification 1.5 ms; TRANSFER reveal transaction 340 vB.
+- The proving key is shipped (`circuit/artifacts/spend.pk`, 8.4 MB, pinned by SHA-256): it loads in 1.4 s in WebAssembly
+  instead of 19.5 s of key generation, and a test checks that key generation reproduces it byte for byte.
+- Two WebAssembly builds: one thread with no imports (the indexer's verifier, and the fallback), and a thread pool over Web
+  Workers on a shared memory. Prover memory: 224 MB.
+- A test page for phones (`circuit/web/`): threaded where the page is cross-origin isolated (by headers, or by its service
+  worker), one thread otherwise. Checked in headless Chrome for each case.
+- Checks: 26 adversarial witnesses, every variable pinned by a gate, circomlib's statement of the relation accepts the
+  witnesses, and snarkjs both ways: its verifier accepts our proofs, our verifier accepts its proofs (`bench/cross-check.sh`).
 
-Not done: an audit; proving on a real phone and in a browser, WebAssembly threads, the memory peak (425 MB); the `ct` sealing
+Not done: an audit; the figures on a real phone (the page exists, nobody has run it on one yet); the `ct` sealing
 format; a live chain follower (Bitcoin Core RPC / Esplora); the browser vault; a relayer; a second independent indexer; the
 profile constants (activation height, `D`); the canonical event encoding inside the digest.
 
-## Next task: the circuit on a phone
+## Next task: the phone figures, then the vault
 
-The relation, the proof system and the verifier exist. What decides whether they are usable is still open:
+The relation, the proof system, the verifier and a prover that runs in a browser exist. What is still unknown is how long a
+real phone takes.
 
-1. **Measure on real devices.** Load `sh20_circuit.wasm` in a browser page (keys: `sh20_keygen`, then `sh20_prove`; the ABI is
-   in `circuit/src/ffi.rs`) on a recent phone and a mid-range one. Add a threaded build (rayon over Web Workers, needs
-   cross-origin isolation). Laptop figures are not phone figures.
-2. **Memory.** The module peaks at 425 MB. Compute the quotient in four cosets of size n and the selector evaluations on the
-   fly; the target is about 150 MB.
+1. **Get the page run on phones.** `circuit/web/README.md` says how to serve it and what to send back. Record the results in
+   `circuit/README.md` next to the laptop figures: at least a recent phone and a mid-range one, on all cores and on one thread.
+   Laptop figures are not phone figures.
+2. **Act on them.** If memory fails (the prover needs about 230 MB), hold less: the wire evaluations and the key file are
+   kept longer than needed. If time is the problem, see 3.
 3. **Fewer gates.** A 2^16 domain (65,536 gates) would halve the proving time. Sparse Poseidon partial rounds, 2-bit windows
    for fixed-base multiplication and bitwise comparisons against constants are estimated to reach about 66,600 gates: still
    above the limit, and the three outputs stay (maintainer, 2026-11-18). Find the last thousand gates without changing a rule,
    or leave the domain at 2^17.
-4. **Keep it honest.** Any change to the gates changes the verifying-key digest: update `circuit/src/lib.rs` (`VK_DIGEST`),
-   `circuit/artifacts/spend.vk`, `indexer/src/constants.js`, `docs/SPEC-WIRE.md` §4 and regenerate
-   `indexer/test/fixtures/plonk-scenario.json` (`sh20-circuit scenario`). The circom relation must keep accepting the Rust
-   witnesses (`circuit/bench/circom-check.mjs`) and snarkjs' verifier the proofs (`circuit/bench/cross-verify.mjs`).
+4. **Keep it honest.** Any change to the gates changes the keys: rebuild `circuit/artifacts/spend.pk` and `spend.vk`
+   (`sh20-circuit pk`, `keygen`), update `VK_DIGEST` and `PK_SHA256` in `circuit/src/lib.rs`, `indexer/src/constants.js`,
+   `docs/SPEC-WIRE.md` §4, and regenerate `indexer/test/fixtures/plonk-scenario.json` (`sh20-circuit scenario`).
+   Then run `circuit/bench/cross-check.sh`: hard requirement 4 says the verifier stays cross-checked against snarkjs.
 5. The soundness-critical code is `circuit/src/gadgets.rs`, `circuit/src/spend.rs` and `circuit/src/plonk/verifier.rs`.
    It is new and unaudited. Do not weaken a check to save gates without the maintainer.
+6. The vault embeds the prover the way the test page does: `circuit/web/host.js` and the two workers.
 
 Where the relation comes from: Tacit's Bitcoin shielded pool (MIT, `https://github.com/z0r0z/tacit`),
 `dapp/circuits/btc-pool/spend.circom` and `contracts/sp1/confidential/btc-pool-halo2/`. SH-20 changed the ticker to a private `t`
