@@ -55,6 +55,17 @@ export class Indexer {
     this.digest = sha256(Buffer.from(DOMAIN.DIGEST, 'utf8'));
     this.frames = [];
     this._ops = null;
+    // One entry per tree leaf, in tree order: what a wallet needs to find its notes.
+    // Not part of the digest; it is derived from the same accepted envelopes.
+    this.notes = [];
+    this._ctx = { height: null, txid: null };
+  }
+
+  /** Appends a leaf to the tree and records its metadata for wallets. */
+  _append(leaf, meta) {
+    const pos = this.tree.append(leaf);
+    this.notes.push({ pos, height: this._ctx.height, txid: this._ctx.txid, leaf: hexFr(leaf), ...meta });
+    return pos;
   }
 
   // ---- undo log -----------------------------------------------------------
@@ -83,10 +94,11 @@ export class Indexer {
     const events = [];
     const rejected = [];
 
+    this._ctx = { height: block.height, txid: null };
     if (block.height >= this.profile.activationHeight) {
       const unlocks = (this.teamQueue.get(block.height) || []).slice().sort((a, b) => a.tokenNum - b.tokenNum);
       for (const u of unlocks) {
-        const pos = this.tree.append(noteLeaf(u.tokenNum, u.v, u.npk, u.rho));
+        const pos = this._append(noteLeaf(u.tokenNum, u.v, u.npk, u.rho), { kind: 'TEAM', t: u.tokenNum, v: u.v, npk: hexFr(u.npk), rho: hexFr(u.rho) });
         events.push({ type: 'TEAM_UNLOCK', tokenNum: u.tokenNum, v: u.v, pos });
       }
       for (const tx of block.txs) this._applyTx(tx, block.height, events, rejected);
@@ -104,8 +116,22 @@ export class Indexer {
     return { height: block.height, root: this.tree.root, digest: this.digest.toString('hex'), events, rejected };
   }
 
+  /** Forgets undo data older than `depth` blocks; deeper reorgs then throw. */
+  pruneFrames(depth) {
+    const keepFrom = this.frames.length - depth;
+    if (keepFrom > 0) this.frames.splice(0, keepFrom);
+  }
+
+  /** Lowest height `rollback` can reach (one below the oldest kept frame). */
+  get rollbackFloor() {
+    return this.frames.length ? this.frames[0].height - 1 : this.height;
+  }
+
   /** Undoes every block above `height` (reorg). */
   rollback(height) {
+    if (this.height !== null && height < this.rollbackFloor) {
+      throw new Error(`reorg below ${this.rollbackFloor} is deeper than the kept undo history`);
+    }
     while (this.frames.length && this.frames[this.frames.length - 1].height > height) {
       const f = this.frames.pop();
       for (let i = f.ops.length - 1; i >= 0; i--) {
@@ -118,15 +144,16 @@ export class Indexer {
         }
       }
       this.tree.restore(f.tree);
+      this.notes.length = this.tree.size;
       this.digest = f.digest;
       this.height = f.height - 1;
     }
-    if (this.frames.length === 0 && this.height !== null && this.height > height) this.height = null;
   }
 
   // ---- transactions -------------------------------------------------------
 
   _applyTx(tx, H, events, rejected) {
+    this._ctx = { height: H, txid: tx.txid };
     const spentLocks = [];
     for (const input of tx.vin) {
       if (input.coinbase) continue;
@@ -216,12 +243,14 @@ export class Indexer {
       root, nullifiers: [n0, n1], outLeaves, bodyHash, vPub, tPub, proof: spend.proof,
     });
     if (!ok) throw new Reject('invalid proof');
-    return { nf: [n0, n1], outLeaves };
+    return { nf: [n0, n1], outs: spend.outs };
   }
 
-  _commitSpend({ nf, outLeaves }) {
+  _commitSpend({ nf, outs }) {
     for (const x of nf) this._add(this.nullifiers, hexFr(x));
-    const positions = outLeaves.map((leaf) => this.tree.append(leaf));
+    const positions = outs.map((o, j) =>
+      this._append(o.leaf, { kind: 'OUT', j, pkEph: o.pkEph.toString('hex'), ct: o.ct.toString('hex') }),
+    );
     return { nullifiers: nf.map(hexFr), positions };
   }
 
@@ -271,7 +300,7 @@ export class Indexer {
     if (t.mints >= (t.max - t.pre) / t.lim) throw new Reject('sold out');
     if (!this._paid(tx, t.payMode, t.price, Buffer.from(t.payScript, 'hex'))) throw new Reject('mint not paid');
     this._roomFor(1);
-    const pos = this.tree.append(noteLeaf(t.tokenNum, t.lim, env.npk, env.rho));
+    const pos = this._append(noteLeaf(t.tokenNum, t.lim, env.npk, env.rho), { kind: 'MINT', t: t.tokenNum, v: t.lim, npk: hexFr(env.npk), rho: hexFr(env.rho) });
     this._set(this.tokens, t.tokenNum, { ...t, mints: t.mints + 1n });
     return { type: 'MINT', tokenNum: t.tokenNum, v: t.lim, pos };
   }
@@ -310,7 +339,7 @@ export class Indexer {
     const l = this.listings.get(id);
     this._roomFor(1);
     const sold = this._paid(tx, PAY_MODE.PAY, l.price, Buffer.from(l.payScript, 'hex'));
-    const pos = this.tree.append(noteLeaf(l.tokenNum, l.amount, env.npk, env.rho));
+    const pos = this._append(noteLeaf(l.tokenNum, l.amount, env.npk, env.rho), { kind: 'TAKE', t: l.tokenNum, v: l.amount, npk: hexFr(env.npk), rho: hexFr(env.rho) });
     this._set(this.listings, id, { ...l, state: sold ? 'SOLD' : 'CANCELLED', takeTxid: tx.txid });
     return { type: 'TAKE', listTxid: id, outcome: sold ? 'SOLD' : 'CANCELLED', pos };
   }
@@ -322,7 +351,7 @@ export class Indexer {
     const msg = sha256(Buffer.from(DOMAIN.CLAIM, 'utf8'), Buffer.from(env.listTxid, 'hex'), frToBytes(env.npk), frToBytes(env.rho));
     if (!schnorrVerify(Buffer.from(l.lockKey, 'hex'), msg, env.sig)) throw new Reject('bad CLAIM signature');
     this._roomFor(1);
-    const pos = this.tree.append(noteLeaf(l.tokenNum, l.amount, env.npk, env.rho));
+    const pos = this._append(noteLeaf(l.tokenNum, l.amount, env.npk, env.rho), { kind: 'CLAIM', t: l.tokenNum, v: l.amount, npk: hexFr(env.npk), rho: hexFr(env.rho) });
     this._set(this.listings, l.listTxid, { ...l, state: 'CLAIMED' });
     return { type: 'CLAIM', listTxid: l.listTxid, pos };
   }
