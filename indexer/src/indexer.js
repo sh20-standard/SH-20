@@ -45,7 +45,7 @@ export class Indexer {
     this.tree = new NoteTree();
     this.emptyRoot = this.tree.root;
     this.tokens = new Map(); // ticker -> token record, in DEPLOY order
-    this.meta = new Map(); // 'genesis' -> ticker of the first accepted DEPLOY
+    this.meta = new Map(); // 'genesis' -> ticker of the genesis token (from the profile)
     this.nullifiers = new Set(); // hex
     this.roots = new Map(); // height -> root after that block
     this.listings = new Map(); // LIST txid -> listing
@@ -59,6 +59,11 @@ export class Indexer {
     // Not part of the digest; it is derived from the same accepted envelopes.
     this.notes = [];
     this._ctx = { height: null, txid: null };
+    // Per-block history for explorers: accepted events and rejected envelopes, and
+    // the block of every SH-20 transaction. Undone on reorgs; not part of the digest.
+    this.history = new Map(); // height -> { height, hash, digest, root, events, rejected }
+    this.txIndex = new Map(); // txid -> height
+    this.digests = new Map(); // height -> digest hex, every block: lets anyone compare indexers at one height
   }
 
   /** Appends a leaf to the tree and records its metadata for wallets. */
@@ -96,6 +101,7 @@ export class Indexer {
 
     this._ctx = { height: block.height, txid: null };
     if (block.height >= this.profile.activationHeight) {
+      if (!this.meta.has('genesis')) events.push(this._installGenesis(block.height));
       const unlocks = (this.teamQueue.get(block.height) || []).slice().sort((a, b) => (a.ticker < b.ticker ? -1 : a.ticker > b.ticker ? 1 : 0));
       for (const u of unlocks) {
         const pos = this._append(noteLeaf(tickerT(u.ticker), u.v, u.npk, u.rho), { kind: 'TEAM', ticker: u.ticker, v: u.v, npk: hexFr(u.npk), rho: hexFr(u.rho) });
@@ -109,6 +115,15 @@ export class Indexer {
     const h = Buffer.alloc(4);
     h.writeUInt32LE(block.height);
     this.digest = sha256(this.digest, h, frToBytes(this.tree.root), delta);
+
+    this._set(this.digests, block.height, this.digest.toString('hex'));
+    if (events.length || rejected.length) {
+      this._set(this.history, block.height, {
+        height: block.height, hash: block.hash ?? null, digest: this.digest.toString('hex'),
+        root: hexFr(this.tree.root), leaves: this.tree.size, events, rejected,
+      });
+      for (const e of [...events, ...rejected]) if (e.txid && !this.txIndex.has(e.txid)) this._set(this.txIndex, e.txid, block.height);
+    }
 
     this.frames.push(frame);
     this._ops = null;
@@ -212,7 +227,7 @@ export class Indexer {
     return t;
   }
 
-  /** Ticker of the genesis token (the first accepted DEPLOY), or undefined. */
+  /** Ticker of the genesis token (fixed by the profile), or undefined before activation. */
   get genesis() {
     return this.meta.get('genesis');
   }
@@ -259,6 +274,17 @@ export class Indexer {
     return { nullifiers: nf.map(hexFr), positions };
   }
 
+  /** Creates the genesis token from the profile, in the first block read (the activation block). */
+  _installGenesis(H) {
+    const g = this.profile.genesis;
+    this._set(this.meta, 'genesis', g.ticker);
+    this._set(this.tokens, g.ticker, {
+      ticker: g.ticker, t: tickerT(g.ticker), max: g.max, lim: g.lim, pre: 0n, start: H, end: 0, unlock: H, price: 0n,
+      payMode: PAY_MODE.NONE, payScript: '', mints: 0n, burned: 0n, deployTxid: null, deployHeight: H, genesis: true,
+    });
+    return { type: 'GENESIS', ticker: g.ticker };
+  }
+
   _deploy(env, body, tx, H) {
     if (this.tokens.has(env.ticker)) throw new Reject('ticker already deployed');
     const { max, lim, pre, start, end, unlock, price, payMode } = env;
@@ -271,21 +297,19 @@ export class Indexer {
     if (payMode === PAY_MODE.NONE && price !== 0n) throw new Reject('payMode 0 needs price 0');
     if (payMode !== PAY_MODE.NONE && price <= 0n) throw new Reject('price must be positive');
 
-    const genesis = this.tokens.size === 0;
+    const D = this.profile.deployBurn;
     let spent = null;
-    if (genesis) {
-      if (env.spend) throw new Reject('genesis DEPLOY carries no burn');
-    } else {
+    if (D > 0n) {
       if (!env.spend) throw new Reject('DEPLOY must burn genesis units');
-      spent = this._checkSpend(env.spend, body, this.profile.deployBurn, tickerT(this.genesis), H);
+      spent = this._checkSpend(env.spend, body, D, tickerT(this.genesis), H);
+    } else if (env.spend) {
+      throw new Reject('DEPLOY carries no burn when D = 0');
     }
 
     const commit = spent ? this._commitSpend(spent) : null;
     if (spent) {
       const g = this.tokens.get(this.genesis);
-      this._set(this.tokens, g.ticker, { ...g, burned: g.burned + this.profile.deployBurn });
-    } else {
-      this._set(this.meta, 'genesis', env.ticker);
+      this._set(this.tokens, g.ticker, { ...g, burned: g.burned + D });
     }
     this._set(this.tokens, env.ticker, {
       ticker: env.ticker, t: tickerT(env.ticker), max, lim, pre, start, end, unlock, price, payMode,

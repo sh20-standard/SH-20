@@ -1,11 +1,11 @@
 // Single-thread WebAssembly prover, the closest stand-in for a phone browser available on a laptop:
-//   node wasm-bench.mjs <sh20_circuit.wasm> <srs> [runs]
+//   node wasm-bench.mjs <sh20_circuit.wasm> <spend.pk> [runs]
 // The module has no imports: the host passes bytes in and reads bytes out.
 
 import fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
 
-const [wasmPath, srsPath, runsArg] = process.argv.slice(2);
+const [wasmPath, pkPath, runsArg] = process.argv.slice(2);
 const runs = Number(runsArg || 3);
 const { instance } = await WebAssembly.instantiate(fs.readFileSync(wasmPath), {});
 const x = instance.exports;
@@ -18,13 +18,13 @@ const put = (bytes) => {
 const take = (p, n) => Buffer.from(mem().slice(p, p + n));
 const secs = (t) => +((performance.now() - t) / 1000).toFixed(2);
 
-const srs = fs.readFileSync(srsPath);
+const key = fs.readFileSync(pkPath);
 let t = performance.now();
-const srsPtr = put(srs);
-const pk = x.sh20_keygen(srsPtr, srs.length);
-x.sh20_free(srsPtr, srs.length);
-if (!pk) throw new Error('keygen failed');
-const tKeygen = secs(t);
+const keyPtr = put(key);
+const pk = x.sh20_load_key(keyPtr, key.length);
+x.sh20_free(keyPtr, key.length);
+if (!pk) throw new Error('the proving key was refused');
+const tLoad = secs(t);
 
 const [vkPtr, digestPtr, witnessPtr, proofPtr] = [x.sh20_alloc(712), x.sh20_alloc(32), x.sh20_alloc(3232), x.sh20_alloc(480)];
 x.sh20_vk(pk, vkPtr);
@@ -52,8 +52,8 @@ console.log(
   JSON.stringify({
     system: 'plonk (Rust → wasm32, 1 thread)',
     wasm_bytes: fs.statSync(wasmPath).size,
-    srs_bytes: srs.length,
-    keygen_s: tKeygen,
+    key_bytes: key.length,
+    key_load_s: tLoad,
     prove_s: times,
     prove_min_s: sorted[0],
     prove_median_s: sorted[sorted.length >> 1],

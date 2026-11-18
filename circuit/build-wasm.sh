@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
-# Builds the WebAssembly module of the spend circuit: one thread, no imports, prover and verifier.
-#   target/wasm32-unknown-unknown/release/sh20_circuit.wasm
-# Needs the wasm32 target once: rustup target add wasm32-unknown-unknown
+# Builds the WebAssembly modules of the spend circuit (prover and verifier in each):
+#
+#   target/wasm32-unknown-unknown/release/sh20_circuit.wasm    one thread, no imports: runs anywhere,
+#                                                              and is what the indexer loads
+#   target/wasm32-wasip1-threads/release/sh20_circuit.wasm     a thread pool over Web Workers on a
+#                                                              shared memory (host side: web/host.js)
+#
+# Needs the targets once: rustup target add wasm32-unknown-unknown wasm32-wasip1-threads
 set -euo pipefail
 cd "$(dirname "$0")"
 cargo build --lib --release --target wasm32-unknown-unknown --no-default-features
-out=target/wasm32-unknown-unknown/release/sh20_circuit.wasm
-echo "$out: $(wc -c < "$out" | tr -d ' ') bytes, sha256 $(shasum -a 256 "$out" | cut -d' ' -f1)"
+cargo build --lib --release --target wasm32-wasip1-threads
+for out in target/wasm32-unknown-unknown/release/sh20_circuit.wasm target/wasm32-wasip1-threads/release/sh20_circuit.wasm; do
+  echo "$out: $(wc -c < "$out" | tr -d ' ') bytes, sha256 $(shasum -a 256 "$out" | cut -d' ' -f1)"
+done

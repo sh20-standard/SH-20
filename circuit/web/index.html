@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SH-20 prover test</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #17181c; --muted: #5d6068; --line: #dddbd3;
+    --accent: #b4530a; --accent-ink: #ffffff; --ok: #1d6f42; --bad: #a3231b; --code: #efeee8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121316; --card: #1b1d22; --ink: #ecebe6; --muted: #a1a4ad; --line: #2e3138;
+      --accent: #f0a04b; --accent-ink: #1a1206; --ok: #6fcf97; --bad: #ff8a80; --code: #23262c;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 42rem; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
+  h1 { font-size: 1.5rem; line-height: 1.2; margin: 0.5rem 0 0.25rem; letter-spacing: -0.01em; }
+  h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 0.6rem; font-weight: 600; }
+  p { margin: 0.4rem 0; }
+  .lede { color: var(--muted); margin-bottom: 1.25rem; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1rem; margin: 0.9rem 0; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 1rem; margin: 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .controls { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: end; margin-bottom: 0.9rem; }
+  label { display: grid; gap: 0.2rem; font-size: 0.85rem; color: var(--muted); }
+  select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 0.5rem 0.6rem; min-width: 5.5rem; }
+  .buttons { display: grid; gap: 0.6rem; }
+  button {
+    font: inherit; font-weight: 600; border-radius: 10px; padding: 0.85rem 1rem; min-height: 48px;
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); cursor: pointer;
+  }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  .note { font-size: 0.9rem; color: var(--muted); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  ol#log { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; font-variant-numeric: tabular-nums; }
+  ol#log li { display: flex; justify-content: space-between; gap: 1rem; border-bottom: 1px dashed var(--line); padding-bottom: 0.25rem; }
+  ol#log li:last-child { border-bottom: 0; }
+  ol#log li span:last-child:not(:first-child) { white-space: nowrap; }
+  ol#log li.error { color: var(--bad); display: block; }
+  .big { font-size: 2.25rem; font-weight: 700; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  pre { background: var(--code); border-radius: 8px; padding: 0.75rem; margin: 0.75rem 0; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>SH-20 prover test</h1>
+  <p class="lede">Proves an SH-20 spend on this device and times it. Nothing leaves the page: copy the result at the end and send it back.</p>
+
+  <section>
+    <h2>This device</h2>
+    <dl id="device"></dl>
+    <p class="note" id="isolation-note"></p>
+  </section>
+
+  <section>
+    <h2>Measure</h2>
+    <div class="controls">
+      <label>Proofs
+        <select id="runs"><option>1</option><option selected>3</option><option>5</option></select>
+      </label>
+      <label id="threads-label">Threads
+        <select id="threads"></select>
+      </label>
+    </div>
+    <div class="buttons">
+      <button id="run-threads">Measure on all cores</button>
+      <button id="run-single" class="secondary">Measure on one thread</button>
+    </div>
+    <p class="note">Keep the screen on and this tab in front. One proof takes from a few seconds to a minute.</p>
+  </section>
+
+  <section id="progress" hidden>
+    <h2>Progress</h2>
+    <ol id="log"></ol>
+  </section>
+
+  <section id="result" hidden>
+    <h2>Result</h2>
+    <p class="big" id="headline"></p>
+    <p class="note" id="summary"></p>
+    <pre id="json"></pre>
+    <div class="buttons"><button id="copy" class="secondary">Copy the result</button></div>
+  </section>
+</main>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

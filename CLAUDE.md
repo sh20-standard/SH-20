@@ -36,19 +36,24 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `indexer/` | reference indexer, Node ≥ 20, zero dependencies |
 | `indexer/vectors/v0.2.json` | deterministic vectors for a second implementation |
 | `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` (for the vault and relayers) |
+| `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
+| `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
 | `circuit/` | the spend circuit: PLONK prover and verifier in Rust, WebAssembly build, measurements ([`circuit/README.md`](circuit/README.md)) |
 | `circuit/js/` | what a wallet computes for a spend, in dependency-free JavaScript, checked against vectors written by the circuit's model (`cd circuit/js && npm test`) |
 | `circuit/circom/` | the same relation in circom, used only to cross-check the Rust circuit |
+| `circuit/web/` | the phone test page, and the host side of the threaded WebAssembly prover |
 
 ```sh
 cd indexer
-npm test            # 45 tests (4 need the verifier module below and are skipped without it)
+npm test            # 47 tests (4 need the verifier module below and are skipped without it)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
 cd circuit
-cargo test --release    # 16 tests; uses build/hermez-pot18-2p17.srs when present (see circuit/README.md)
-./build-wasm.sh         # prover and verifier as one WebAssembly module, no imports
+cargo test --release    # 21 tests, with the shipped proving key (artifacts/spend.pk)
+./build-wasm.sh         # two WebAssembly builds: one thread with no imports, and a thread pool over Web Workers
+bench/cross-check.sh    # snarkjs against our verifier, both ways (hard requirement 4)
+web/build.sh            # the phone test page, in web/dist/ (see circuit/web/README.md)
 ```
 
 ## Status (draft v0.2)
@@ -61,6 +66,7 @@ Done in `indexer/`:
 - State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest.
 - Poseidon over BN254 written from scratch for 2 to 5 inputs (constants generated with the Grain LFSR, checked against circomlibjs for every width; `poseidon2` is unchanged), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
 - Live chain follower (Bitcoin Core RPC or Esplora, reorgs with 288 blocks of undo) and a read-only HTTP API with a per-leaf note log for wallets (`docs/API.md`).
+- Explorer (`explorer/index.html`): a block explorer in one static page with no dependency; reads any indexer; demo data built from real indexer output.
 - Proof verification is an interface (`verifier.verifySpend`). **The default verifier still rejects every spend.**
   `src/adapters/plonk.js` is the real one: the WebAssembly build of `circuit/`, keyed by the pinned verifying-key digest.
   `test/plonk.test.js` replays a chain with a real TRANSFER and a real BURN. `bin/follow.js` and `bin/replay.js` take it with `--verifier <wasm>`; without the flag they reject every spend.
@@ -71,34 +77,48 @@ Done in `circuit/` (2026-11-18):
   and snarkjs' own PLONK prover (73–80 s) were measured and set aside. Table and method: `circuit/README.md`.
 - The relation of `docs/SPEC-WIRE.md` §4 as 86,232 PLONK gates (domain 2^17), with its reference model, a prover, a verifier,
   deterministic key generation and the pinned digest `da847145…a302492d`.
-- Measured on an M1 Pro laptop: proving 1.6 s (10 threads), 8.6 s (1 thread), 22 s as single-thread WebAssembly in Node;
-  verification 1.5 ms; TRANSFER reveal transaction 340 vB.
-- Checks: 26 adversarial witnesses, every variable pinned by a gate, snarkjs' verifier accepts the proofs,
-  circomlib's statement of the relation accepts the witnesses.
+- Measured on an M1 Pro laptop: proving 1.8 s (10 threads), 9.6 s (1 thread); as WebAssembly 25 s on one thread,
+  7.2 s on 4 threads, 4.4 s on 10; verification 1.5 ms; TRANSFER reveal transaction 340 vB.
+- The proving key is shipped (`circuit/artifacts/spend.pk`, 8.4 MB, pinned by SHA-256): it loads in 1.4 s in WebAssembly
+  instead of 19.5 s of key generation, and a test checks that key generation reproduces it byte for byte.
+- Two WebAssembly builds: one thread with no imports (the indexer's verifier, and the fallback), and a thread pool over Web
+  Workers on a shared memory. Prover memory: 224 MB.
+- A test page for phones (`circuit/web/`): threaded where the page is cross-origin isolated (by headers, or by its service
+  worker), one thread otherwise. Checked in headless Chrome for each case.
+- Checks: 26 adversarial witnesses, every variable pinned by a gate, circomlib's statement of the relation accepts the
+  witnesses, and snarkjs both ways: its verifier accepts our proofs, our verifier accepts its proofs (`bench/cross-check.sh`).
+- A wallet reference in dependency-free JavaScript (`circuit/js/`): note keys and `npk`, the nullifier, the body hash, the
+  EdDSA-Poseidon signature. Its vectors are written by the Rust model (`circuit/src/vectors.rs`) and a test fails if they drift.
 
-Not done: an audit; proving on a real phone and in a browser, WebAssembly threads, the memory peak (425 MB); the `ct` sealing
-format; a live chain follower (Bitcoin Core RPC / Esplora); the browser vault; a relayer; a second independent indexer; the
+Not done: an audit; the figures on a real phone (the page exists and was measured on a laptop browser: 4.5 s on 10 threads,
+25.5 s on one; nobody has run it on a phone yet); the `ct` sealing format; transfers in the vault (it mints and syncs privately
+today); a relayer; a second independent indexer; the
 profile constants (activation height, `D`); the canonical event encoding inside the digest.
 
-## Next task: the circuit on a phone
+## Next task: the phone figures, then the vault
 
-The relation, the proof system and the verifier exist. What decides whether they are usable is still open:
+The relation, the proof system, the verifier and a prover that runs in a browser exist. What is still unknown is how long a
+real phone takes.
 
-1. **Measure on real devices.** Load `sh20_circuit.wasm` in a browser page (keys: `sh20_keygen`, then `sh20_prove`; the ABI is
-   in `circuit/src/ffi.rs`) on a recent phone and a mid-range one. Add a threaded build (rayon over Web Workers, needs
-   cross-origin isolation). Laptop figures are not phone figures.
-2. **Memory.** The module peaks at 425 MB. Compute the quotient in four cosets of size n and the selector evaluations on the
-   fly; the target is about 150 MB.
+1. **Get the page run on phones.** `circuit/web/README.md` says how to serve it and what to send back. Record the results in
+   `circuit/README.md` next to the laptop figures: at least a recent phone and a mid-range one, on all cores and on one thread.
+   Laptop figures are not phone figures.
+2. **Act on them.** If memory fails (the prover needs about 230 MB), hold less: the wire evaluations and the key file are
+   kept longer than needed. If time is the problem, see 3.
 3. **Fewer gates.** A 2^16 domain (65,536 gates) would halve the proving time. Sparse Poseidon partial rounds, 2-bit windows
    for fixed-base multiplication and bitwise comparisons against constants are estimated to reach about 66,600 gates: still
    above the limit, and the three outputs stay (maintainer, 2026-11-18). Find the last thousand gates without changing a rule,
    or leave the domain at 2^17.
-4. **Keep it honest.** Any change to the gates changes the verifying-key digest: update `circuit/src/lib.rs` (`VK_DIGEST`),
-   `circuit/artifacts/spend.vk`, `indexer/src/constants.js`, `docs/SPEC-WIRE.md` §4 and regenerate
-   `indexer/test/fixtures/plonk-scenario.json` (`sh20-circuit scenario`). The circom relation must keep accepting the Rust
-   witnesses (`circuit/bench/circom-check.mjs`) and snarkjs' verifier the proofs (`circuit/bench/cross-verify.mjs`).
+4. **Keep it honest.** Any change to the gates changes the keys: rebuild `circuit/artifacts/spend.pk` and `spend.vk`
+   (`sh20-circuit pk`, `keygen`), update `VK_DIGEST` and `PK_SHA256` in `circuit/src/lib.rs`, `indexer/src/constants.js`,
+   `docs/SPEC-WIRE.md` §4, and regenerate `indexer/test/fixtures/plonk-scenario.json` (`sh20-circuit scenario`).
+   Then run `circuit/bench/cross-check.sh`: hard requirement 4 says the verifier stays cross-checked against snarkjs.
+   `spend.pk` is 8.4 MB of binary: commit a new one only when the gates change (maintainer, 2026-11-18), never for a rebuild
+   that gives the same bytes.
 5. The soundness-critical code is `circuit/src/gadgets.rs`, `circuit/src/spend.rs` and `circuit/src/plonk/verifier.rs`.
    It is new and unaudited. Do not weaken a check to save gates without the maintainer.
+6. The vault embeds the prover the way the test page does: `circuit/web/host.js` and the two workers. It computes note keys,
+   nullifiers and signatures as `circuit/js/` does, and checks itself against `circuit/js/vectors.json`.
 
 Where the relation comes from: Tacit's Bitcoin shielded pool (MIT, `https://github.com/z0r0z/tacit`),
 `dapp/circuits/btc-pool/spend.circom` and `contracts/sp1/confidential/btc-pool-halo2/`. SH-20 changed the ticker to a private `t`
@@ -155,8 +175,10 @@ SH-20's edge: ticker hidden, unique tickers, private by default from the mint, B
 
 ## Open decisions (ask the maintainer)
 
-Final name and 4-byte magic · value of `D` (genesis burn per DEPLOY) or no burn · ticker length (4 only, or 5–12) ·
-genesis team allocation (zero or small) · several envelopes per transaction · exact event encoding in the digest.
+Final name and 4-byte magic · value of `D` (SH20 burned per DEPLOY) or no burn · ticker length (4 only, or 5–12) ·
+several envelopes per transaction · exact event encoding in the digest.
 
+Decided by the maintainer: the genesis token is **SH20**, fixed in the activation profile (no DEPLOY, no race):
+21,000,000 max, 1,000 per mint, free mint (network fees only), no team allocation.
 Decided (2026-11-18): PLONK-KZG is the proof system (hard requirement 4). Three outputs stay; the third pays a relayer in
 tokens. `proofLen` is left alone in the circuit work: the indexer work removes it afterwards.

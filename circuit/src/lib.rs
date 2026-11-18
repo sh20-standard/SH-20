@@ -3,10 +3,12 @@
 //! the SRS, so there is no project-run setup.
 //!
 //! ```text
-//! let pk = keygen(&srs)?;                         // once; anyone gets the same keys
-//! let proof = prove(&pk, &witness, &mut rng)?;    // 480 bytes
+//! let pk = load_key(&std::fs::read("artifacts/spend.pk")?)?;   // the shipped key, checked against PK_SHA256
+//! let proof = prove(&pk, &witness, &mut rng)?;                 // 480 bytes
 //! assert!(verify(&pk.vk, &witness.publics(), &proof));
 //! ```
+//!
+//! `keygen` recomputes the same key from the SRS alone; `artifacts/spend.pk` only saves that work.
 
 pub mod cs;
 pub mod ffi;
@@ -31,14 +33,32 @@ pub const VK_DIGEST: &str = "da847145dbc5aa847af92ce5696fbd60bd57e6fbdf0e077cc1b
 /// SHA-256 of the SRS file `sh20-circuit srs` extracts from Hermez powersOfTau28_hez_final_18.ptau.
 pub const SRS_SHA256: &str = "e97b92f39a4371b2c137883e72400d0906a49d6f35511443572f478c3852a238";
 
+/// SHA-256 of `artifacts/spend.pk`, the proving key of the spend circuit: its verifying key and the
+/// SRS powers. `sh20-circuit pk` rebuilds the file from the Hermez SRS.
+pub const PK_SHA256: &str = "a376301be345cdeab66a0155714fa81976102d570ee6a3223edaf64a4d9e430a";
+
 /// SRS powers the spend circuit needs.
 pub fn srs_size() -> usize {
     plonk::keys::rows_for(spend::synthesize(&SpendWitness::default()).n_gates()) + plonk::keys::SRS_EXTRA
 }
 
-/// Proving and verifying keys of the spend circuit. Deterministic in the SRS.
+/// Proving and verifying keys of the spend circuit, computed from the SRS. Deterministic.
 pub fn keygen(srs: &Srs) -> Result<ProvingKey, String> {
     plonk::setup(&spend::synthesize(&SpendWitness::default()), srs)
+}
+
+/// The proving key from the shipped file: no group operation, so it loads in a fraction of the time
+/// `keygen` takes. The file must be the pinned one (`PK_SHA256`).
+pub fn load_key(bytes: &[u8]) -> Result<ProvingKey, String> {
+    use sha2::{Digest, Sha256};
+    if hex::encode(Sha256::digest(bytes)) != PK_SHA256 {
+        return Err("not the pinned proving key".into());
+    }
+    let pk = ProvingKey::from_bytes(&spend::synthesize(&SpendWitness::default()), bytes)?;
+    if hex::encode(pk.vk.digest()) != VK_DIGEST {
+        return Err("the proving key does not carry the pinned verifying key".into());
+    }
+    Ok(pk)
 }
 
 /// Proves a spend. Fails, naming the violated rule, if the witness does not satisfy the relation.

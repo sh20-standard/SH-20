@@ -50,11 +50,14 @@ audits and public signet tests happen before activation.
 
 ## Lifecycle
 
-- **DEPLOY** reserves a ticker and fixes its rules. The first accepted DEPLOY is the genesis ticker.
+- **Genesis token: SH20.** Fixed in the activation profile rather than deployed, so nobody can race for it
+  and nobody owns its deployment, the team included. Like ORDI: 21,000,000 units, 1,000 per mint (21,000 mints),
+  free to mint (network fees only), no team allocation.
+- **DEPLOY** reserves a ticker and fixes its rules.
   A token is named by its ticker everywhere, on the wire and inside notes (`t` = its 4 bytes as a number),
   so a wallet can check on chain which token a mint or a listing is for. The team allocation, if any, enters the tree automatically at its public unlock block.
-- **Proposed rule:** every later DEPLOY burns `D` units of the genesis ticker, so the whole meta
-  consumes genesis supply after its mint-out. The trade-off: deployers must buy genesis first, which
+- **Proposed rule:** every DEPLOY burns `D` SH20, so the whole meta consumes SH20 supply after its
+  mint-out (`D = 0` turns the burn off). The trade-off: deployers must buy genesis first, which
   slows spam but also adoption. The alternative is the plain BRC-20 model with no burn.
 - **MINT** creates a public note of exactly `lim` units, with no proof, in one OP_RETURN transaction.
   All mints of a ticker are identical. A rejected mint is not refunded.
@@ -89,9 +92,10 @@ opens every column, so its proof cannot go below about 800 bytes here. snarkjs' 
 obstacle, not the protocol: `circuit/` implements the same protocol in Rust, and snarkjs' verifier
 accepts its proofs, which gives the standard two independent verifiers.
 
-The price is proving work: 8.6 s on one thread against 2.8 s for Tacit's Halo2 circuit, and 22 s in
-single-thread WebAssembly. Proving time only affects transfers, burns and listings, never the mint.
-It has not been measured on a phone yet.
+The price is proving work: 9.6 s on one thread against 2.8 s for Tacit's Halo2 circuit. In a browser the
+prover takes 25 s on one thread and 7 s on four (WebAssembly threads, measured on a laptop), with a
+proving key that is shipped rather than generated on the device. Proving time only affects transfers, burns
+and listings, never the mint. It has not been measured on a phone yet; `circuit/web/` is the page for that.
 
 The relation follows Tacit's shielded pool (MIT) with the ticker made private, SH-20's note leaf and no
 transparent boundary. Notes per proof: 2 in, 3 out (the recipient, the change, and a relayer's fee in tokens).
@@ -134,6 +138,5 @@ The verifier stays cross-checked against snarkjs' PLONK verifier.
 2. Value of `D`, or no genesis burn at all.
 3. Tickers of 4 characters only, or also 5 to 12 (then `t` = the ticker's bytes as a big-endian number,
    still unique and below the field size, and ticker fields get a length byte).
-4. Genesis team allocation: zero or small.
-5. Several envelopes per transaction, so relayers can publish in batches.
-6. Exact event encoding inside the digest, frozen before activation.
+4. Several envelopes per transaction, so relayers can publish in batches.
+5. Exact event encoding inside the digest, frozen before activation.
