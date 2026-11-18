@@ -11,6 +11,7 @@ import { NoteTree } from '../src/tree.js';
 import { noteLeaf, tickerT } from '../src/notes.js';
 import { serializeEnvelope } from '../src/codec.js';
 import { Indexer } from '../src/indexer.js';
+import { encodeEvents } from '../src/events.js';
 import { publicKey } from '../src/schnorr.js';
 
 const h = (s) => createHash('sha256').update(s).digest();
@@ -91,7 +92,7 @@ const txJson = (t) => ({
 
 const out = {
   version: 'SH-20 draft v0.3',
-  notes: 'Field elements are hex, big-endian here for readability; on the wire they are 32-byte little-endian. The scenario uses a test verifier that accepts exactly one 480-byte proof: \"valid-proof\" padded with zeros.',
+  notes: 'Field elements are hex, big-endian here for readability; on the wire they are 32-byte little-endian. The scenario uses a test verifier that accepts exactly one 480-byte proof: \"valid-proof\" padded with zeros. eventsH is the byte string of SPEC-WIRE §6 whose SHA-256 enters the digest.',
   poseidon2: [
     { in: ['1', '2'], out: poseidon2(1n, 2n).toString() },
     { in: ['0', '0'], out: poseidon2(0n, 0n).toString() },
@@ -105,7 +106,7 @@ const out = {
   scenario: {
     profile: { activationHeight: 1, deployBurn: '1000', anchorWindow: 100, anchorMinDepth: 1 },
     blocks: blocks.map((b) => ({ height: b.height, txs: b.txs.map(txJson) })),
-    after: results.map((r) => ({ height: r.height, root: hexFr(r.root), digest: r.digest, events: r.events.map((e) => e.type) })),
+    after: results.map((r) => ({ height: r.height, root: hexFr(r.root), events: r.events.map((e) => e.type), eventsH: encodeEvents(r.events).toString('hex'), digest: r.digest })),
     final: {
       treeSize: ix.tree.size,
       sh20: { mints: ix.token('SH20').mints.toString(), burned: ix.token('SH20').burned.toString() },

@@ -1,4 +1,4 @@
-// SH-20 reference indexer (draft v0.2).
+// SH-20 reference indexer (draft v0.3).
 //
 // Replays blocks in order and keeps the whole SH-20 state: tickers, mints,
 // the shared note tree and its per-block roots, nullifiers, listings and the
@@ -15,6 +15,7 @@ import { parseEnvelope, CodecError } from './codec.js';
 import { NoteTree } from './tree.js';
 import { noteLeaf, frToBytes, tickerT, PUBLIC_RHO } from './notes.js';
 import { verify as schnorrVerify } from './schnorr.js';
+import { encodeEvents } from './events.js';
 
 export class Reject extends Error {}
 
@@ -27,13 +28,6 @@ const sha256 = (...parts) => {
 };
 
 const hexFr = (x) => x.toString(16).padStart(64, '0');
-
-const canonical = (value) =>
-  JSON.stringify(value, (_, v) => {
-    if (typeof v === 'bigint') return v.toString();
-    if (v && v.type === 'Buffer' && Array.isArray(v.data)) return Buffer.from(v.data).toString('hex');
-    return v;
-  });
 
 const isOpReturn = (script) => script.length > 0 && script[0] === 0x6a;
 const isP2TR = (script) => script.length === 34 && script[0] === 0x51 && script[1] === 0x20;
@@ -111,7 +105,7 @@ export class Indexer {
     }
 
     this._set(this.roots, block.height, this.tree.root);
-    const delta = sha256(Buffer.from(canonical(events), 'utf8'));
+    const delta = sha256(encodeEvents(events));
     const h = Buffer.alloc(4);
     h.writeUInt32LE(block.height);
     this.digest = sha256(this.digest, h, frToBytes(this.tree.root), delta);
@@ -282,7 +276,10 @@ export class Indexer {
       ticker: g.ticker, t: tickerT(g.ticker), max: g.max, lim: g.lim, pre: 0n, start: H, end: 0, unlock: H, price: 0n,
       payMode: PAY_MODE.NONE, payScript: '', mints: 0n, burned: 0n, deployTxid: null, deployHeight: H, genesis: true,
     });
-    return { type: 'GENESIS', ticker: g.ticker };
+    // The record commits to the profile's rules, so indexers run with different
+    // profiles part at the activation block, not at the first spend it touches.
+    const { deployBurn, anchorWindow, anchorMinDepth } = this.profile;
+    return { type: 'GENESIS', ticker: g.ticker, max: g.max, lim: g.lim, deployBurn, anchorWindow, anchorMinDepth };
   }
 
   _deploy(env, body, tx, H) {

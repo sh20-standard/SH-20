@@ -7,6 +7,8 @@ Changes from v0.2: `pk_eph` is a 32-byte X25519 public key (was a 33-byte secp25
 the native X25519 of WebCrypto; the spend section loses `proofLen`, since the proof always has 480 bytes. A TRANSFER is
 830 bytes. A public opening is `npk` alone and public notes use `rho = 0` (a fresh `npk` already makes each one unique,
 and nothing in a public note is hidden): a MINT is 42 bytes instead of 74, about 32 vB less per mint. Sealing and scanning are specified for wallets in [`SPEC-NOTES.md`](SPEC-NOTES.md).
+The events inside the digest have an exact byte encoding (§6) instead of JSON, and the GENESIS record commits to the
+profile's rules, so a second implementation in any language can reproduce every digest.
 
 Changes from v0.1: tokens are named by their ticker everywhere. MINT, BURN and LIST carry `ticker(4)`
 instead of an indexer-assigned `tokenNum(4)` (same size), and the asset id inside notes and proofs is
@@ -146,11 +148,36 @@ A rejected envelope changes nothing; sats it paid are not returned.
    note the ACTIVE listings whose lock it spends; apply its envelope; set any of those still ACTIVE to CLOSED.
 2. Record `R[H]`.
 3. `digest_H = SHA256(digest_{H−1} ‖ u32le(H) ‖ R[H] (32, LE) ‖ SHA256(events_H))`, `digest_start = SHA256("sh20-v0")`,
-   `events_H` = the JSON list of accepted events in order (see `src/indexer.js`; to be frozen as a byte format before activation).
+   `events_H` = the records of the block's accepted events, in the order they happen (genesis, team unlocks, then each
+   transaction's envelope followed by the listings it closes), concatenated. A block with no event has an empty `events_H`.
+   Rejected envelopes are not events.
+
+Every record is `code(1) ‖ txid(32) ‖ payload`. `txid` is the transaction's id in display (RPC) byte order, and 32 zero bytes
+for the two block events (GENESIS, TEAM_UNLOCK). Integers are little-endian, field elements 32 bytes little-endian,
+tickers their 4 ASCII bytes, `pos` a u32 leaf position. `spent` = `nf0 ‖ nf1 ‖ pos0 ‖ pos1 ‖ pos2`: the two nullifiers and the
+positions of the three output leaves (76 bytes). Each payload has one size for its code (DEPLOY: one per flag), so the
+concatenation parses one way only.
+
+| Event | Code | Payload | Record |
+| --- | --- | --- | ---: |
+| DEPLOY | 0x01 | `ticker` ‖ `0x00`, or `ticker` ‖ `0x01` ‖ `spent` (the burn of `D` when `D > 0`) | 38 / 114 |
+| MINT | 0x02 | `ticker` ‖ `v`(u64) ‖ `pos` | 49 |
+| TRANSFER | 0x03 | `spent` | 109 |
+| BURN | 0x04 | `ticker` ‖ `vPub`(u64) ‖ `spent` | 121 |
+| LIST | 0x05 | `ticker` ‖ `amount`(u64) ‖ `price`(u64) ‖ `spent` | 129 |
+| TAKE | 0x06 | `listTxid`(32) ‖ outcome(1: SOLD = 1, CANCELLED = 2) ‖ `pos` | 70 |
+| CLAIM | 0x07 | `listTxid`(32) ‖ `pos` | 69 |
+| GENESIS | 0x80 | `ticker` ‖ `max`(u64) ‖ `lim`(u64) ‖ `D`(u64) ‖ `W`(u32) ‖ `K_min`(u32) | 69 |
+| TEAM_UNLOCK | 0x81 | `ticker` ‖ `pre`(u64) ‖ `pos` | 49 |
+| CLOSED | 0x82 | `listTxid`(32); `txid` is the transaction that spent the lock | 65 |
+
+Envelope events reuse the envelope's type code. GENESIS carries the profile's rule constants, so two indexers run with
+different profiles have different digests from the activation block on. `indexer/vectors/v0.3.json` gives `events_H`
+for every block of its scenario.
 
 Reorgs: roll back to the fork point (per-block undo log) and replay.
 
 ## 7. Not final
 
 The verifying-key digest of §4 until the circuit is audited and frozen; the `ct` sealing; the profile constants
-(`A`, `D`, network); the canonical event encoding inside the digest.
+(`A`, `D`, network).

@@ -1,6 +1,6 @@
 {
   "version": "SH-20 draft v0.3",
-  "notes": "Field elements are hex, big-endian here for readability; on the wire they are 32-byte little-endian. The scenario uses a test verifier that accepts exactly one 480-byte proof: \"valid-proof\" padded with zeros.",
+  "notes": "Field elements are hex, big-endian here for readability; on the wire they are 32-byte little-endian. The scenario uses a test verifier that accepts exactly one 480-byte proof: \"valid-proof\" padded with zeros. eventsH is the byte string of SPEC-WIRE §6 whose SHA-256 enters the digest.",
   "poseidon2": [
     {
       "in": [
@@ -259,61 +259,68 @@
       {
         "height": 1,
         "root": "165651e71dd625afa06c74af98922acda0cbfda94fae36866f2dbbb743b36c1d",
-        "digest": "8b74bbe450b2b25e3073eb7fc631fe337a57374c0a7407e43788f1dbca6bbac9",
         "events": [
           "GENESIS",
           "MINT"
-        ]
+        ],
+        "eventsH": "80000000000000000000000000000000000000000000000000000000000000000053483230406f400100000000e803000000000000e80300000000000064000000010000000270009cbed83c8310c2fc4126fd388146c3b9bfca73c95b26e13fbf500f5e5b1c53483230e80300000000000000000000",
+        "digest": "b0e9a364479a4d83d4b366375f617ffa6d4a1c0c724e03a6ed220b794f89c85d"
       },
       {
         "height": 2,
         "root": "229548e92a7b1948fa27910b78e7448415eb27fb375d5c0c62bb76f1e01f5a40",
-        "digest": "ffd4602d95bbbf5ef09dadf20a0ec24b1ca5fe7d5ad53b9ffd889391cffc8831",
         "events": [
           "LIST",
           "TRANSFER"
-        ]
+        ],
+        "eventsH": "05abbcfde30119c7e9b6b80436b323eb344919b3ae794e2b8112dac130e4f9604b53483230e8030000000000008813000000000000dccb6008c265763e8ff0a414c06369e4814d40be2b18b00d02434627be963505a3978b18608a883bf490185970abc4f0b0210860d97803746761dc5aeca3931f01000000020000000300000003ea9dee5d9c8eec73ee4fe9512e225a9cd8e8d959c52222a2aaf7ea39cebd4929542678078b04520065a42bb479dcceaf649ff23bc472837da6323d8feed65b104eef150166b5685108f7922ba727f8b1756965af668b555db0e75e60fdfca921040000000500000006000000",
+        "digest": "b5c753b61926af50b8acc5e086b43dcee7cbf5a52afcf6bccddccf65c49b429e"
       },
       {
         "height": 3,
         "root": "145bf2488ea412f0a9b25feee9a2b5be939d7b08940f571e200f08fef022d53f",
-        "digest": "a034bc59b9bc21953cd8a90daf591607cbdaac9b4b625ee17ba338556ae90121",
         "events": [
           "TAKE"
-        ]
+        ],
+        "eventsH": "066755db102d834b259830d4e541f28ace93c08a5fb5b801956e3b48ff0c475ff0abbcfde30119c7e9b6b80436b323eb344919b3ae794e2b8112dac130e4f9604b0107000000",
+        "digest": "bf6ade83e002b7922ba775d077d25be3c17bf7193a2f678b86fa131749a39d0e"
       },
       {
         "height": 4,
         "root": "085fe9ffcb952ce63320c1318b68b7659a6994dbbfcd52762ef15956a236342c",
-        "digest": "996527df47bd9f5ffa87def0c710b14e37c6e3e836072a0e8cad37dccfacd79e",
         "events": [
           "DEPLOY"
-        ]
+        ],
+        "eventsH": "014df782b20a54b2eb15b3f605e72d750ccc3d55423e982fc0129b09e12b7a315047454e45013daa6a85633f7e58bb02ad6a84b2ef0356a8a22a0192c06bb8672450ba65160cecee10d100373404f255ffce6111b3a829445cda2472d2bde55e83a632c6550308000000090000000a000000",
+        "digest": "46434e48c7f838d140a509ca2d29a2a7979a179aae50a59292869a02101acd4e"
       },
       {
         "height": 5,
         "root": "13a3505df83a0f381e4f5167afa8ee8a3bc7bedc74984716167025158d04bf12",
-        "digest": "9e082266cc88e8b80ce9fd4ae122e02833c837391d97f09507e80673a77f9136",
         "events": [
           "DEPLOY"
-        ]
+        ],
+        "eventsH": "01c57d9dd0e7a4eb81afa47c2b2baaf343fdd33cfec4f2728f8c7383bac1b288255345433201fa12adeaf922f1433e7fa97c3f291e3fe04bc6c090e8ff5434c763c6cb17f008e50cf104863046f2bd7a317347d1149f5b25e25e64956f81ef65808d0ae998090b0000000c0000000d000000",
+        "digest": "08dd8e29d4757dcaf99576edab0dd98440e3cb99c2a0ec4794e8d230f26077cb"
       },
       {
         "height": 6,
         "root": "09ea40f215d961e34cb34d84962ce056327e9105d4cfdec9162f2f8ada8bcd09",
-        "digest": "531b543ebccdcdca6d1902553e61f290ec83b47c00e5f3a513c89cf5437cccfb",
         "events": [
           "TEAM_UNLOCK",
           "BURN"
-        ]
+        ],
+        "eventsH": "81000000000000000000000000000000000000000000000000000000000000000047454e4540420f00000000000e000000041942c2dc3df7258d76b698cfe266136eeaa74e281d3d19d8259e25860018e215534832300a0000000000000081c2d53e24765a7d9e2da586aed37447486d84cdb648dd7404e2d2aa4dff7c0c0fe38fd1277ff514c1df57b37f80e7200cb46c1e52c8d467eeb3253e5bd211050f0000001000000011000000",
+        "digest": "8d2a8330314f928be9cea06da0390636be2c8eea15eb5b519e46359ce7575128"
       },
       {
         "height": 7,
         "root": "078430d52cf5ae548fa59207815a31c282f179cbf419d2161a90bad6e379a1ed",
-        "digest": "40e8a3e32c508d989be87005b3af939ab15aaba954a0ed56412cbcb6a6e738a5",
         "events": [
           "MINT"
-        ]
+        ],
+        "eventsH": "022651c41d676e89859b957a14a6ff2a4fd9c57db3f01bc05e44bef0572ad503c047454e45e80300000000000012000000",
+        "digest": "ac78cf1d091e17d04984b5d317bf324dddf3c053ef11112e27665511dd896b3d"
       }
     ],
     "final": {

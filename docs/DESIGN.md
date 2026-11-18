@@ -143,4 +143,6 @@ The verifier stays cross-checked against snarkjs' PLONK verifier.
 3. Tickers of 4 characters only, or also 5 to 12 (then `t` = the ticker's bytes as a big-endian number,
    still unique and below the field size, and ticker fields get a length byte).
 4. Several envelopes per transaction, so relayers can publish in batches.
-5. Exact event encoding inside the digest, frozen before activation.
+
+Decided in v0.3: the events inside the digest have a fixed byte encoding (`SPEC-WIRE.md` §6), so a second
+indexer in any language reproduces every digest; the GENESIS record commits to the profile's rules.

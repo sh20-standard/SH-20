@@ -46,7 +46,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 47 tests (the 5 real-proof tests need the verifier module below and a fixture regenerated for wire v0.3)
+npm test            # 51 tests (the 5 real-proof tests need the verifier module below and a fixture regenerated for wire v0.3)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
@@ -66,7 +66,7 @@ Done in `indexer/`:
 - Two carriers: OP_RETURN (small proof-less envelopes, one transaction) and a tapscript witness on input 0 (proof-carrying envelopes, 830 bytes for a TRANSFER).
 - Wire v0.3: `pk_eph` is a 32-byte X25519 key and the spend section has no `proofLen` (the proof is always 480 bytes).
   `docs/SPEC-NOTES.md` (draft, unreviewed) specifies keys, addresses, sealing and scanning for wallets.
-- State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest.
+- State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest over a byte encoding of the events (v0.3, `SPEC-WIRE.md` §6; the GENESIS record commits to the profile's rules).
 - Poseidon over BN254 written from scratch for 2 to 5 inputs (constants generated with the Grain LFSR, checked against circomlibjs for every width; `poseidon2` is unchanged), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
 - Live chain follower (Bitcoin Core RPC or Esplora, reorgs with 288 blocks of undo) and a read-only HTTP API with a per-leaf note log for wallets (`docs/API.md`).
 - Explorer (`explorer/index.html`): a block explorer in one static page with no dependency; reads any indexer; demo data built from real indexer output.
@@ -99,7 +99,7 @@ Measured on a phone (2026-11-18, iPhone 18 Pro Max, Safari, through the test pag
 
 Not done: an audit; a mid-range phone; a review of the `ct` sealing format (`docs/SPEC-NOTES.md`) and its reference code with vectors; transfers in the vault (it mints and syncs privately
 today); a relayer; a second independent indexer; the
-profile constants (activation height, `D`); the canonical event encoding inside the digest.
+profile constants (activation height, `D`).
 
 ## Next task: the phone figures, then the vault
 
@@ -190,9 +190,10 @@ private part that already proves and verifies, in open code.
 ## Open decisions (ask the maintainer)
 
 Final name and 4-byte magic · value of `D` (SH20 burned per DEPLOY) or no burn · ticker length (4 only, or 5–12) ·
-several envelopes per transaction · exact event encoding in the digest.
+several envelopes per transaction.
 
 Decided by the maintainer: the genesis token is **SH20**, fixed in the activation profile (no DEPLOY, no race):
 21,000,000 max, 1,000 per mint, free mint (network fees only), no team allocation.
 Decided (2026-11-18): PLONK-KZG is the proof system (hard requirement 4). Three outputs stay; the third pays a relayer in
 tokens. `proofLen` is removed in wire v0.3, together with the 32-byte X25519 `pk_eph`.
+Decided (technical, v0.3): the events inside the digest have a fixed byte encoding (`src/events.js`, `SPEC-WIRE.md` §6).
