@@ -20,10 +20,10 @@ function honest() {
     vin: [{ txid: '77'.repeat(32), vout: 0, sequence: 0xfffffffd, scriptSig: new Uint8Array(0), witness: [new Uint8Array(64)] }],
     vout: [{ value: 0n, script: opReturnScript(serializeEnvelope(env)) }],
   };
-  const idx = new Indexer({ profile: { activationHeight: 1 } });
+  const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n } });
   const itx = { txid: txid(tx), vin: [{ txid: '77'.repeat(32), vout: 0, witness: [Buffer.alloc(64)] }], vout: tx.vout.map((o) => ({ value: o.value, script: Buffer.from(o.script) })) };
   const r = idx.applyBlock({ height: 1, hash: 'h1', txs: [itx] });
-  assert.equal(r.events[0]?.type, 'DEPLOY', JSON.stringify(r.rejected));
+  assert.equal(r.events.at(-1)?.type, 'DEPLOY', JSON.stringify(r.rejected));
   return { token: normToken(JSON.parse(JSON.stringify(idx.token('GENE'), (_, v) => (typeof v === 'bigint' ? v.toString() : v)))), hex: toHex(serializeTx(tx)) };
 }
 
