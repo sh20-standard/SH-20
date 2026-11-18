@@ -58,7 +58,7 @@ export class NoteTree {
     let idx = position;
     const siblings = [];
     for (let i = 0; i < this.depth; i++) {
-      const sib = idx ^ 1;
+      const sib = siblingIndex(idx);
       siblings.push(sib < level.length ? level[sib] : this.zeros[i]);
       const next = [];
       for (let k = 0; k < level.length; k += 2) {
@@ -70,6 +70,10 @@ export class NoteTree {
     return siblings;
   }
 }
+
+/** Index of a node's sibling. Plain arithmetic: JavaScript's `^` works on 32-bit signed
+ *  integers and gives a wrong answer from position 2^31 on, while the tree holds 2^32 leaves. */
+export const siblingIndex = (i) => (i % 2 === 0 ? i + 1 : i - 1);
 
 /** Recomputes a root from a leaf and its path (what the circuit proves). */
 export function rootFromPath(leaf, position, siblings) {
