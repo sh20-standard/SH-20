@@ -15,6 +15,7 @@ behind the choice of proof system.
 | Proving key | `artifacts/spend.pk`, 8.4 MB (the verifying key and the SRS powers), SHA-256 `a376301be345cdeab66a0155714fa81976102d570ee6a3223edaf64a4d9e430a`; loads in 0.2 s, 1.4 s in WebAssembly |
 | Proving time, native | 1.8 s on a laptop (10 threads); 9.6 s on one thread |
 | Proving time, WebAssembly | 25 s on one thread; 13 s on 2 threads, 7.2 s on 4, 5.6 s on 6, 4.4 s on 10 |
+| Proving time, on a phone | iPhone 18 Pro Max, Safari: 14.5 s on 4 threads, 31.9 s on one |
 | Prover memory | 224 MB in WebAssembly (242 MB with 10 threads) |
 | Verification | 1.5 ms native, 13 ms in WebAssembly |
 
@@ -60,8 +61,22 @@ What the numbers say:
 
 ## On a phone
 
-Not measured on a real phone yet: that is what `web/` is for. What was done to get there, measured in
-Node and in headless Chrome on the laptop above:
+Measured by the maintainer on 2026-11-18 with the page of `web/`, served over https with the
+isolation headers. Proving times are the median of three proofs, with the three in brackets.
+
+| Device | Browser | Threads | Proving time | Key loading | Prover memory | Verification |
+| --- | --- | --- | --- | --- | --- | --- |
+| iPhone 18 Pro Max, iOS 18.7 | Safari | 4 | 14.5 s (14.3 / 14.5 / 14.8) | 0.7 s | 232 MB | 15 ms |
+| iPhone 18 Pro Max, iOS 18.7 | Safari | 1 | 31.9 s (36.6 / 31.9 / 30.7) | 5.5 s | 224 MB | |
+| MacBook Pro M1 Pro | Chrome | 10 | 4.5 s | | | |
+| MacBook Pro M1 Pro | Chrome | 1 | 25.5 s | | | |
+
+So a recent phone proves a transfer in about 15 s, and the prover fits in its memory. Two things in
+these figures are not explained yet: four threads are only 2.2 times faster than one on the phone,
+and in single-thread mode the key takes 5.5 s to load there against 0.7 s with threads. A mid-range
+phone has not been measured.
+
+What was done to get there, measured in Node and in headless Chrome on the laptop:
 
 - **No key generation at start-up.** `artifacts/spend.pk` holds the verifying key and the SRS powers;
   the rest of a proving key follows from the gates without any group operation. Loading it takes
@@ -159,7 +174,8 @@ node bench/tx-vsize.mjs
 
 ## Next
 
-1. **Phone figures**: run `web/` on real devices, a recent one and a mid-range one.
+1. **Phone figures**: one recent phone is measured (above). Still missing: a mid-range phone, and why
+   four threads only give 2.2 times one on the iPhone.
 2. **Memory**: 224 MB at peak. The wire evaluations and the key file are still held longer than
    needed; there is room below 200 MB.
 3. **Fewer gates**: the circuit is 86,232 gates and a 2^16 domain, which would halve the proving
