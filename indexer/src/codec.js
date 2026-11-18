@@ -104,12 +104,13 @@ class Writer {
   }
 }
 
+// A public opening is the note key alone (v0.3): public notes use rho = 0, since a fresh npk
+// already makes each of them unique and nothing about them is hidden.
 function readOpening(r) {
-  return { npk: r.fr(), rho: r.fr() };
+  return { npk: r.fr() };
 }
 function writeOpening(w, o) {
   w.fr(o.npk);
-  w.fr(o.rho);
 }
 
 function readPayScript(r, payMode) {

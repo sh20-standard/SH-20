@@ -77,10 +77,11 @@ WebCrypto in current browsers and in Node.
 
 ## 5. Public notes (mint, purchase, reclaim, team)
 
-These notes publish their opening `(npk, rho)` and have no `pk_eph` or `ct`. A wallet derives them from its master
-secret and a counter `i`, so that a restored wallet finds them:
+These notes publish their opening, `npk` alone, use `rho = 0` (`SPEC-WIRE.md` §2) and have no `pk_eph` or `ct`. A wallet
+derives them from its master secret and a counter `i`, so that a restored wallet finds them:
 
-`s_i = HKDF-SHA256(salt = "sh20/v0/self", ikm = m, info = u32le(i), L = 32)`, then `τa, τn, rho, npk` from `s_i` as in §3.
+`s_i = HKDF-SHA256(salt = "sh20/v0/self", ikm = m, info = u32le(i), L = 32)`, then `τa, τn, npk` from `s_i` as in §3
+(no `rho`: it is 0). The counter must never repeat: two public notes with the same `npk` would be linked.
 
 On restore, a wallet scans the public notes for `npk` with `i = 0, 1, …` and stops after 50 unused values in a row.
 A public note is linked to the Bitcoin transaction that created it, by design. It becomes private the first time it is
@@ -96,6 +97,8 @@ spent. Change sent to oneself in a spend uses §3 with the wallet's own address,
 - Not post-quantum, like Zcash today: an attacker with a large quantum computer could open old notes (token, amount,
   recipient). The tweak and nullifier keys stay inside proofs and hashes.
 - Reference code must not branch on secrets. The JavaScript BigInt arithmetic of `circuit/js` is not constant time.
+- Public notes with `rho = 0`: their leaf hides nothing anyway, and the nullifier `Poseidon(nk, leaf, pos)` differs for two notes
+  with the same leaf because `pos` differs. Review item: confirm nothing else relied on a random `rho` in public notes.
 - To review before activation (circuit session, then the audit): the whole of §1–§5, and the test vectors.
 
 ## 7. Test vectors

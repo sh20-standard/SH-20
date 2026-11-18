@@ -3,7 +3,7 @@
 // t = tickerT(ticker), v = amount, npk = the owner's note public key (a Poseidon hash
 // of its spend and nullifier keys), rho = a fresh random field element.
 //
-// Public notes (MINT, TAKE, CLAIM, team unlock) publish (npk, rho); the indexer
+// Public notes (MINT, TAKE, CLAIM, team unlock) publish npk only and use rho = 0; the indexer
 // computes the leaf. A later spend publishes only a nullifier that depends on a
 // secret key, so it cannot be linked back to the public note.
 
@@ -21,6 +21,9 @@ export function tickerT(ticker) {
   if (b.length !== 4) throw new Error('ticker must be 4 bytes');
   return BigInt(b.readUInt32BE(0));
 }
+
+/** rho of every public note (v0.3). */
+export const PUBLIC_RHO = 0n;
 
 export function noteLeaf(t, v, npk, rho) {
   const head = poseidon2(poseidon2(DOMAIN.LEAF, BigInt(t)), BigInt(v));

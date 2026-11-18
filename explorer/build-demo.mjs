@@ -22,7 +22,7 @@ const h = (s) => createHash('sha256').update(s).digest();
 const fr = (seed) => BigInt('0x' + h(seed).toString('hex')) % FR || 1n;
 const bytes = (seed, n) => Buffer.concat([h(seed), h(seed + '/2'), h(seed + '/3'), h(seed + '/4'), h(seed + '/5'), h(seed + '/6'), h(seed + '/7'), h(seed + '/8'), h(seed + '/9'), h(seed + '/10'), h(seed + '/11'), h(seed + '/12'), h(seed + '/13'), h(seed + '/14'), h(seed + '/15')]).subarray(0, n);
 const txid = (seed) => h('demo-txid/' + seed).toString('hex');
-const op = (seed) => ({ npk: fr(seed + '/npk'), rho: fr(seed + '/rho') });
+const op = (seed) => ({ npk: fr(seed + '/npk') });
 
 const push = (d) => {
   if (d.length <= 75) return Buffer.concat([Buffer.from([d.length]), d]);
@@ -98,7 +98,7 @@ listNova.lock = [{ value: 330n, script: p2tr(sellerKey) }];
 at(A + 17, spendTx('transfer-5', { type: 'TRANSFER', spend: spend('transfer-5', A + 15) }), spendTx('transfer-6', { type: 'TRANSFER', spend: spend('transfer-6', A + 16) }), listNova);
 at(A + 18, { txid: txid('nova-lock-spent'), spendsLock: listNova.txid, vout: [{ value: 200n, script: p2wpkh('seller-change') }] });
 const back = op('nova-claim');
-at(A + 19, { txid: txid('claim-nova'), env: { type: 'CLAIM', listTxid: listNova.txid, ...back, sig: sign(seller, Indexer.claimMessage(listNova.txid, back.npk, back.rho)) } });
+at(A + 19, { txid: txid('claim-nova'), env: { type: 'CLAIM', listTxid: listNova.txid, ...back, sig: sign(seller, Indexer.claimMessage(listNova.txid, back.npk)) } });
 at(A + 20, spendTx('transfer-7', { type: 'TRANSFER', spend: spend('transfer-7', A + 19) }));
 
 // ---- turn the script into Bitcoin-shaped blocks -----------------------------

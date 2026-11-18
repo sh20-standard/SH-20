@@ -7,7 +7,7 @@ export const txid = () => createHash('sha256').update(`tx-${counter++}`).digest(
 
 export const fr = () => BigInt('0x' + randomBytes(32).toString('hex')) % FR || 1n;
 
-export const opening = () => ({ npk: fr(), rho: fr() });
+export const opening = () => ({ npk: fr() });
 
 export function pushData(data) {
   const n = data.length;
