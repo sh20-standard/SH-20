@@ -1,10 +1,14 @@
 // Poseidon over the BN254 scalar field, compatible with circomlib's `poseidon`
-// for 2 inputs (t = 3, R_F = 8, R_P = 57, x^5 S-box).
+// for 2 to 5 inputs (width t = inputs + 1, R_F = 8, x^5 S-box, R_P = 57, 56, 60, 60).
 //
 // Round constants and the MDS matrix are generated here with the Grain LFSR of
 // the Poseidon reference script (generate_parameters_grain.sage), so no constant
-// table is copied from anywhere. The self-test at the bottom checks the result
-// against circomlib's published vector poseidon([1, 2]).
+// table is copied from anywhere. The tests check the result against circomlibjs
+// for every width (test/fixtures/poseidon-circomlibjs.json).
+//
+// The indexer itself only needs two inputs (`poseidon2`: the tree and the note
+// leaf). Wallets need the wider ones: npk is a hash of four elements, a nullifier
+// of three, an EdDSA challenge of five (docs/SPEC-WIRE.md §4, circuit/js/).
 
 export const P = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
@@ -96,10 +100,24 @@ function generate(t, rF, rP) {
   }
 }
 
-const T3 = { t: 3, rF: 8, rP: 57 };
-const PARAMS3 = generate(T3.t, T3.rF, T3.rP);
+const FULL_ROUNDS = 8;
+/** Partial rounds for width t (circomlib's table). */
+const PARTIAL_ROUNDS = { 3: 57, 4: 56, 5: 60, 6: 60 };
 
-function permute(inputs, { t, rF, rP }, { C, M }) {
+/** Parameters per width, generated on first use. */
+const PARAMS = new Map();
+function paramsFor(t) {
+  let p = PARAMS.get(t);
+  if (!p) {
+    const rP = PARTIAL_ROUNDS[t];
+    if (rP === undefined) throw new Error(`poseidon: ${t - 1} inputs not supported (2 to 5)`);
+    p = { t, rF: FULL_ROUNDS, rP, ...generate(t, FULL_ROUNDS, rP) };
+    PARAMS.set(t, p);
+  }
+  return p;
+}
+
+function permute(inputs, { t, rF, rP, C, M }) {
   let state = [0n, ...inputs.map(mod)];
   const rounds = rF + rP;
   for (let r = 0; r < rounds; r++) {
@@ -116,9 +134,15 @@ function permute(inputs, { t, rF, rP }, { C, M }) {
   return state[0];
 }
 
+/** Poseidon hash of 2 to 5 field elements (circomlib's `poseidon(inputs)`). */
+export function poseidon(inputs) {
+  if (!Array.isArray(inputs)) throw new Error('poseidon: expected an array of 2 to 5 inputs');
+  return permute(inputs.map(BigInt), paramsFor(inputs.length + 1));
+}
+
 /** Poseidon hash of two field elements (circomlib-compatible). */
 export function poseidon2(a, b) {
-  return permute([BigInt(a), BigInt(b)], T3, PARAMS3);
+  return permute([BigInt(a), BigInt(b)], paramsFor(3));
 }
 
 // circomlib published vector: poseidon([1, 2])
