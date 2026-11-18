@@ -75,3 +75,29 @@ test('roots, nullifiers, listings and unknown routes', () =>
     assert.deepEqual((await get('/listings?state=ACTIVE')).body, []);
     assert.equal((await get('/nope')).status, 404);
   }));
+
+test('blocks with activity, newest first, and one transaction with its notes', () =>
+  withApi(async ({ ix, get, s }) => {
+    const blocks = (await get('/blocks')).body;
+    assert.deepEqual(blocks.map((b) => b.height), [3, 2, 1]);
+    assert.equal(blocks[0].events[0].type, 'TRANSFER');
+    assert.equal(blocks[0].digest, ix.digest.toString('hex'));
+    assert.deepEqual((await get('/blocks?before=3&limit=1')).body.map((b) => b.height), [2]);
+    assert.equal((await get('/blocks?limit=x')).status, 400);
+
+    const txid = blocks[0].events[0].txid;
+    const t = (await get(`/tx/${txid}`)).body;
+    assert.equal(t.height, 3);
+    assert.equal(t.event.type, 'TRANSFER');
+    assert.equal(t.rejected, null);
+    assert.deepEqual(t.notes.map((n) => n.kind), ['OUT', 'OUT', 'OUT']);
+    assert.equal(BigInt('0x' + t.notes[0].leaf), s.outs[0].leaf);
+    assert.equal((await get('/tx/' + 'ab'.repeat(32))).status, 404);
+    assert.deepEqual((await get('/digest/3')).body, { height: 3, digest: ix.digest.toString('hex') });
+    assert.equal((await get('/digest/2')).body.digest, blocks[1].digest);
+    assert.equal((await get('/digest/99')).status, 404);
+    const all = (await get('/nullifiers')).body;
+    assert.deepEqual(all.nullifiers.map((x) => x.nullifier).sort(), [...ix.nullifiers].sort());
+    assert.ok(all.nullifiers.every((x) => x.height === 3));
+    assert.equal((await get('/nullifiers?from=4')).body.nullifiers.length, 0);
+  }));

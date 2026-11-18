@@ -6,6 +6,7 @@
 import { createServer } from 'node:http';
 
 const NOTE_PAGE_MAX = 5000;
+const BLOCK_PAGE_MAX = 200;
 
 const hex32 = (x) => x.toString(16).padStart(64, '0');
 
@@ -46,6 +47,8 @@ export function apiHandler(indexer, { network } = {}) {
       nullifiers: ix.nullifiers.size,
       tokens: ix.tokens.size,
       genesis: ix.genesis ?? null,
+      deployBurn: ix.profile.deployBurn,
+      anchorWindow: ix.profile.anchorWindow,
       verifier: ix.verifier.name ?? 'custom',
     })],
     [/^\/tokens$/, () => [...ix.tokens.values()]],
@@ -72,6 +75,49 @@ export function apiHandler(indexer, { network } = {}) {
       return [...ix.listings.values()].filter((l) => !state || l.state === state);
     }],
     [/^\/listing\/([0-9a-f]{64})$/, (_, [txid]) => ix.listings.get(txid) ?? 404],
+    // Every spent nullifier from block `from` on, in block order. A wallet downloads this list
+    // and checks its own notes locally: asking /nullifier/:hex per note tells the indexer
+    // which notes are yours.
+    [/^\/nullifiers$/, (url) => {
+      const from = intParam(url, 'from', 0);
+      if (Number.isNaN(from)) return 400;
+      const out = [];
+      for (const [h, b] of ix.history) {
+        if (h < from) continue;
+        for (const e of b.events) for (const nf of e.nullifiers ?? e.burn?.nullifiers ?? []) out.push({ height: h, nullifier: nf });
+      }
+      return { from, height: ix.height, nullifiers: out };
+    }],
+    // The digest after one block, to compare independent indexers at the same height.
+    [/^\/digest\/(\d+)$/, (_, [h]) => {
+      const d = ix.digests.get(Number(h));
+      return d === undefined ? 404 : { height: Number(h), digest: d };
+    }],
+    // Blocks with SH-20 activity, newest first: accepted events and rejected envelopes.
+    [/^\/blocks$/, (url) => {
+      const before = intParam(url, 'before', (ix.height ?? -1) + 1);
+      const limit = Math.min(intParam(url, 'limit', 20), BLOCK_PAGE_MAX);
+      if (Number.isNaN(before) || Number.isNaN(limit)) return 400;
+      const out = [];
+      for (const [h, b] of [...ix.history.entries()].reverse()) {
+        if (h >= before) continue;
+        out.push(b);
+        if (out.length >= limit) break;
+      }
+      return out;
+    }],
+    // One SH-20 transaction: its accepted event (or rejection reason) and the notes it created.
+    [/^\/tx\/([0-9a-f]{64})$/, (_, [txid]) => {
+      const height = ix.txIndex.get(txid);
+      if (height === undefined) return 404;
+      const b = ix.history.get(height);
+      return {
+        txid, height,
+        event: b.events.find((e) => e.txid === txid) ?? null,
+        rejected: b.rejected.find((e) => e.txid === txid)?.reason ?? null,
+        notes: ix.notes.filter((n) => n.txid === txid),
+      };
+    }],
   ];
 
   return (req, res) => {

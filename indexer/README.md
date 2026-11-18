@@ -16,7 +16,7 @@ checked, spends (TRANSFER, BURN, LIST, later DEPLOYs) are rejected until a verif
 Node 20 or newer, no dependencies.
 
 ```sh
-npm test                  # 39 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, API
+npm test                  # 40 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, API
 npm run vectors           # regenerates vectors/v0.2.json (deterministic)
 node bin/replay.js <dir>  # replays a folder of `bitcoin-cli getblock <hash> 2` JSON files
 node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser U --rpcpass P --activation H   # live, own node

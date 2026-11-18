@@ -52,6 +52,9 @@ test('rollback restores the exact state, and replay gives the same digests', () 
   assert.deepEqual([ix.tree.size, ix.nullifiers.size, ix.listings.get(blocks[2].txs[0].txid).state], sizes);
   assert.equal(ix.token('SEC2'), null);
   assert.equal(ix.token('GENE').burned, 0n);
+  assert.deepEqual([...ix.history.keys()], [...fresh.history.keys()]);
+  assert.equal(ix.txIndex.size, fresh.txIndex.size);
+  assert.ok(blocks.slice(3).every((b) => b.txs.every((t) => !ix.txIndex.has(t.txid))));
 
   for (const blk of blocks.slice(3)) assert.equal(ix.applyBlock(blk).digest, digests[blk.height - 1]);
 });

@@ -36,10 +36,11 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `indexer/` | reference indexer, Node ≥ 20, zero dependencies |
 | `indexer/vectors/v0.2.json` | deterministic vectors for a second implementation |
 | `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` (for the vault and relayers) |
+| `explorer/` | public explorer: one static page (transfer demo, activity, supply check, indexer comparison) |
 
 ```sh
 cd indexer
-npm test            # 39 tests
+npm test            # 40 tests
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 ```
@@ -54,6 +55,7 @@ Done in `indexer/`:
 - State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest.
 - Poseidon over BN254 written from scratch (constants generated with the Grain LFSR, matches circomlib's `poseidon([1,2])`), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
 - Live chain follower (Bitcoin Core RPC or Esplora, reorgs with 288 blocks of undo) and a read-only HTTP API with a per-leaf note log for wallets (`docs/API.md`).
+- Explorer (`explorer/index.html`): one static page with no dependency, reads any indexer, demo sample built from real indexer output.
 - Proof verification is an interface (`verifier.verifySpend`). **The default verifier rejects every spend**, so TRANSFER, BURN, LIST and non-genesis DEPLOY are not accepted yet.
 
 Not done: the spend circuit and its pinned verifier, the `ct` sealing format, the browser vault, a relayer, a second independent indexer, the

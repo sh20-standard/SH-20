@@ -59,6 +59,11 @@ export class Indexer {
     // Not part of the digest; it is derived from the same accepted envelopes.
     this.notes = [];
     this._ctx = { height: null, txid: null };
+    // Per-block history for explorers: accepted events and rejected envelopes, and
+    // the block of every SH-20 transaction. Undone on reorgs; not part of the digest.
+    this.history = new Map(); // height -> { height, hash, digest, root, events, rejected }
+    this.txIndex = new Map(); // txid -> height
+    this.digests = new Map(); // height -> digest hex, every block: lets anyone compare indexers at one height
   }
 
   /** Appends a leaf to the tree and records its metadata for wallets. */
@@ -109,6 +114,15 @@ export class Indexer {
     const h = Buffer.alloc(4);
     h.writeUInt32LE(block.height);
     this.digest = sha256(this.digest, h, frToBytes(this.tree.root), delta);
+
+    this._set(this.digests, block.height, this.digest.toString('hex'));
+    if (events.length || rejected.length) {
+      this._set(this.history, block.height, {
+        height: block.height, hash: block.hash ?? null, digest: this.digest.toString('hex'),
+        root: hexFr(this.tree.root), leaves: this.tree.size, events, rejected,
+      });
+      for (const e of [...events, ...rejected]) if (e.txid && !this.txIndex.has(e.txid)) this._set(this.txIndex, e.txid, block.height);
+    }
 
     this.frames.push(frame);
     this._ops = null;

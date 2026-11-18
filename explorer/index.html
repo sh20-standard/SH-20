@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-/t26ePIFV+5fU2BH7NMalHe1ROWV3YzZDNf6VmsDBrc='; style-src 'unsafe-inline'; connect-src http: https:; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>SH-20 Explorer</title>
+<style>
+:root {
+  /* A case file on a desk: public facts are marked with a highlighter, private ones are redacted.
+     One left-aligned column of evidence; the hero lays three documents side by side. */
+  --paper: #e5e8ec;
+  --sheet: #fbfbf9;
+  --ink: #1a1d22;
+  --muted: #59606b;
+  --mark: #ffc84f;
+  --redact: #000000;
+  --rule: #c6ccd4;
+  --ok: #24704f;
+  --bad: #b42318;
+  --serif: "Iowan Old Style", "Charter", "Sitka Text", Cambria, Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --s1: 0.8125rem; --s2: 0.9375rem; --s3: 1.0625rem; --s4: 1.375rem; --s5: 1.875rem; --s6: 2.75rem;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-padding-top: 4.5rem; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 400 var(--s3)/1.55 var(--serif); }
+a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 0.18em; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+h1, h2, h3 { font-family: var(--serif); font-weight: 700; line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: var(--s6); letter-spacing: -0.015em; max-width: 18ch; }
+h2 { font-size: var(--s5); letter-spacing: -0.01em; }
+h3 { font-size: var(--s3); }
+p { margin: 0; max-width: 65ch; }
+.wrap { width: min(1040px, 100% - 2.5rem); margin-inline: auto; }
+.sans { font-family: var(--sans); }
+.mono, code { font-family: var(--mono); font-size: var(--s1); }
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+/* ---- top bar ---- */
+.top { position: sticky; top: 0; z-index: 5; background: var(--paper); border-bottom: 1px solid var(--rule); }
+.top .wrap { display: flex; align-items: center; gap: 1.25rem; min-height: 3.5rem; flex-wrap: wrap; padding-block: 0.4rem; }
+.brand { font-weight: 700; font-size: var(--s4); text-decoration: none; letter-spacing: -0.01em; }
+.brand small { font: 400 var(--s2) var(--sans); color: var(--muted); margin-left: 0.4rem; }
+.top nav { display: flex; gap: 1rem; flex-wrap: wrap; font: 500 var(--s2) var(--sans); margin-right: auto; }
+.top nav a { text-decoration: none; color: var(--muted); }
+.top nav a:hover { color: var(--ink); text-decoration: underline; }
+.lang { font: 600 var(--s1) var(--sans); background: none; border: 1px solid var(--rule); border-radius: 999px; padding: 0.25rem 0.7rem; }
+.lang:hover { border-color: var(--ink); }
+
+.banner { font: 400 var(--s2)/1.45 var(--sans); padding: 0.7rem 0; }
+.banner.demo { background: var(--ink); color: var(--sheet); }
+.banner.link { background: var(--mark); color: var(--ink); }
+.banner.error { background: var(--bad); color: #fff; }
+.banner p { max-width: none; }
+
+main { display: grid; gap: 4.5rem; padding-block: 3rem 5rem; }
+section > .wrap { display: grid; gap: 1.25rem; }
+
+/* ---- hero: three documents ---- */
+.hero .wrap { gap: 1.5rem; }
+.lede { font-size: var(--s4); line-height: 1.45; max-width: 52ch; }
+.sheets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.25rem; align-items: start; margin-top: 1rem; }
+.sheet { background: var(--sheet); border: 1px solid var(--rule); padding: 1.25rem 1.25rem 1.1rem;
+  box-shadow: 0 1px 0 var(--rule), 0 18px 30px -24px rgba(26, 29, 34, 0.45); display: grid; gap: 0.9rem; }
+.sheet.sh20 { border: 2px solid var(--ink); }
+.sheet header { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.sheet h3 { font-size: var(--s4); }
+.tag { font: 500 var(--s1) var(--sans); color: var(--muted); }
+.sheet dl { margin: 0; display: grid; gap: 0.55rem; }
+.sheet dl div { display: grid; gap: 0.1rem; }
+.sheet dt { font: 400 var(--s1) var(--sans); color: var(--muted); }
+.sheet dd { margin: 0; font-size: var(--s3); min-height: 1.6em; }
+.sheet .foot { font: 400 var(--s1)/1.45 var(--sans); color: var(--muted); border-top: 1px solid var(--rule); padding-top: 0.7rem; }
+.mark { background: linear-gradient(transparent 14%, var(--mark) 14%, var(--mark) 90%, transparent 90%); padding: 0 0.2em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.bar { display: inline-block; vertical-align: -0.2em; height: 1.15em; width: var(--w, 6em); max-width: 100%; background: var(--redact); }
+.sheet .bar { transform-origin: left center; animation: redact 520ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards; animation-delay: calc(var(--i, 0) * 120ms + 350ms); }
+@keyframes redact { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@media (prefers-reduced-motion: reduce) { .sheet .bar { animation: none; } }
+
+.onchain { background: var(--sheet); border: 1px solid var(--rule); padding: 1.25rem; display: grid; gap: 0.9rem; }
+.onchain ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.8rem; }
+.onchain li { display: grid; gap: 0.25rem; }
+.onchain .hexes { display: grid; gap: 0.15rem; overflow-wrap: anywhere; color: var(--muted); }
+.btn { font: 600 var(--s2) var(--sans); background: var(--ink); color: var(--sheet); border: 0; border-radius: 6px; padding: 0.55rem 0.95rem; justify-self: start; }
+.btn:hover { background: #000; }
+.btn.quiet { background: none; color: var(--ink); border: 1px solid var(--rule); }
+.btn.quiet:hover { border-color: var(--ink); }
+
+/* ---- status line ---- */
+.status .wrap { display: flex; flex-wrap: wrap; gap: 0.6rem 1.75rem; align-items: center; font: 400 var(--s2) var(--sans); border-block: 1px solid var(--rule); padding-block: 0.9rem; }
+.status b { font-weight: 650; font-variant-numeric: tabular-nums; }
+.pill { font: 600 var(--s1) var(--sans); border-radius: 999px; padding: 0.2rem 0.65rem; border: 1px solid currentColor; white-space: nowrap; }
+.pill.ok { color: var(--ok); }
+.pill.bad { color: var(--bad); }
+.pill.na { color: var(--muted); }
+
+/* ---- activity ---- */
+.feed { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); font-family: var(--sans); }
+.feed > li { display: grid; grid-template-columns: 6.5rem 7.5rem minmax(0, 1fr) auto; gap: 0.4rem 1rem; align-items: center; padding: 0.75rem 0; border-bottom: 1px solid var(--rule); }
+.feed .blk { font-size: var(--s1); color: var(--muted); font-variant-numeric: tabular-nums; }
+.type { font: 600 var(--s1) var(--sans); justify-self: start; padding: 0.15rem 0.55rem; border-radius: 4px; border: 1px solid var(--rule); background: var(--sheet); }
+.type.private { background: var(--redact); color: var(--sheet); border-color: var(--redact); }
+.type.rejected { color: var(--bad); border-color: currentColor; background: none; }
+.feed .what { font-size: var(--s2); }
+.feed .what .bar { height: 0.95em; vertical-align: -0.12em; margin: 0 0.35em 0 0.2em; }
+.feed > li.rejected .what { color: var(--muted); }
+.open { font: 500 var(--s1) var(--sans); background: none; border: 1px solid var(--rule); border-radius: 6px; padding: 0.3rem 0.6rem; }
+.open:hover { border-color: var(--ink); }
+.feed details summary { cursor: pointer; }
+.feed details ul { list-style: none; margin: 0.5rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.feed details .open { font-family: var(--mono); }
+
+/* ---- supply ---- */
+.table { overflow-x: auto; border-top: 1px solid var(--rule); }
+table { border-collapse: collapse; width: 100%; font: 400 var(--s2) var(--sans); min-width: 760px; }
+th { text-align: left; font-weight: 500; color: var(--muted); font-size: var(--s1); padding: 0.6rem 0.75rem 0.6rem 0; border-bottom: 1px solid var(--rule); vertical-align: bottom; }
+td { padding: 0.8rem 0.75rem 0.8rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; font-variant-numeric: tabular-nums; }
+td.ticker { font: 700 var(--s3) var(--serif); }
+td small { display: block; color: var(--muted); font-size: var(--s1); margin-top: 0.15rem; }
+.meter { height: 4px; background: var(--rule); margin-top: 0.4rem; max-width: 9rem; }
+.meter i { display: block; height: 100%; background: var(--ink); }
+
+/* ---- indexers ---- */
+.form { display: grid; gap: 0.9rem; max-width: 40rem; font-family: var(--sans); }
+.form label { font-size: var(--s2); font-weight: 500; display: grid; gap: 0.35rem; }
+.form textarea, .form input { font: 400 var(--s1)/1.5 var(--mono); background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 0.6rem 0.7rem; width: 100%; }
+.form textarea { min-height: 5.5rem; resize: vertical; }
+.form .hint { font-size: var(--s1); color: var(--muted); font-weight: 400; }
+.compare { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; font: 400 var(--s2) var(--sans); }
+.compare li { display: flex; flex-wrap: wrap; gap: 0.4rem 0.9rem; align-items: baseline; }
+.compare .mono { overflow-wrap: anywhere; }
+
+/* ---- next ---- */
+.next ul { margin: 0; padding-left: 1.1em; display: grid; gap: 0.6rem; max-width: 65ch; }
+.never { border-left: 3px solid var(--ink); padding-left: 1rem; }
+
+footer { border-top: 1px solid var(--rule); padding-block: 1.5rem 2.5rem; font: 400 var(--s1)/1.5 var(--sans); color: var(--muted); }
+
+/* ---- transaction dialog ---- */
+dialog { border: 2px solid var(--ink); background: var(--sheet); color: var(--ink); padding: 0; width: min(46rem, 100% - 1.5rem); max-height: min(88vh, 60rem); }
+dialog::backdrop { background: rgba(26, 29, 34, 0.55); }
+.dlg { display: grid; gap: 1.1rem; padding: 1.4rem; font-family: var(--sans); font-size: var(--s2); }
+.dlg header { display: flex; justify-content: space-between; gap: 1rem; align-items: start; }
+.dlg h2 { font-size: var(--s5); }
+.dlg h3 { font: 600 var(--s2) var(--sans); margin-bottom: 0.35rem; }
+.dlg ul { margin: 0; padding-left: 1.1em; display: grid; gap: 0.3rem; }
+.dlg .txid { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.dlg .txid code { overflow-wrap: anywhere; }
+.notes { list-style: none; padding: 0 !important; }
+.notes li { border-top: 1px solid var(--rule); padding-top: 0.45rem; display: grid; gap: 0.15rem; }
+.notes code { overflow-wrap: anywhere; color: var(--muted); }
+
+@media (max-width: 760px) {
+  h1 { font-size: 2.1rem; }
+  .lede { font-size: var(--s3); }
+  .sheets { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 84%; overflow-x: auto; scroll-snap-type: x mandatory; padding: 0.25rem 0.25rem 1.25rem; margin-inline: -0.25rem; }
+  .sheet { scroll-snap-align: start; }
+  .feed > li { grid-template-columns: minmax(0, 1fr) auto; }
+  .feed .blk { grid-column: 1; }
+  .feed .type { grid-column: 1; grid-row: 2; }
+  .feed .what { grid-column: 1 / -1; }
+  .feed > li > .open { grid-column: 2; grid-row: 1 / 3; }
+  .top nav { order: 3; width: 100%; gap: 0.9rem; }
+  html { scroll-padding-top: 6.5rem; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#top" id="top">SH-20<small data-t="explorer"></small></a>
+    <nav aria-label="Sections">
+      <a href="#transfer" data-t="navTransfer"></a>
+      <a href="#activity" data-t="navActivity"></a>
+      <a href="#supply" data-t="navSupply"></a>
+      <a href="#indexers" data-t="navIndexers"></a>
+      <a href="#next" data-t="navNext"></a>
+    </nav>
+    <button class="lang" id="lang" type="button"></button>
+  </div>
+</header>
+<div id="banners"></div>
+<main>
+  <section class="hero" id="transfer"><div class="wrap" id="hero"></div></section>
+  <section class="status" aria-live="polite"><div class="wrap" id="status"></div></section>
+  <section id="activity"><div class="wrap">
+    <h2 data-t="activityTitle"></h2>
+    <p data-t="activityIntro"></p>
+    <ol class="feed" id="feed"></ol>
+  </div></section>
+  <section id="supply"><div class="wrap">
+    <h2 data-t="supplyTitle"></h2>
+    <p data-t="supplyIntro"></p>
+    <div class="table" id="supplyTable"></div>
+  </div></section>
+  <section id="indexers"><div class="wrap">
+    <h2 data-t="indexersTitle"></h2>
+    <p data-t="indexersIntro"></p>
+    <form class="form" id="ixForm">
+      <label for="ixList"><span data-t="ixListLabel"></span><textarea id="ixList" spellcheck="false" autocomplete="off" placeholder="https://indexer.example/"></textarea><span class="hint" data-t="ixListHint"></span></label>
+      <label for="ixExplorer"><span data-t="ixExplorerLabel"></span><input id="ixExplorer" type="url" spellcheck="false" autocomplete="off" placeholder="https://mempool.space/signet"></label>
+      <button class="btn" type="submit" data-t="ixSave"></button>
+    </form>
+    <ul class="compare" id="compare"></ul>
+  </div></section>
+  <section class="next" id="next"><div class="wrap">
+    <h2 data-t="nextTitle"></h2>
+    <ul id="nextList"></ul>
+    <p class="never" data-t="never"></p>
+  </div></section>
+</main>
+<footer><div class="wrap"><p data-t="footer"></p></div></footer>
+<dialog id="txd" aria-labelledby="txdTitle"><div class="dlg" id="txdBody"></div></dialog>
+<script id="demo-data" type="application/json">{"generated":"build-demo.mjs","activationHeight":270000,"routes":{"/status":{"network":"demo","activationHeight":270000,"height":270021,"digest":"73e2b7431b9e2258fc2a0cbbae12a9df433d173ae9eea3f9a6b82a34d151c2ab","root":"0b4bd7f2b485903f30f78aca7fe309be5bc676d5ba6217f7168b29610ca65e0a","leaves":61,"nullifiers":24,"tokens":3,"genesis":"GENE","deployBurn":"1000","anchorWindow":100,"verifier":"demo (accepts any 480-byte proof)"},"/tokens":[{"ticker":"GENE","t":"1195724357","max":"21000000","lim":"1000","pre":"0","start":270003,"end":0,"unlock":270003,"price":"1000","payMode":1,"payScript":"","mints":"11","burned":"2300","deployTxid":"2ed401e9532a46a9bb6498c5f73e234e7da526a98d18d7a2677a134e3fa154c4","deployHeight":270001},{"ticker":"NOVA","t":"1313822273","max":"10000000","lim":"500","pre":"500000","start":270010,"end":0,"unlock":274320,"price":"2500","payMode":2,"payScript":"00146b0bfe0dc403f32469cdb3e86af4814ef177c884","mints":"8","burned":"0","deployTxid":"e9915c7f6a523de60e61f7a4ebbfa5a560758e112c6b02a6f6a1b276705c9fe1","deployHeight":270007},{"ticker":"KILN","t":"1263094862","max":"1000000","lim":"100","pre":"0","start":270016,"end":272016,"unlock":270016,"price":"0","payMode":0,"payScript":"","mints":"4","burned":"0","deployTxid":"d2c4615fbe87d63e9d7f54dab0619e1b4eb01ef34fdf64f34b957e699478166c","deployHeight":270013}],"/listings":[{"listTxid":"019b718ba23ed797a22768657cc808890372f9d608e42296aa97606731e0d654","ticker":"GENE","amount":"2000","price":"60000","payScript":"001434dd8aa5601d4357f1fabce278fe6430b18e8ec3","lock":"019b718ba23ed797a22768657cc808890372f9d608e42296aa97606731e0d654:0","lockKey":"bf436fa75637de15b2f1dbd8415c9b69b3f6cfb4bdedf8765227d0b21753bf77","state":"SOLD","height":270011,"takeTxid":"517e0f371be6b3a4cfcd3472eeb4be2ab42e600d0610ce1b1a6c1b6552c525a2"},{"listTxid":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9","ticker":"NOVA","amount":"1000","price":"25000","payScript":"0014b872e188c05fd975efd7fdd9421b906f1a3e4440","lock":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9:0","lockKey":"bf436fa75637de15b2f1dbd8415c9b69b3f6cfb4bdedf8765227d0b21753bf77","state":"CLAIMED","height":270017,"closedBy":"575d60c34d2c03c90cd3a9d43f3dda0eaf196962a5cea962e8f36f7b2b8729ff"}],"/blocks?limit=200":[{"height":270020,"hash":"5eefa4dd2caf8637bebea33420fa5b07cb4f8883b8307bf87b3ebe31ebefd790","digest":"84846d298bba629904784b96148a22a5984c2e4b2251a50fe5b4f8e7eed9378d","root":"0b4bd7f2b485903f30f78aca7fe309be5bc676d5ba6217f7168b29610ca65e0a","leaves":61,"events":[{"txid":"31a612792ad0425303665489d05b682f132b0ece69d59a5d1ac5ba0b3572847b","type":"TRANSFER","nullifiers":["288ff0881d2c95691e16013e7f0b8b317d6e115a7d665a7102e7ca2f2719e2bd","20533bbfccc5c7f9bb13946c4499f56759da714cdc1b4a1687820bdd5c613ce5"],"positions":[58,59,60]}],"rejected":[]},{"height":270019,"hash":"f8b66bbdf0ca190d2af613f741d59b5631692dbd3e2e1332c88ab486076e400a","digest":"e8c1a24cc6700367a3d3bf6c98d5f7d92c4cdd2e6415f7fc5bac4414d0f48319","root":"257e854c3b4f06da2ecad546af7c38e2136dd3edc3f015bb303343212b4d9831","leaves":58,"events":[{"txid":"f989537bcac679ddb7a09a1cc4e2f2c56066245acd58c23c9692a965ade1bdc7","type":"CLAIM","listTxid":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9","pos":57}],"rejected":[]},{"height":270018,"hash":"0244f6f2c881d285530361b3a535ddf52080e68171014d49215983efa5e50609","digest":"fd19c5f268c990b2bdeb0d5a00d61305e3f86890628047cea38aa1c5854105d0","root":"22f8636c11c892a940a7bc62647b0ef97535f79a77071ac3d9d0329347d3c714","leaves":57,"events":[{"txid":"575d60c34d2c03c90cd3a9d43f3dda0eaf196962a5cea962e8f36f7b2b8729ff","type":"CLOSED","listTxid":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9"}],"rejected":[]},{"height":270017,"hash":"08c57124b7b4c427e8f8c5b5e1423478d301a2edde0f5bc4bb39c6e6368593b2","digest":"860e98b893aa4a946530f6fcd1a6cc2dbf56da27bf83cd05ea0cb5ea063a0252","root":"22f8636c11c892a940a7bc62647b0ef97535f79a77071ac3d9d0329347d3c714","leaves":57,"events":[{"txid":"a752e4c32fba6b427c53e7255fefedb474b862eb7acbb96aacecd3e204758c32","type":"TRANSFER","nullifiers":["00e5771b6d1c8ad5994f654c0bfd04461ec7c8597c3773b7869e8c5665f80596","292802d8acc37b0f56edebc3cae1ec722d73b952fcf904d5eb56acac9360b616"],"positions":[48,49,50]},{"txid":"8db2b025ff04e38c86c45be485cfd75451818eccd5a7d033aa66f1891e117599","type":"TRANSFER","nullifiers":["0ed387fb0801669ab9f88f31513ebe9803c4c4e21ed5cbae4f390c16139450b2","17f785864480aa98095a928ec528eb76b5865cde1a1c12a8bcabf419b44a9feb"],"positions":[51,52,53]},{"txid":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9","type":"LIST","listTxid":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9","ticker":"NOVA","amount":"1000","price":"25000","nullifiers":["063c0f26c48f67f008c5b65a829abfbc39bfbff78d28733395a2de893c4718fc","103a1f362c5f081338e88a867d72696bddf6b9ca5c0b4f3487e73ccacef05ad1"],"positions":[54,55,56]}],"rejected":[]},{"height":270016,"hash":"38bf82b9c5df4de7fceb4976d097849a1952165ffbb3df3d8db2188cc9caf016","digest":"20beaa28b58c9a480dc253ad9aa7105533e74850d90b8af5130ce44a9388a0ec","root":"22e437b95d9a4748f126daad11b28e3e83e2064f6b0b509dbd9f53bb8cd62191","leaves":48,"events":[{"txid":"34c811c42585f555fedca22009d4ce964db7f613a7fd6d66cc4c34d7c309eb2c","type":"MINT","ticker":"KILN","v":"100","pos":41},{"txid":"6139cf8df806c5b1e815e2e16e4babec7da62ac6b6c1851ee3c01e240d782d12","type":"MINT","ticker":"KILN","v":"100","pos":42},{"txid":"990668b1a3c77cf7f9ae8e526ff7fc730ad6ac312e3b821ddc060be600427fed","type":"MINT","ticker":"KILN","v":"100","pos":43},{"txid":"bb353b69480d7d5946b7260b3062404f85991862a16e6d9c56ba80f5ecc02b82","type":"MINT","ticker":"KILN","v":"100","pos":44},{"txid":"14e3f36c93a200d097094930e97fec9efeb93bfeeb4d1ba917c34aeb944a8c4e","type":"BURN","ticker":"GENE","v":"300","nullifiers":["2c9565e641024d58595f9fad7d0d87eb318502389fde4c75b381dcc04803b50e","089a1511def9433100294c25724e5ae269357ab650781629be0805e0f7343894"],"positions":[45,46,47]}],"rejected":[]},{"height":270013,"hash":"3942782299ecd97c4720476c843a2f964492efe7e21a90b45fbe114e3e8a2369","digest":"de163f2d43fdaabc3aae0f86247e73769a91b539a24169b7fbbc79ba2c989f6a","root":"1467ccce7ec5589eb6db76b13a7ede9700d024586acfa599d841fd20e9a4d606","leaves":41,"events":[{"txid":"d2c4615fbe87d63e9d7f54dab0619e1b4eb01ef34fdf64f34b957e699478166c","type":"DEPLOY","ticker":"KILN","burn":{"nullifiers":["10d8505e7aa06bac7bf8195ca0fd129643e5eba276a438e4d12b8dabb7e39b24","0ea26633387998579b6b6c011ecbad38ae4843d7869555be9bc657dbe49a3dc2"],"positions":[38,39,40]}}],"rejected":[]},{"height":270012,"hash":"39b5f133b844da875fa89d3e26ebc4a589b19064647fed485dfc5afec2a2d768","digest":"ac9c551b2743adff2ef479783138651b38f7a400e4018f3b972e60f2a5d8f728","root":"086e3ca54203f8d48c292fb028906d1789918711e01234dbd0f18eb5aea365f0","leaves":38,"events":[{"txid":"517e0f371be6b3a4cfcd3472eeb4be2ab42e600d0610ce1b1a6c1b6552c525a2","type":"TAKE","listTxid":"019b718ba23ed797a22768657cc808890372f9d608e42296aa97606731e0d654","outcome":"SOLD","pos":37}],"rejected":[]},{"height":270011,"hash":"cf4deb522a1da7f9075bfa02a01d9a030b5c23bdfa4cd5c297a22973e3fabae1","digest":"1c0bda7a31be9a7737f9e677866ea79da5d757272e0667bdfa8da61df03d5adc","root":"0282466433a355473ab6a7e69cf918bddc48639ce70246bed3936445b7b4a893","leaves":37,"events":[{"txid":"43ea3f32e467aa2f25c4a0f43e83275a99a2ec8224dd15a3c7ce9af7ccbd4651","type":"TRANSFER","nullifiers":["23678782f1bf70f920cd0d76e8d3e3360b993c5959fc9d5eb53c2354f87b83b3","0573c48040dcf804c9928f0681c92ffd9f126a40271660aa7ec1ad3259150423"],"positions":[28,29,30]},{"txid":"7266ae7d08f467429c748961dd1d1836d2ca5cb6de15518a21471eaefd03f33e","type":"TRANSFER","nullifiers":["1b2f6bd08c954ddc8f399f311110c13863f5a3c3e92d8e2e17350f1fcac130f5","1b85bb3a125e7686662e65254c44acf322dc579f87c4e906cc18be0e122cdd76"],"positions":[31,32,33]},{"txid":"019b718ba23ed797a22768657cc808890372f9d608e42296aa97606731e0d654","type":"LIST","listTxid":"019b718ba23ed797a22768657cc808890372f9d608e42296aa97606731e0d654","ticker":"GENE","amount":"2000","price":"60000","nullifiers":["134e21bfab3ba74ce469d4055c1d0c1111d8615e16072cab197e7883495ea531","21216e50c8569a280a7ce8c5b26cc511d08bcb29c37d382174bf655a8acdfbb5"],"positions":[34,35,36]}],"rejected":[]},{"height":270010,"hash":"6cc99dc030a5dc9032f6013118322bd8746e151e8262976e827655dbf1331d9b","digest":"f01dc33b7de2f5ec28bc406e93cada6c4a278e5231142d4bec327085c7bb59f5","root":"1163a2e23fabfbf87372d913359160a295ddf73340852568eb4681acabb57ef0","leaves":28,"events":[{"txid":"18841895f8d5916b66fca28f28350eba405b8f199070c80fab282155aa1d5e57","type":"MINT","ticker":"NOVA","v":"500","pos":20},{"txid":"6242c2fd04805e36f78072fda289c14b782e34946091f4223b848b142d5b7285","type":"MINT","ticker":"NOVA","v":"500","pos":21},{"txid":"5fd7d1728f1373e1f53ad98240352d91b7acf8cb407782d64438a84619eb83ef","type":"MINT","ticker":"NOVA","v":"500","pos":22},{"txid":"68c5aa6eb89736b96b5b9d5cb89abcf256c3bdfaf3f9178542e56667dc180452","type":"MINT","ticker":"NOVA","v":"500","pos":23},{"txid":"66565ab12a6a4d8d3c5ab153e8d547a86c74aacf239215a1507f051c4835ae98","type":"MINT","ticker":"NOVA","v":"500","pos":24},{"txid":"e3a00924f7a22a7ae114b76daa666905d64e1ee11be58de77d221d03461b567e","type":"MINT","ticker":"NOVA","v":"500","pos":25},{"txid":"6360bbdec35b1e7213c156068815147f75081e16d0bacac20be4d678ebd35e7f","type":"MINT","ticker":"NOVA","v":"500","pos":26},{"txid":"969863a5f2dc1809c7891e7d21250df757b3fb7f95838040d8c104f5c102256c","type":"MINT","ticker":"NOVA","v":"500","pos":27}],"rejected":[{"txid":"a64e26ec53806dde3af88fde2b88c26c2e2e529e43bcf4f8fb9467d85d9bc01a","reason":"unknown ticker"}]},{"height":270007,"hash":"352bef2acdbe8c608a963a42fc1a11a8c29a852ad6c7cfd555a8b64400679626","digest":"f417d83bac226f2e7fa8e4d8a9f39bf9e7f58e920950c1e0018aec0af9b81786","root":"2f3a8fd17fc6a2324f879a3152081dfd4298f0bf40cb1a298a1aa17d7837e5fa","leaves":20,"events":[{"txid":"e9915c7f6a523de60e61f7a4ebbfa5a560758e112c6b02a6f6a1b276705c9fe1","type":"DEPLOY","ticker":"NOVA","burn":{"nullifiers":["2717cdc0d934320190d839e1411fdf9b792c92970e30f8c9ed6026bf9a84a129","1a587b8511d53cecc2980e2da57c9ef67b30b259a5a2649b71ee68ea4f55f634"],"positions":[17,18,19]}}],"rejected":[]},{"height":270006,"hash":"75e2f02f38cfb461346df0b5b5ca006465b05e0eb9907a5facf52a0d13df1fb5","digest":"042383d206e9451cb4a4ea7a33274622908e04fa8919a4e8ef194e35f88b89b5","root":"11a0dc8dc685101153d017f8489d3913ab4bfd787930a64a9205b5c399cdc268","leaves":17,"events":[{"txid":"4cf64626ea87280c4a4883376ba036083f5ea2a4869e2f6a6023ae99f058389a","type":"TRANSFER","nullifiers":["02fcc70ed6a4d24398b3f4293690a65118a4ea4218f42f7b2a061417c2f08493","1ad9d6985cf4daf3d912c74cd3cc8f3e82a3a0aa4186830883cf2a96035b8279"],"positions":[11,12,13]},{"txid":"eb48f2aafca13b9dc53d6b0afac8c3250fa6bac033abad7f13d02bceb1ac4f23","type":"TRANSFER","nullifiers":["1eb40224bb0feaa74641eae153f6c5d04dc8a95e4e9305e0ecbc9a06a3807c97","17a0913055604a065c74667f3dc5fad36f4ad3eeb8844eb8c1902ed252f770a7"],"positions":[14,15,16]}],"rejected":[]},{"height":270004,"hash":"0f883b55d3c7fb65afae68ff1e2c8fb9531a0e64d186474237cdb5211a66f389","digest":"1d352dfe1bfc391755e81b9e446054f048c13fd2f49c7770bc0afec4037cc07f","root":"046fdb13db3bd099aedfd9b690411432420b9b2889b74bd7dee27e533fde65d4","leaves":11,"events":[{"txid":"6fbe0291525b828814a6bb9cd3276645f7d15585567b92c0981c06395bf6944d","type":"MINT","ticker":"GENE","v":"1000","pos":6},{"txid":"2381053a9854db98ae2c8a08fe2d9b876776be05f4ee8d6763eb8efb60fdd7c8","type":"MINT","ticker":"GENE","v":"1000","pos":7},{"txid":"f2ebfa78cc41843316d003a61057ad4f3858cd3b620b40b877ec3c3442c44562","type":"MINT","ticker":"GENE","v":"1000","pos":8},{"txid":"e59ff8460ad77f8a48d49bf9e4888765b4a2407ddee037c28dee5bb52b58ab5e","type":"MINT","ticker":"GENE","v":"1000","pos":9},{"txid":"f6c71341c73637cf86407d21a8c6ae859a13db4cb4d7d5ab7e556da3d2386b46","type":"MINT","ticker":"GENE","v":"1000","pos":10}],"rejected":[]},{"height":270003,"hash":"6fc6d00835103e84e482e70c24368e2b7f17c4d1b06883bf65406a0880e936ec","digest":"0c8b1cc6b00fc9570291bb588c54f8b2cc477cece4343f5bf83ffed6066ee570","root":"0568b51e566a871a947d104b10efa8bb83c2e377a7fb3eabe66d35cecac2e878","leaves":6,"events":[{"txid":"6a713af73b381a715b35f35abbd39ac09eaf4a4274d4b10d9bffc8823dc91400","type":"MINT","ticker":"GENE","v":"1000","pos":0},{"txid":"b6988e52d090e98fefa3c9e932cabd1cda30202b8b7ded78ae3de8fc7ed2ad70","type":"MINT","ticker":"GENE","v":"1000","pos":1},{"txid":"2b0cebd7806da7adfe2322fd1f3e9bd07649636554f50d0fe1554e4ad16b6d19","type":"MINT","ticker":"GENE","v":"1000","pos":2},{"txid":"e4f0a1b56fda1293adf65014aa928fd5806da3bde3afe238bc6fcfe125e274a9","type":"MINT","ticker":"GENE","v":"1000","pos":3},{"txid":"6a784b49f5da01c6a44b67856575a716ff31a0be235580716b622453f72a32ae","type":"MINT","ticker":"GENE","v":"1000","pos":4},{"txid":"eee44c1798c9effe84789297cc0c7b78113c89f07532ddfb16375d4539640355","type":"MINT","ticker":"GENE","v":"1000","pos":5}],"rejected":[{"txid":"fce747b216467cae60e2abda4aacc820c2e170ffa563492c16137a2fef8e0f2e","reason":"mint not paid"}]},{"height":270001,"hash":"26fbca960a13700880f4d6587c1fbea1a9091414ebec4478b4698aaf16c8f216","digest":"0a07622e6d2889b9fbd8979005059d165b6db46ca33d75848e711a4ff6fc9407","root":"2f68a1c58e257e42a17a6c61dff5551ed560b9922ab119d5ac8e184c9734ead9","leaves":0,"events":[{"txid":"2ed401e9532a46a9bb6498c5f73e234e7da526a98d18d7a2677a134e3fa154c4","type":"DEPLOY","ticker":"GENE"}],"rejected":[]}],"/tx/31a612792ad0425303665489d05b682f132b0ece69d59a5d1ac5ba0b3572847b":{"txid":"31a612792ad0425303665489d05b682f132b0ece69d59a5d1ac5ba0b3572847b","height":270020,"event":{"txid":"31a612792ad0425303665489d05b682f132b0ece69d59a5d1ac5ba0b3572847b","type":"TRANSFER","nullifiers":["288ff0881d2c95691e16013e7f0b8b317d6e115a7d665a7102e7ca2f2719e2bd","20533bbfccc5c7f9bb13946c4499f56759da714cdc1b4a1687820bdd5c613ce5"],"positions":[58,59,60]},"rejected":null,"notes":[{"pos":58,"height":270020,"txid":"31a612792ad0425303665489d05b682f132b0ece69d59a5d1ac5ba0b3572847b","leaf":"2a819b611b5ed11187cc42799dc40405b88775238d6a619c084ee854f78b397e","kind":"OUT","j":0,"pkEph":"0391b61ed5d4b89f0f9c245da41f52979e1638feb78a1503f5246034534e661214","ct":"b33e881828f7da32b9c02625c8aae54ad069d3cf906c760d55b819c3"},{"pos":59,"height":270020,"txid":"31a612792ad0425303665489d05b682f132b0ece69d59a5d1ac5ba0b3572847b","leaf":"1182f9460b7013c09ae804279580a4f3f32389b22c341297b17b5d7b637a45fd","kind":"OUT","j":1,"pkEph":"029f2cfed028b15011eb737604f961894e3ac9f03d79d0dffa742faad09962d189","ct":"6fea10a75283fd8728992ff21eddce30b1974da93cc5010b05813ea2"},{"pos":60,"height":270020,"txid":"31a612792ad0425303665489d05b682f132b0ece69d59a5d1ac5ba0b3572847b","leaf":"0b80802cdb758136290c5e5d6bf04400228ad78ab6d049babe9515c182924fe9","kind":"OUT","j":2,"pkEph":"03d7165a68ab988078f4093c408ebe9f3b98ddaecb7dd5ee5ac76787255679ab35","ct":"b0d6ef3bb0b6379a4de4f3aae46a370741c6defdba51b8305f6daf8e"}]},"/tx/f989537bcac679ddb7a09a1cc4e2f2c56066245acd58c23c9692a965ade1bdc7":{"txid":"f989537bcac679ddb7a09a1cc4e2f2c56066245acd58c23c9692a965ade1bdc7","height":270019,"event":{"txid":"f989537bcac679ddb7a09a1cc4e2f2c56066245acd58c23c9692a965ade1bdc7","type":"CLAIM","listTxid":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9","pos":57},"rejected":null,"notes":[{"pos":57,"height":270019,"txid":"f989537bcac679ddb7a09a1cc4e2f2c56066245acd58c23c9692a965ade1bdc7","leaf":"25dd2b1ce650d1ba465e44d9d7d8d501d2c4c1da926d6f091e8fcce53cadb0d6","kind":"CLAIM","ticker":"NOVA","v":"1000","npk":"17dde48b31c7a8fee29f9708d1ea919824408eb87f59a1c89797d64acc6b0bbf","rho":"1784a463e9059a914ce30e56eddbb89d6cbd1abfe777a692c5d8330014d6abdd"}]},"/tx/575d60c34d2c03c90cd3a9d43f3dda0eaf196962a5cea962e8f36f7b2b8729ff":{"txid":"575d60c34d2c03c90cd3a9d43f3dda0eaf196962a5cea962e8f36f7b2b8729ff","height":270018,"event":{"txid":"575d60c34d2c03c90cd3a9d43f3dda0eaf196962a5cea962e8f36f7b2b8729ff","type":"CLOSED","listTxid":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9"},"rejected":null,"notes":[]},"/tx/a752e4c32fba6b427c53e7255fefedb474b862eb7acbb96aacecd3e204758c32":{"txid":"a752e4c32fba6b427c53e7255fefedb474b862eb7acbb96aacecd3e204758c32","height":270017,"event":{"txid":"a752e4c32fba6b427c53e7255fefedb474b862eb7acbb96aacecd3e204758c32","type":"TRANSFER","nullifiers":["00e5771b6d1c8ad5994f654c0bfd04461ec7c8597c3773b7869e8c5665f80596","292802d8acc37b0f56edebc3cae1ec722d73b952fcf904d5eb56acac9360b616"],"positions":[48,49,50]},"rejected":null,"notes":[{"pos":48,"height":270017,"txid":"a752e4c32fba6b427c53e7255fefedb474b862eb7acbb96aacecd3e204758c32","leaf":"22c975f8bde945fe4bb732df9d5eb447d5d8da3113032cb1836f0654d35bd0a8","kind":"OUT","j":0,"pkEph":"036e4dcef2b60325e9c8d1f8252cc940514c484d744f99c625014af6a523ad7c0e","ct":"13b06a56145f41a96b0415eac78d88bf3d5d9682825ee0cd613ff3fb"},{"pos":49,"height":270017,"txid":"a752e4c32fba6b427c53e7255fefedb474b862eb7acbb96aacecd3e204758c32","leaf":"2639f8e1830d3cffe105be1972119754ac930b3055b195e958ddaad65ad3072e","kind":"OUT","j":1,"pkEph":"032e519c2f95173cf32fe1f9985ce07ff59b5cedd83f843b976016952eb26b734f","ct":"d3b15fdb6f19d16273e809ed6c1e38cbdfb92dbb7e98f7d6cc7b02cc"},{"pos":50,"height":270017,"txid":"a752e4c32fba6b427c53e7255fefedb474b862eb7acbb96aacecd3e204758c32","leaf":"1b90b58f1597636aefda18daf2b6b761ff60f50edc32517f79a0014c889ad07a","kind":"OUT","j":2,"pkEph":"020a5447ea3b655b2ad4f6d55a16f32c0fe9e7c5b975c5b68b2f2e22d26189e4cc","ct":"20fcb10fbf70b24679a202821f4b3605c75532be160be697dec6931c"}]},"/tx/8db2b025ff04e38c86c45be485cfd75451818eccd5a7d033aa66f1891e117599":{"txid":"8db2b025ff04e38c86c45be485cfd75451818eccd5a7d033aa66f1891e117599","height":270017,"event":{"txid":"8db2b025ff04e38c86c45be485cfd75451818eccd5a7d033aa66f1891e117599","type":"TRANSFER","nullifiers":["0ed387fb0801669ab9f88f31513ebe9803c4c4e21ed5cbae4f390c16139450b2","17f785864480aa98095a928ec528eb76b5865cde1a1c12a8bcabf419b44a9feb"],"positions":[51,52,53]},"rejected":null,"notes":[{"pos":51,"height":270017,"txid":"8db2b025ff04e38c86c45be485cfd75451818eccd5a7d033aa66f1891e117599","leaf":"22098af96ba12729da4bb97ed99ec44ac06f93d73c31094a1fba4b07f0ce93fe","kind":"OUT","j":0,"pkEph":"03e754565bafe81c5aa9611ec8d95d0cdf4d506d46eb0c7f3de74daa4fde113315","ct":"2a85c96f672ecbf9a21d75ada8b682aae87793772d1dacd2a5d39bd8"},{"pos":52,"height":270017,"txid":"8db2b025ff04e38c86c45be485cfd75451818eccd5a7d033aa66f1891e117599","leaf":"1b5f70fa585fe68165eb34c3aac2016680d06b3a905e50859506ff779a471bc6","kind":"OUT","j":1,"pkEph":"023527b2c0471ab17d7db4b16b594c5222535c23a8687ce06d7bf3c82eb3ebfa7f","ct":"19582cf62e16c40c9100e29a4d2a919a83e8bae23d1eaff35d6335d7"},{"pos":53,"height":270017,"txid":"8db2b025ff04e38c86c45be485cfd75451818eccd5a7d033aa66f1891e117599","leaf":"17b173b9d4621ec6fcafc48b9a1da12d7d6a3064d4c18b3b1dcdaca070ee4968","kind":"OUT","j":2,"pkEph":"03b215d07f09b4e63ca46d99488ff4917aa5d79feea31d340f7c611bf844feb1dc","ct":"2b7f0089ade6b5ec328bf4013cb1717f9317ac46b1642e3b4dcc41ae"}]},"/tx/1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9":{"txid":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9","height":270017,"event":{"txid":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9","type":"LIST","listTxid":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9","ticker":"NOVA","amount":"1000","price":"25000","nullifiers":["063c0f26c48f67f008c5b65a829abfbc39bfbff78d28733395a2de893c4718fc","103a1f362c5f081338e88a867d72696bddf6b9ca5c0b4f3487e73ccacef05ad1"],"positions":[54,55,56]},"rejected":null,"notes":[{"pos":54,"height":270017,"txid":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9","leaf":"1a04e6129485ab2e00593dde69d297ed9a8205cfcb02758e8609dfd21b2f7ead","kind":"OUT","j":0,"pkEph":"0342b920eeb757719aeebabd75250f20fad034ecba55fa77c8b2f852a59a4de00e","ct":"969bd0095d06feff08db897cba2f672f6f45dc3c519cdad363307793"},{"pos":55,"height":270017,"txid":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9","leaf":"0e0a63997fcc461e34c389d8cd13f5a9318a8b6a105afa258dfa86fe9a175bcb","kind":"OUT","j":1,"pkEph":"0242fd5de6ac649055a8ac1a2bd3721ee4f0c502001182017b974823c5db1128e5","ct":"ddc3b0c71ab42012acb283b317828c408a2ed6dfbaec90265e8e9622"},{"pos":56,"height":270017,"txid":"1cf14a3fbc2b447c5eb8e3f4bb29ac22e6d91fef39a880748d0968bd943076f9","leaf":"07e947d0175363dfadd68508735734bc984021c44ff3064265cda3614519043c","kind":"OUT","j":2,"pkEph":"0224893dccb3b89120d92a2168b7adddc84fd0f0c34e68461a39b4d75a0bea2b7e","ct":"7e878448878d3a1b77016010a3923f493d98b5c4191a8f10df7e5278"}]},"/tx/34c811c42585f555fedca22009d4ce964db7f613a7fd6d66cc4c34d7c309eb2c":{"txid":"34c811c42585f555fedca22009d4ce964db7f613a7fd6d66cc4c34d7c309eb2c","height":270016,"event":{"txid":"34c811c42585f555fedca22009d4ce964db7f613a7fd6d66cc4c34d7c309eb2c","type":"MINT","ticker":"KILN","v":"100","pos":41},"rejected":null,"notes":[{"pos":41,"height":270016,"txid":"34c811c42585f555fedca22009d4ce964db7f613a7fd6d66cc4c34d7c309eb2c","leaf":"2b49c3e91ea58593a307765e72ca89505c697afacd59f325c50a23e8fabcaf0f","kind":"MINT","ticker":"KILN","v":"100","npk":"0c543993fa5cd439776433200770612243c05c1eb9ab20958e4498b9bcb057f0","rho":"16c5bbd3d8a03af82a3313208e44db9e4915a5ea712e36700ffbe93c3306e65b"}]},"/tx/6139cf8df806c5b1e815e2e16e4babec7da62ac6b6c1851ee3c01e240d782d12":{"txid":"6139cf8df806c5b1e815e2e16e4babec7da62ac6b6c1851ee3c01e240d782d12","height":270016,"event":{"txid":"6139cf8df806c5b1e815e2e16e4babec7da62ac6b6c1851ee3c01e240d782d12","type":"MINT","ticker":"KILN","v":"100","pos":42},"rejected":null,"notes":[{"pos":42,"height":270016,"txid":"6139cf8df806c5b1e815e2e16e4babec7da62ac6b6c1851ee3c01e240d782d12","leaf":"0446da9715420a6d93f57eb5e0b95b6fbedc35ed6f08b143a0dcf625b9a0ac1c","kind":"MINT","ticker":"KILN","v":"100","npk":"2283f7e8faaf12081308b958adb7c4f63f5b465cecd214cca954a0ec4e9b1fce","rho":"2b122ffb60f9b0aea165b2350266f1839c6c09ec5152199be1d3bf68a6020815"}]},"/tx/990668b1a3c77cf7f9ae8e526ff7fc730ad6ac312e3b821ddc060be600427fed":{"txid":"990668b1a3c77cf7f9ae8e526ff7fc730ad6ac312e3b821ddc060be600427fed","height":270016,"event":{"txid":"990668b1a3c77cf7f9ae8e526ff7fc730ad6ac312e3b821ddc060be600427fed","type":"MINT","ticker":"KILN","v":"100","pos":43},"rejected":null,"notes":[{"pos":43,"height":270016,"txid":"990668b1a3c77cf7f9ae8e526ff7fc730ad6ac312e3b821ddc060be600427fed","leaf":"2f5444e58b7d7c557f9958955dc1a68db6a15a68f29b07d7f619424c18685163","kind":"MINT","ticker":"KILN","v":"100","npk":"07f5a7a734fdf70a08bdb7960ce599de6285e980298d36896960f6ca0f0cc414","rho":"237590da37d06c1b4e67f7ba695eba9ef05c19496caf52dfd72bc7eef3f8bbc2"}]},"/tx/bb353b69480d7d5946b7260b3062404f85991862a16e6d9c56ba80f5ecc02b82":{"txid":"bb353b69480d7d5946b7260b3062404f85991862a16e6d9c56ba80f5ecc02b82","height":270016,"event":{"txid":"bb353b69480d7d5946b7260b3062404f85991862a16e6d9c56ba80f5ecc02b82","type":"MINT","ticker":"KILN","v":"100","pos":44},"rejected":null,"notes":[{"pos":44,"height":270016,"txid":"bb353b69480d7d5946b7260b3062404f85991862a16e6d9c56ba80f5ecc02b82","leaf":"2de9491d790331df5cdcd37cba0f29c8fcc590ee23e90e425ec51f30c823f06f","kind":"MINT","ticker":"KILN","v":"100","npk":"088cb5cdf0b3b78cb4731913ca0b5862b48df3900fb5c7a251a5382f591f2e89","rho":"0823143a2704977f2876594636d8ee9650e41ac58b378db71b4e237ffb49f4f7"}]},"/tx/14e3f36c93a200d097094930e97fec9efeb93bfeeb4d1ba917c34aeb944a8c4e":{"txid":"14e3f36c93a200d097094930e97fec9efeb93bfeeb4d1ba917c34aeb944a8c4e","height":270016,"event":{"txid":"14e3f36c93a200d097094930e97fec9efeb93bfeeb4d1ba917c34aeb944a8c4e","type":"BURN","ticker":"GENE","v":"300","nullifiers":["2c9565e641024d58595f9fad7d0d87eb318502389fde4c75b381dcc04803b50e","089a1511def9433100294c25724e5ae269357ab650781629be0805e0f7343894"],"positions":[45,46,47]},"rejected":null,"notes":[{"pos":45,"height":270016,"txid":"14e3f36c93a200d097094930e97fec9efeb93bfeeb4d1ba917c34aeb944a8c4e","leaf":"0c76d8f5d3c7bc46b1a14f5cc5b30b259c2e1c436dc91e037f2c023640f9cfd9","kind":"OUT","j":0,"pkEph":"0393950fc721f75163442bc7e082f4296edefb9d7e87f7ae71fe89a8e0836c5223","ct":"9702ff2754242fcf9175a33675bfa44de7df4676a81bd504289fdc9e"},{"pos":46,"height":270016,"txid":"14e3f36c93a200d097094930e97fec9efeb93bfeeb4d1ba917c34aeb944a8c4e","leaf":"2244f9c35c72461d90d9302a81c4c540614579a29ef874f97b384b6c65317225","kind":"OUT","j":1,"pkEph":"03becf6b36fb3ef4df63fc9531e7786d13abd56a2fc097374301995f434d2d5e2a","ct":"8e0ab5cdd461151d64fc67b8838d3234483a9d9cd3c81146b3832d21"},{"pos":47,"height":270016,"txid":"14e3f36c93a200d097094930e97fec9efeb93bfeeb4d1ba917c34aeb944a8c4e","leaf":"02db4d79636416d239aef8b8704d75875c01c98e3b752e865752d98f8c6452ce","kind":"OUT","j":2,"pkEph":"03696c6b3c7e372b909f33bc2f6e9db75528e6cf2ee26b52c0cb1fbf890f182b96","ct":"34c298887eec65a78fb4c4b5b187ed94abc6458e64dc1713dc13a93b"}]},"/tx/d2c4615fbe87d63e9d7f54dab0619e1b4eb01ef34fdf64f34b957e699478166c":{"txid":"d2c4615fbe87d63e9d7f54dab0619e1b4eb01ef34fdf64f34b957e699478166c","height":270013,"event":{"txid":"d2c4615fbe87d63e9d7f54dab0619e1b4eb01ef34fdf64f34b957e699478166c","type":"DEPLOY","ticker":"KILN","burn":{"nullifiers":["10d8505e7aa06bac7bf8195ca0fd129643e5eba276a438e4d12b8dabb7e39b24","0ea26633387998579b6b6c011ecbad38ae4843d7869555be9bc657dbe49a3dc2"],"positions":[38,39,40]}},"rejected":null,"notes":[{"pos":38,"height":270013,"txid":"d2c4615fbe87d63e9d7f54dab0619e1b4eb01ef34fdf64f34b957e699478166c","leaf":"2e3994c275ae71f6f3d1f56ac6d1c19971ddbd983da561652e67d6d857faebb6","kind":"OUT","j":0,"pkEph":"03c1fc02c4a96aa2a392d1d02c61726af4076956f995ad6ee8e3fe118b2637e510","ct":"1f0aae9b89ccca9e8ca7d44571be862ccdddea50a1169cd906ebea46"},{"pos":39,"height":270013,"txid":"d2c4615fbe87d63e9d7f54dab0619e1b4eb01ef34fdf64f34b957e699478166c","leaf":"10a98f7943870e9a059716a569ec042b8b9ffef97d70a303bb6118958ed7073a","kind":"OUT","j":1,"pkEph":"03ad29787b1d71b3d08dff0548d694ca7aa252e80f0896cf4691fd1597f6ac0330","ct":"023527d237ea5ee7359c5f0921af62cd24440f8bc791f71c81bab16c"},{"pos":40,"height":270013,"txid":"d2c4615fbe87d63e9d7f54dab0619e1b4eb01ef34fdf64f34b957e699478166c","leaf":"25983d8998735545dfdc2e21c2df84c64917bbd26c363b3eb8e7c269fd597744","kind":"OUT","j":2,"pkEph":"03d94f79f44b25376be3d68d2c971cd0bd9d34c76b394f260225ae09ed3f64344f","ct":"244543eb670374c62fae3c5a1ab7ce63162d46dcff4dfa35bc80d5ad"}]},"/tx/517e0f371be6b3a4cfcd3472eeb4be2ab42e600d0610ce1b1a6c1b6552c525a2":{"txid":"517e0f371be6b3a4cfcd3472eeb4be2ab42e600d0610ce1b1a6c1b6552c525a2","height":270012,"event":{"txid":"517e0f371be6b3a4cfcd3472eeb4be2ab42e600d0610ce1b1a6c1b6552c525a2","type":"TAKE","listTxid":"019b718ba23ed797a22768657cc808890372f9d608e42296aa97606731e0d654","outcome":"SOLD","pos":37},"rejected":null,"notes":[{"pos":37,"height":270012,"txid":"517e0f371be6b3a4cfcd3472eeb4be2ab42e600d0610ce1b1a6c1b6552c525a2","leaf":"10c79b829eee5f41fa4f2520921ba1088040c283a8b6534814d2ee7125ecd263","kind":"TAKE","ticker":"GENE","v":"2000","npk":"1a33231cbb10de7860d9bf1bb217caeaf3068ff45acd7af5fa448664b6ef9fe1","rho":"14c484f08307ab90cfc2a58945acdca6c8f182ef9be0b96f2f8d0889c34f4dd2"}]},"/tx/43ea3f32e467aa2f25c4a0f43e83275a99a2ec8224dd15a3c7ce9af7ccbd4651":{"txid":"43ea3f32e467aa2f25c4a0f43e83275a99a2ec8224dd15a3c7ce9af7ccbd4651","height":270011,"event":{"txid":"43ea3f32e467aa2f25c4a0f43e83275a99a2ec8224dd15a3c7ce9af7ccbd4651","type":"TRANSFER","nullifiers":["23678782f1bf70f920cd0d76e8d3e3360b993c5959fc9d5eb53c2354f87b83b3","0573c48040dcf804c9928f0681c92ffd9f126a40271660aa7ec1ad3259150423"],"positions":[28,29,30]},"rejected":null,"notes":[{"pos":28,"height":270011,"txid":"43ea3f32e467aa2f25c4a0f43e83275a99a2ec8224dd15a3c7ce9af7ccbd4651","leaf":"2d77aa0769a69c92b3c03839ef7255324e7238b445f66bf188b2f5298cc95607","kind":"OUT","j":0,"pkEph":"0263eb0ad55e5fb0a12c7166cfe6184e1a8d8fbc06d5956e674afb8606f0a91689","ct":"1135c1468a8f1cdc66b805cc7544848724e2e3bbf9137b69343e35dd"},{"pos":29,"height":270011,"txid":"43ea3f32e467aa2f25c4a0f43e83275a99a2ec8224dd15a3c7ce9af7ccbd4651","leaf":"285f349b20e1980fc85272a62b677e91093d267e86ed8919a6291734b6e5b0fa","kind":"OUT","j":1,"pkEph":"03c867d68189f02a0304cccd80106fa8191ef4072b0f7945a41a7885bca9fc4ac6","ct":"b422df4999a395c4239d1185331dd8fc6c01555af97782e23853bbc7"},{"pos":30,"height":270011,"txid":"43ea3f32e467aa2f25c4a0f43e83275a99a2ec8224dd15a3c7ce9af7ccbd4651","leaf":"293fafb078dc448c728b3cddcb5e5e7d7fa48375ea3f5f5239db41e5bb616df8","kind":"OUT","j":2,"pkEph":"02edf0295c182265b1a1f2596510177567f602534840178bc0eb8094d9ded32c4c","ct":"93b05df456b02476560064810a5bc2ed2aec97d26cdf19d73cef7e86"}]},"/tx/7266ae7d08f467429c748961dd1d1836d2ca5cb6de15518a21471eaefd03f33e":{"txid":"7266ae7d08f467429c748961dd1d1836d2ca5cb6de15518a21471eaefd03f33e","height":270011,"event":{"txid":"7266ae7d08f467429c748961dd1d1836d2ca5cb6de15518a21471eaefd03f33e","type":"TRANSFER","nullifiers":["1b2f6bd08c954ddc8f399f311110c13863f5a3c3e92d8e2e17350f1fcac130f5","1b85bb3a125e7686662e65254c44acf322dc579f87c4e906cc18be0e122cdd76"],"positions":[31,32,33]},"rejected":null,"notes":[{"pos":31,"height":270011,"txid":"7266ae7d08f467429c748961dd1d1836d2ca5cb6de15518a21471eaefd03f33e","leaf":"13237647e8154efc36e39517706ddd636fdc11469b346a9100b32961ccf61fda","kind":"OUT","j":0,"pkEph":"029509469de3fec8b2bc188a23855ee3ff10a25ed1228493dcf55ff7bfd71b3456","ct":"1d2e78a69264f815b114447e7f7ba9d7fbbd97bc5752709dab399a96"},{"pos":32,"height":270011,"txid":"7266ae7d08f467429c748961dd1d1836d2ca5cb6de15518a21471eaefd03f33e","leaf":"0904efc8074f8fa0653ea32a67634e7653cb47f878d10105c27a6ff5d7357cdb","kind":"OUT","j":1,"pkEph":"034bfa1ab62410c8da8376688da51904db32f685a77d539663eee3c901c27a8f5d","ct":"77d9cef9de00854aa8960e6994185fc3d723da1526cc0cbc7a76afda"},{"pos":33,"height":270011,"txid":"7266ae7d08f467429c748961dd1d1836d2ca5cb6de15518a21471eaefd03f33e","leaf":"1f6f3f7e503e217308e53eaaa8352dc051bd9b9ece5e1088607471609023db9a","kind":"OUT","j":2,"pkEph":"03c3a89e94aa762d511cb7d0a8051d05be14b84dd463ddf76e030dc063207c8df0","ct":"3bce4ccb05e42acfe18a94f67685eace2caf4e390d3ace0e522ea62f"}]},"/tx/019b718ba23ed797a22768657cc808890372f9d608e42296aa97606731e0d654":{"txid":"019b718ba23ed797a22768657cc808890372f9d608e42296aa97606731e0d654","height":270011,"event":{"txid":"019b718ba23ed797a22768657cc808890372f9d608e42296aa97606731e0d654","type":"LIST","listTxid":"019b718ba23ed797a22768657cc808890372f9d608e42296aa97606731e0d654","ticker":"GENE","amount":"2000","price":"60000","nullifiers":["134e21bfab3ba74ce469d4055c1d0c1111d8615e16072cab197e7883495ea531","21216e50c8569a280a7ce8c5b26cc511d08bcb29c37d382174bf655a8acdfbb5"],"positions":[34,35,36]},"rejected":null,"notes":[{"pos":34,"height":270011,"txid":"019b718ba23ed797a22768657cc808890372f9d608e42296aa97606731e0d654","leaf":"03cdc5d78655b24010203b6b44ea929252a9b979ecaeaf2838ef6fb337290c09","kind":"OUT","j":0,"pkEph":"036a3a35f051aa4b1194d539dc8ddfcca55515a6cb4b81c950c0fd5fe86308c264","ct":"526c0595896562025baa48be9931aeca7d14aa3ed4e6c449e2c6e752"},{"pos":35,"height":270011,"txid":"019b718ba23ed797a22768657cc808890372f9d608e42296aa97606731e0d654","leaf":"0dee8d34de37f642a1d13be65690558e552a13e4201f34c26ab0a38f4b6d39f1","kind":"OUT","j":1,"pkEph":"0324fa7d6dbbb99c8f5dfda88403d020de212e421c75a585983f956632fc6e8589","ct":"aff2f2efdd368cf0fb68b4697b04bee669897f11bea816597647c27f"},{"pos":36,"height":270011,"txid":"019b718ba23ed797a22768657cc808890372f9d608e42296aa97606731e0d654","leaf":"23e77e72e72c8d12d3a13e1d7d107b723aa038380f799fb4eb2b8d9c5c187748","kind":"OUT","j":2,"pkEph":"03009dd4380e4b36e9884375346c245b6117f98405ce412b67652da8754133c256","ct":"aac1c2fbebb00f7807ab20041c462b4401bab27e42597a5cfdadbe9d"}]},"/tx/18841895f8d5916b66fca28f28350eba405b8f199070c80fab282155aa1d5e57":{"txid":"18841895f8d5916b66fca28f28350eba405b8f199070c80fab282155aa1d5e57","height":270010,"event":{"txid":"18841895f8d5916b66fca28f28350eba405b8f199070c80fab282155aa1d5e57","type":"MINT","ticker":"NOVA","v":"500","pos":20},"rejected":null,"notes":[{"pos":20,"height":270010,"txid":"18841895f8d5916b66fca28f28350eba405b8f199070c80fab282155aa1d5e57","leaf":"254456ebe463706a0395c05d2c64f3d86b5241a359889e0e653b388c81893a5d","kind":"MINT","ticker":"NOVA","v":"500","npk":"0156ffcb08a825c22c91591931ab560dad6a546aab8252fd7e29b505d7128fe1","rho":"0a6557bf3e6104fd9e13385952b5dec625d10b5641b09a26c206b1176d4e67f8"}]},"/tx/6242c2fd04805e36f78072fda289c14b782e34946091f4223b848b142d5b7285":{"txid":"6242c2fd04805e36f78072fda289c14b782e34946091f4223b848b142d5b7285","height":270010,"event":{"txid":"6242c2fd04805e36f78072fda289c14b782e34946091f4223b848b142d5b7285","type":"MINT","ticker":"NOVA","v":"500","pos":21},"rejected":null,"notes":[{"pos":21,"height":270010,"txid":"6242c2fd04805e36f78072fda289c14b782e34946091f4223b848b142d5b7285","leaf":"057d60eb998b20db929421ab93bf744fa9cdb380324f57aeb8ae92399c6d98ea","kind":"MINT","ticker":"NOVA","v":"500","npk":"08cf22095e72717bf7a87ba73e5896e2ab744a5a59683d59300c8c0aee622327","rho":"254c2c087ae5108c57db843a09f43c8d44d65171f6a2a6cfc3ab1120ab727991"}]},"/tx/5fd7d1728f1373e1f53ad98240352d91b7acf8cb407782d64438a84619eb83ef":{"txid":"5fd7d1728f1373e1f53ad98240352d91b7acf8cb407782d64438a84619eb83ef","height":270010,"event":{"txid":"5fd7d1728f1373e1f53ad98240352d91b7acf8cb407782d64438a84619eb83ef","type":"MINT","ticker":"NOVA","v":"500","pos":22},"rejected":null,"notes":[{"pos":22,"height":270010,"txid":"5fd7d1728f1373e1f53ad98240352d91b7acf8cb407782d64438a84619eb83ef","leaf":"1d3861becce129402060c3f303b5b3ae47c599d1c0cf7bb05b9291d6c3889909","kind":"MINT","ticker":"NOVA","v":"500","npk":"185faf27b48c2533f02ca122513f6dfcf4b08ed60f54fb63153c4cd3b0233167","rho":"03a158232ba01b0ea64a5f2c6d313cd28c120f4e5ec25e6ea4d3193e65794bb6"}]},"/tx/68c5aa6eb89736b96b5b9d5cb89abcf256c3bdfaf3f9178542e56667dc180452":{"txid":"68c5aa6eb89736b96b5b9d5cb89abcf256c3bdfaf3f9178542e56667dc180452","height":270010,"event":{"txid":"68c5aa6eb89736b96b5b9d5cb89abcf256c3bdfaf3f9178542e56667dc180452","type":"MINT","ticker":"NOVA","v":"500","pos":23},"rejected":null,"notes":[{"pos":23,"height":270010,"txid":"68c5aa6eb89736b96b5b9d5cb89abcf256c3bdfaf3f9178542e56667dc180452","leaf":"06e93833adbf291408222dd589d99f1983ea7ec7ddfe0957c17004ea14463c11","kind":"MINT","ticker":"NOVA","v":"500","npk":"061c6977d472ff9c511688fb2ae445e714a88fd7435adf780cf4be92151c06bc","rho":"2706e1c6cf80b0c4488f0ca0cc8d39f268b3d73739b7d451d104b8ac19fb1859"}]},"/tx/66565ab12a6a4d8d3c5ab153e8d547a86c74aacf239215a1507f051c4835ae98":{"txid":"66565ab12a6a4d8d3c5ab153e8d547a86c74aacf239215a1507f051c4835ae98","height":270010,"event":{"txid":"66565ab12a6a4d8d3c5ab153e8d547a86c74aacf239215a1507f051c4835ae98","type":"MINT","ticker":"NOVA","v":"500","pos":24},"rejected":null,"notes":[{"pos":24,"height":270010,"txid":"66565ab12a6a4d8d3c5ab153e8d547a86c74aacf239215a1507f051c4835ae98","leaf":"0ad4eba66c0866a28423ec0aa731032a3382af3f0c18d23b6836e324675bd87d","kind":"MINT","ticker":"NOVA","v":"500","npk":"11d52a58f443a3e44ab72c13887470435ba43f9c6e900b510a27905cb72022bd","rho":"040163a898064e3d8ee75d2830a0f8483dc3d568222cd68464b9782af8241ad9"}]},"/tx/e3a00924f7a22a7ae114b76daa666905d64e1ee11be58de77d221d03461b567e":{"txid":"e3a00924f7a22a7ae114b76daa666905d64e1ee11be58de77d221d03461b567e","height":270010,"event":{"txid":"e3a00924f7a22a7ae114b76daa666905d64e1ee11be58de77d221d03461b567e","type":"MINT","ticker":"NOVA","v":"500","pos":25},"rejected":null,"notes":[{"pos":25,"height":270010,"txid":"e3a00924f7a22a7ae114b76daa666905d64e1ee11be58de77d221d03461b567e","leaf":"05a22a943e72f97999617d24247641a9ec586b9a3ae3b94a8e8f46206df3e1dd","kind":"MINT","ticker":"NOVA","v":"500","npk":"1c408a3b1fbd2ad37dfb2d9535a60b70cef521040cec483834d16b411bb0050f","rho":"02a47dbf2954d648caf0ba81a1ae98c331cb275dda5ae7703310a09ecc4ed3cc"}]},"/tx/6360bbdec35b1e7213c156068815147f75081e16d0bacac20be4d678ebd35e7f":{"txid":"6360bbdec35b1e7213c156068815147f75081e16d0bacac20be4d678ebd35e7f","height":270010,"event":{"txid":"6360bbdec35b1e7213c156068815147f75081e16d0bacac20be4d678ebd35e7f","type":"MINT","ticker":"NOVA","v":"500","pos":26},"rejected":null,"notes":[{"pos":26,"height":270010,"txid":"6360bbdec35b1e7213c156068815147f75081e16d0bacac20be4d678ebd35e7f","leaf":"17f12875bbc74e627bd9218dd5ed247ab7067905c57802d353e6c96b110b5d34","kind":"MINT","ticker":"NOVA","v":"500","npk":"194bf680f06c32fd897cea8c5df6e3973625c4f51b570a567d08989b4a730131","rho":"02ee6e4dc116bcef989817b4b18b87499ba8be800dc850cd0ba38bb0ffb90f22"}]},"/tx/969863a5f2dc1809c7891e7d21250df757b3fb7f95838040d8c104f5c102256c":{"txid":"969863a5f2dc1809c7891e7d21250df757b3fb7f95838040d8c104f5c102256c","height":270010,"event":{"txid":"969863a5f2dc1809c7891e7d21250df757b3fb7f95838040d8c104f5c102256c","type":"MINT","ticker":"NOVA","v":"500","pos":27},"rejected":null,"notes":[{"pos":27,"height":270010,"txid":"969863a5f2dc1809c7891e7d21250df757b3fb7f95838040d8c104f5c102256c","leaf":"11e1badc9376ac5cbdce6ab8e0ad41f6257237a6e9bccf60f22524ed631f7f11","kind":"MINT","ticker":"NOVA","v":"500","npk":"0334d80d4648bf0ca432c2d03f1a07a851ca7ecbb8b2cccabbf92bc89edf0aa3","rho":"218aed1e3728e349a67631642ad4eb4bf7a86d13d2c78e54d90a5c5e53b90dbe"}]},"/tx/a64e26ec53806dde3af88fde2b88c26c2e2e529e43bcf4f8fb9467d85d9bc01a":{"txid":"a64e26ec53806dde3af88fde2b88c26c2e2e529e43bcf4f8fb9467d85d9bc01a","height":270010,"event":null,"rejected":"unknown ticker","notes":[]},"/tx/e9915c7f6a523de60e61f7a4ebbfa5a560758e112c6b02a6f6a1b276705c9fe1":{"txid":"e9915c7f6a523de60e61f7a4ebbfa5a560758e112c6b02a6f6a1b276705c9fe1","height":270007,"event":{"txid":"e9915c7f6a523de60e61f7a4ebbfa5a560758e112c6b02a6f6a1b276705c9fe1","type":"DEPLOY","ticker":"NOVA","burn":{"nullifiers":["2717cdc0d934320190d839e1411fdf9b792c92970e30f8c9ed6026bf9a84a129","1a587b8511d53cecc2980e2da57c9ef67b30b259a5a2649b71ee68ea4f55f634"],"positions":[17,18,19]}},"rejected":null,"notes":[{"pos":17,"height":270007,"txid":"e9915c7f6a523de60e61f7a4ebbfa5a560758e112c6b02a6f6a1b276705c9fe1","leaf":"040a52c8b17b2bd5caa9f910a3ece8aa742f4e9ad91d6673765130cd60213dc4","kind":"OUT","j":0,"pkEph":"020e6621a0406f01c92ddfe38ca19e5c78bb245db53b0651cb1c7adcb47b859d93","ct":"b4eb90dd59a9247dab26eb2be4a4123f67c2edfa9b60d0ebd0549b24"},{"pos":18,"height":270007,"txid":"e9915c7f6a523de60e61f7a4ebbfa5a560758e112c6b02a6f6a1b276705c9fe1","leaf":"2d20b9aaa599091c802b50188af760c3e88b6bc08eaf19e368b783ef46519f0d","kind":"OUT","j":1,"pkEph":"03a37291c3f2c50e061fc903e6361945f1742a9be747df06006ae43d60edcd0629","ct":"dda8c29853ec877850cf27cb036a147c1dcd867d203048cab9c99d26"},{"pos":19,"height":270007,"txid":"e9915c7f6a523de60e61f7a4ebbfa5a560758e112c6b02a6f6a1b276705c9fe1","leaf":"1bf12eb9a6c6e6a15665a780e9354a3d438017d2ca82e66b071bee8cacb010cf","kind":"OUT","j":2,"pkEph":"03bd13957800748bd43fbfff717fbe85b7922b4b13a4f24fd1679b8d66e7724839","ct":"f0d86cd2c8480d393bf6d8d57083d444d364d822958cfbc0d90e2528"}]},"/tx/4cf64626ea87280c4a4883376ba036083f5ea2a4869e2f6a6023ae99f058389a":{"txid":"4cf64626ea87280c4a4883376ba036083f5ea2a4869e2f6a6023ae99f058389a","height":270006,"event":{"txid":"4cf64626ea87280c4a4883376ba036083f5ea2a4869e2f6a6023ae99f058389a","type":"TRANSFER","nullifiers":["02fcc70ed6a4d24398b3f4293690a65118a4ea4218f42f7b2a061417c2f08493","1ad9d6985cf4daf3d912c74cd3cc8f3e82a3a0aa4186830883cf2a96035b8279"],"positions":[11,12,13]},"rejected":null,"notes":[{"pos":11,"height":270006,"txid":"4cf64626ea87280c4a4883376ba036083f5ea2a4869e2f6a6023ae99f058389a","leaf":"069e6dff065fc2f0066f5edc234f9197abfe4a22b4c54c8de70043a06ab4f735","kind":"OUT","j":0,"pkEph":"03c9c266b60b326cb3099b0097306a93fc46367167ba1857058293d177941cee69","ct":"ef95b5efcb3cb625c562194eeee00d64a9c1417a1f0641b8a7f55d72"},{"pos":12,"height":270006,"txid":"4cf64626ea87280c4a4883376ba036083f5ea2a4869e2f6a6023ae99f058389a","leaf":"00e65e6f6598ee888e90425f838fcf1f9e46c68556c2b2e5bb22895f43c9a750","kind":"OUT","j":1,"pkEph":"022a15d4f7eb34241351b097457d243ba1f6facb8e65c6b29153104e9ecead47b0","ct":"78f84cbc8ac9168761c80753811e883f65e151f6c0e06f5bc26cba2c"},{"pos":13,"height":270006,"txid":"4cf64626ea87280c4a4883376ba036083f5ea2a4869e2f6a6023ae99f058389a","leaf":"256c0c52aeccad351ec4a86eea0e3445bbf7bd72444d4a88b4a61c94384b4e3a","kind":"OUT","j":2,"pkEph":"03af4b3cbd70172745f62f52fd5186178ca1b66535ff479350649081be9903e59b","ct":"efdf76c5ab6736c4444c54802e24bf7b8635094127018fc7aa47b58e"}]},"/tx/eb48f2aafca13b9dc53d6b0afac8c3250fa6bac033abad7f13d02bceb1ac4f23":{"txid":"eb48f2aafca13b9dc53d6b0afac8c3250fa6bac033abad7f13d02bceb1ac4f23","height":270006,"event":{"txid":"eb48f2aafca13b9dc53d6b0afac8c3250fa6bac033abad7f13d02bceb1ac4f23","type":"TRANSFER","nullifiers":["1eb40224bb0feaa74641eae153f6c5d04dc8a95e4e9305e0ecbc9a06a3807c97","17a0913055604a065c74667f3dc5fad36f4ad3eeb8844eb8c1902ed252f770a7"],"positions":[14,15,16]},"rejected":null,"notes":[{"pos":14,"height":270006,"txid":"eb48f2aafca13b9dc53d6b0afac8c3250fa6bac033abad7f13d02bceb1ac4f23","leaf":"0ed5ade06a9e4594e0bb6d347cc8d4b373f30283c2fdf0ead833590c32bbe4a8","kind":"OUT","j":0,"pkEph":"03fd3f3d784345fd6c5798785d7d07963f1a6c79fd6176a7f0091df3f7d257ce32","ct":"2513508fcec89efb2389f2c0a22950f411b6a29c0cb42a5ceb111548"},{"pos":15,"height":270006,"txid":"eb48f2aafca13b9dc53d6b0afac8c3250fa6bac033abad7f13d02bceb1ac4f23","leaf":"0eaf4b3a2c147e06678364272e3e4daddbc8ae27627a431f68a4b79e5dae28e8","kind":"OUT","j":1,"pkEph":"0233acb96506d04bdcc205e8ec3e441b793a79f96bbf63a0739a87e64b90551692","ct":"e10b0c035b06b891cd4af392e5e6f789aa35605dea7e0ef9b932c610"},{"pos":16,"height":270006,"txid":"eb48f2aafca13b9dc53d6b0afac8c3250fa6bac033abad7f13d02bceb1ac4f23","leaf":"1091f8af71ed8ee33e4587db636fd7f7314241283ae8dde9ed6f91a682a9ee09","kind":"OUT","j":2,"pkEph":"03e41dc9cd8f998c4cb24a3304938e2a13884ca33c4a55184c3a973b6615c35fb0","ct":"b8112b11fb1607982aae72c3026d691b50f3e2669302698f5dbfb8ad"}]},"/tx/6fbe0291525b828814a6bb9cd3276645f7d15585567b92c0981c06395bf6944d":{"txid":"6fbe0291525b828814a6bb9cd3276645f7d15585567b92c0981c06395bf6944d","height":270004,"event":{"txid":"6fbe0291525b828814a6bb9cd3276645f7d15585567b92c0981c06395bf6944d","type":"MINT","ticker":"GENE","v":"1000","pos":6},"rejected":null,"notes":[{"pos":6,"height":270004,"txid":"6fbe0291525b828814a6bb9cd3276645f7d15585567b92c0981c06395bf6944d","leaf":"105ff47167e6c2d73060a8c78a16ade94c5d51040c15bbb9b7791ff90425646b","kind":"MINT","ticker":"GENE","v":"1000","npk":"2ee8006e018dbe76abdbfc37893ce926661c93faf8c332673002cf19807bf68d","rho":"0365c56c5dabd63f07b01c1574f67ae27c763140535263a1b16d2fe8ed539b67"}]},"/tx/2381053a9854db98ae2c8a08fe2d9b876776be05f4ee8d6763eb8efb60fdd7c8":{"txid":"2381053a9854db98ae2c8a08fe2d9b876776be05f4ee8d6763eb8efb60fdd7c8","height":270004,"event":{"txid":"2381053a9854db98ae2c8a08fe2d9b876776be05f4ee8d6763eb8efb60fdd7c8","type":"MINT","ticker":"GENE","v":"1000","pos":7},"rejected":null,"notes":[{"pos":7,"height":270004,"txid":"2381053a9854db98ae2c8a08fe2d9b876776be05f4ee8d6763eb8efb60fdd7c8","leaf":"142c5dd5e13dd1da8270ff5da2e8dbdd1e55df433b79f7c9046c2006831a2a57","kind":"MINT","ticker":"GENE","v":"1000","npk":"26b8475ba8e4829946e6bbec554fc248b31050319795a4b9fb77c6d21c8df07d","rho":"01e21aae7568e8aea236220ea94650ecb5c7166cc0c82474bf153cfb0c3e0853"}]},"/tx/f2ebfa78cc41843316d003a61057ad4f3858cd3b620b40b877ec3c3442c44562":{"txid":"f2ebfa78cc41843316d003a61057ad4f3858cd3b620b40b877ec3c3442c44562","height":270004,"event":{"txid":"f2ebfa78cc41843316d003a61057ad4f3858cd3b620b40b877ec3c3442c44562","type":"MINT","ticker":"GENE","v":"1000","pos":8},"rejected":null,"notes":[{"pos":8,"height":270004,"txid":"f2ebfa78cc41843316d003a61057ad4f3858cd3b620b40b877ec3c3442c44562","leaf":"216e3250028cea206863f7df28a2b0e3e9ff5e485c70ad41839da9accd197b9c","kind":"MINT","ticker":"GENE","v":"1000","npk":"01b6f3e7c3d10a3de96db3c6ede7454b3994b4f81efdaa412825766d9b5557f7","rho":"2cdc37199862273e0b75b80aff24ec576ab8ac608ff3d9801b119e2134500672"}]},"/tx/e59ff8460ad77f8a48d49bf9e4888765b4a2407ddee037c28dee5bb52b58ab5e":{"txid":"e59ff8460ad77f8a48d49bf9e4888765b4a2407ddee037c28dee5bb52b58ab5e","height":270004,"event":{"txid":"e59ff8460ad77f8a48d49bf9e4888765b4a2407ddee037c28dee5bb52b58ab5e","type":"MINT","ticker":"GENE","v":"1000","pos":9},"rejected":null,"notes":[{"pos":9,"height":270004,"txid":"e59ff8460ad77f8a48d49bf9e4888765b4a2407ddee037c28dee5bb52b58ab5e","leaf":"0f85798a0fa6e8733b2b08a33f2cd66a6119894b626388c8129b1d9ce370d51a","kind":"MINT","ticker":"GENE","v":"1000","npk":"2c7e77cdb34cea9f3e3d9202cb5656ae5a2fb7e50772c36c5cce2f318ad0ea1a","rho":"24c3981a645b888266d4e414f10ec68aa1198e52985003bd69214adcb55fd215"}]},"/tx/f6c71341c73637cf86407d21a8c6ae859a13db4cb4d7d5ab7e556da3d2386b46":{"txid":"f6c71341c73637cf86407d21a8c6ae859a13db4cb4d7d5ab7e556da3d2386b46","height":270004,"event":{"txid":"f6c71341c73637cf86407d21a8c6ae859a13db4cb4d7d5ab7e556da3d2386b46","type":"MINT","ticker":"GENE","v":"1000","pos":10},"rejected":null,"notes":[{"pos":10,"height":270004,"txid":"f6c71341c73637cf86407d21a8c6ae859a13db4cb4d7d5ab7e556da3d2386b46","leaf":"2490ddd9da4c7521d35c208e7e9fc74e75e4ae67be63dcedf63386770b7016f7","kind":"MINT","ticker":"GENE","v":"1000","npk":"2900a6bb7bda632673ace7db635c2ec6674431045bff2f052e0957bf5a535c9a","rho":"05697dff32fe0545617b938b70c272e4825d6a9ac1dda34e895ad1de336a093c"}]},"/tx/6a713af73b381a715b35f35abbd39ac09eaf4a4274d4b10d9bffc8823dc91400":{"txid":"6a713af73b381a715b35f35abbd39ac09eaf4a4274d4b10d9bffc8823dc91400","height":270003,"event":{"txid":"6a713af73b381a715b35f35abbd39ac09eaf4a4274d4b10d9bffc8823dc91400","type":"MINT","ticker":"GENE","v":"1000","pos":0},"rejected":null,"notes":[{"pos":0,"height":270003,"txid":"6a713af73b381a715b35f35abbd39ac09eaf4a4274d4b10d9bffc8823dc91400","leaf":"1c06d5d412d96e831aaac88cefec155924844045f5ae7ba45de440707c652436","kind":"MINT","ticker":"GENE","v":"1000","npk":"174774ba1b7c16d47aad2668546cb83d63531634765b48b004d65638fb4b1ca2","rho":"25c694c56da27db4307b71cafe3b1287ca9e2f7697266a6db683dbd199544cc9"}]},"/tx/b6988e52d090e98fefa3c9e932cabd1cda30202b8b7ded78ae3de8fc7ed2ad70":{"txid":"b6988e52d090e98fefa3c9e932cabd1cda30202b8b7ded78ae3de8fc7ed2ad70","height":270003,"event":{"txid":"b6988e52d090e98fefa3c9e932cabd1cda30202b8b7ded78ae3de8fc7ed2ad70","type":"MINT","ticker":"GENE","v":"1000","pos":1},"rejected":null,"notes":[{"pos":1,"height":270003,"txid":"b6988e52d090e98fefa3c9e932cabd1cda30202b8b7ded78ae3de8fc7ed2ad70","leaf":"1a2c6d4e2b736ecbf6cc0f67e2f4d162991325315d62dc136e4224943a9dad9b","kind":"MINT","ticker":"GENE","v":"1000","npk":"250839860b0bd37096281c8027aa9cb874bd03ec8311fa0bf04ddfa2c58380de","rho":"0113dda2e54f351ba8da608700507fd5009ee70236183402ab9fe18cfe1f37cb"}]},"/tx/2b0cebd7806da7adfe2322fd1f3e9bd07649636554f50d0fe1554e4ad16b6d19":{"txid":"2b0cebd7806da7adfe2322fd1f3e9bd07649636554f50d0fe1554e4ad16b6d19","height":270003,"event":{"txid":"2b0cebd7806da7adfe2322fd1f3e9bd07649636554f50d0fe1554e4ad16b6d19","type":"MINT","ticker":"GENE","v":"1000","pos":2},"rejected":null,"notes":[{"pos":2,"height":270003,"txid":"2b0cebd7806da7adfe2322fd1f3e9bd07649636554f50d0fe1554e4ad16b6d19","leaf":"16a991db2e709f628e9ceb3ef0294ea8548b32fff6a01655e3684dfdaa13faf1","kind":"MINT","ticker":"GENE","v":"1000","npk":"1115021e8f6300de284f31d0f1346108802afb014e52a814f63a47a979c774cf","rho":"0d4d0bb97486cd0cef1b0d1d014cdcaccfb6f80ef99e395920269aa1412b1aec"}]},"/tx/e4f0a1b56fda1293adf65014aa928fd5806da3bde3afe238bc6fcfe125e274a9":{"txid":"e4f0a1b56fda1293adf65014aa928fd5806da3bde3afe238bc6fcfe125e274a9","height":270003,"event":{"txid":"e4f0a1b56fda1293adf65014aa928fd5806da3bde3afe238bc6fcfe125e274a9","type":"MINT","ticker":"GENE","v":"1000","pos":3},"rejected":null,"notes":[{"pos":3,"height":270003,"txid":"e4f0a1b56fda1293adf65014aa928fd5806da3bde3afe238bc6fcfe125e274a9","leaf":"0c3179b86e432396df55aadec58888b4ff4256ff9354c7f344c8c3dd0098a75c","kind":"MINT","ticker":"GENE","v":"1000","npk":"26279b84b106f5718824ebc2122f151d905417ccee405582e72497d14557e44d","rho":"18a6b70f624b5ab93dd77184a8084ffb6c0d0f8bf9a5bf656d09d340b6e70ae5"}]},"/tx/6a784b49f5da01c6a44b67856575a716ff31a0be235580716b622453f72a32ae":{"txid":"6a784b49f5da01c6a44b67856575a716ff31a0be235580716b622453f72a32ae","height":270003,"event":{"txid":"6a784b49f5da01c6a44b67856575a716ff31a0be235580716b622453f72a32ae","type":"MINT","ticker":"GENE","v":"1000","pos":4},"rejected":null,"notes":[{"pos":4,"height":270003,"txid":"6a784b49f5da01c6a44b67856575a716ff31a0be235580716b622453f72a32ae","leaf":"0cf09c4e525fe51ceec50815271f672cba2be078932e0abd6468a02c130b2879","kind":"MINT","ticker":"GENE","v":"1000","npk":"1af50ce56c548ffe66f817fa13a52e1d2fc6f2dda89f5f07e0846f1fca4ab416","rho":"06859741edb23bc3693480bf23ca9f5e70d83c8f9b6e1b8b1780e8ddd8f371aa"}]},"/tx/eee44c1798c9effe84789297cc0c7b78113c89f07532ddfb16375d4539640355":{"txid":"eee44c1798c9effe84789297cc0c7b78113c89f07532ddfb16375d4539640355","height":270003,"event":{"txid":"eee44c1798c9effe84789297cc0c7b78113c89f07532ddfb16375d4539640355","type":"MINT","ticker":"GENE","v":"1000","pos":5},"rejected":null,"notes":[{"pos":5,"height":270003,"txid":"eee44c1798c9effe84789297cc0c7b78113c89f07532ddfb16375d4539640355","leaf":"2a1dce3b8f7a4c502c148e98c74cb2792af391be86060d03d495decedd6b298a","kind":"MINT","ticker":"GENE","v":"1000","npk":"0898ffba51e5a2d93c52b3a4f496fbe8b9fa5b79152d21baf0252a65948db005","rho":"0fed140a93f2dc147355f4b2031e034144586ce4831c0ea2c9b64b2f0c866559"}]},"/tx/fce747b216467cae60e2abda4aacc820c2e170ffa563492c16137a2fef8e0f2e":{"txid":"fce747b216467cae60e2abda4aacc820c2e170ffa563492c16137a2fef8e0f2e","height":270003,"event":null,"rejected":"mint not paid","notes":[]},"/tx/2ed401e9532a46a9bb6498c5f73e234e7da526a98d18d7a2677a134e3fa154c4":{"txid":"2ed401e9532a46a9bb6498c5f73e234e7da526a98d18d7a2677a134e3fa154c4","height":270001,"event":{"txid":"2ed401e9532a46a9bb6498c5f73e234e7da526a98d18d7a2677a134e3fa154c4","type":"DEPLOY","ticker":"GENE"},"rejected":null,"notes":[]},"/digest/270021":{"height":270021,"digest":"73e2b7431b9e2258fc2a0cbbae12a9df433d173ae9eea3f9a6b82a34d151c2ab"}}}</script>
+<script id="app">
+(() => {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem('sh20-explorer.' + k)); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem('sh20-explorer.' + k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
+  };
+
+  // ---- safe HTML: every interpolated value is escaped unless it is already Raw ----
+  class Raw { constructor(s) { this.s = s; } }
+  const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const val = (v) => (v instanceof Raw ? v.s : Array.isArray(v) ? v.map(val).join('') : v === null || v === undefined || v === false ? '' : esc(v));
+  const html = (strings, ...vals) => new Raw(strings.reduce((out, s, i) => out + s + (i < vals.length ? val(vals[i]) : ''), ''));
+  const put = (el, raw) => { el.innerHTML = raw.s; };
+
+  // ---- words ----
+  const T = {
+    en: {
+      explorer: 'explorer', navTransfer: 'Transfer', navActivity: 'Activity', navSupply: 'Supply', navIndexers: 'Indexers', navNext: "What's next",
+      langSwitch: 'FR', langName: 'Lire en français',
+      demoBanner: 'Demo data. This page is showing a test chain replayed through the reference SH-20 indexer. No SH-20 network is live yet, and none of these transactions are on Bitcoin.',
+      linkBanner: 'Reading from {url}, an address given in the link. It is not saved, and your own settings are unchanged.',
+      loadFail: "Can't read {url} ({msg}). Check the address under Indexers, or start an indexer with node bin/follow.js.",
+      h1: 'A token transfer nobody can read',
+      lede: 'On BRC-20 and Runes, every transfer shows which token moved, how much, and between whom. SH-20 records its transfers on Bitcoin too, with all four sealed. Here is the same kind of transfer on three protocols.',
+      brc: 'BRC-20 or Runes', tacit: 'Tacit', sh: 'SH-20', example: 'Example', fromChain: 'From this chain', fromDemo: 'From the demo chain',
+      rowToken: 'Token', rowAmount: 'Amount', rowFrom: 'Sender', rowTo: 'Recipient', rowFee: 'Network fee paid by',
+      sender: 'sender', oneTime: 'one-time address', hiddenLabel: 'hidden',
+      feeSh: "the payer's Bitcoin address, or a relayer's",
+      brcFoot: 'Everything is public and stays public, for anyone who looks at the address later.',
+      tacitFoot: "Amounts are hidden; the token stays public. As described in Tacit's public documentation, November 2026.",
+      shFoot: 'Every indexer checks a proof that the transfer follows the rules: no tokens created, none spent twice. None of them sees inside.',
+      onchainTitle: 'What this SH-20 transfer actually puts on Bitcoin',
+      onNf: 'Two spent-note tags. They show that two notes were used up, without saying which ones.',
+      onNotes: 'Three sealed notes. Only their recipient can open them.',
+      onProof: 'One proof of {n} bytes.',
+      openTx: 'Open this transaction', noTransfer: 'No private transfer on this chain yet. The first one will appear here.',
+      stBlock: 'Block {h}', stNotes: '{n} notes in the shared tree', stSpent: '{n} spent', stTokens: '{n} tokens',
+      pillDemo: 'Built-in demo sample', pillOne: 'One indexer: add another to compare', pillAgree: '{k} of {n} indexers agree', pillDisagree: 'Indexers disagree', pillWait: 'Comparing indexers…',
+      activityTitle: 'Activity',
+      activityIntro: 'Every SH-20 transaction, newest first. What one shows depends on its type: deploys, mints and sales are public by design, transfers are sealed.',
+      DEPLOY: 'Deploy', MINT: 'Mint', TRANSFER: 'Transfer', BURN: 'Burn', LIST: 'Offer', TAKE: 'Sale', CLAIM: 'Reclaim', CLOSED: 'Offer closed', TEAM_UNLOCK: 'Team unlock', REJECTED: 'Rejected',
+      dDeploy: '{ticker} created: up to {max}, {lim} per mint, {price}.',
+      dDeployTeam: ' Team allocation of {pre}, unlocking at block {unlock}.',
+      dDeployBurn: ' Burned {d} {g} to deploy.',
+      pFree: 'free to mint', pBurn: '{p} sats per mint, burned', pPay: '{p} sats per mint, paid to the deployer',
+      dMint: '{v} {ticker} minted, {price}', mFree: 'free', mBurn: '{p} sats burned', mPay: '{p} sats paid to the deployer',
+      dTransfer: 'Token', dTransferAmount: 'amount', dTransferParties: 'sender and recipient',
+      dBurn: '{v} {ticker} burned for good',
+      dList: '{a} {ticker} offered for {p} sats',
+      dSold: '{a} {ticker} sold for {p} sats', dCancelled: 'Offer of {a} {ticker} cancelled by the seller',
+      dClosed: 'Offer of {a} {ticker} closed without a sale', dClaim: 'Seller took back {a} {ticker}',
+      dUnlock: 'Team allocation released: {v} {ticker}',
+      dRejected: 'Rejected: {r}',
+      dMints: '{k} × {v} {ticker} minted, {price}', gFree: 'free', gBurn: '{p} sats each, burned', gPay: '{p} sats each to the deployer',
+      open: 'Details', empty: 'No SH-20 transaction yet.',
+      supplyTitle: 'Supply',
+      supplyIntro: 'Transfers are sealed, so nobody can add them up. What anyone can check is that the tokens leaving the pool in public, burned or held in an open offer, never exceed what was issued. Forged tokens would show up here as soon as someone burned or sold them.',
+      cToken: 'Token', cMax: 'Max supply', cMinted: 'Minted', cTeam: 'Team allocation', cBurned: 'Burned', cOffers: 'In open offers', cCheck: 'Check',
+      mintsOf: '{m} of {c} mints', mintWindow: 'Mint opens at block {s}', mintWindowEnd: 'Mint runs from block {s} to {e}',
+      teamNone: 'None', teamLocked: '{v} ({pct}), locked until block {h}', teamUnlocked: '{v} ({pct}), released at block {h}',
+      checkOk: 'Within issued supply', checkBad: 'Exceeds issued supply',
+      noTokens: 'No token deployed yet.',
+      indexersTitle: 'Indexers',
+      indexersIntro: 'An indexer replays Bitcoin and applies the SH-20 rules. Any indexer can lie, so this page can ask several and compare their state at the same block. One you run yourself, on your own Bitcoin node, needs no trust at all.',
+      ixListLabel: 'Indexer addresses, one per line', ixListHint: 'With no address, the page shows its built-in demo sample. The first address is the one the page reads from.',
+      ixExplorerLabel: 'Bitcoin explorer for transaction links', ixSave: 'Save and reload',
+      cmpDemo: 'Built-in demo sample: nothing to compare.', cmpAgree: 'Same state at block {h}', cmpDiffer: 'Different state at block {h}', cmpDown: 'Unreachable ({m})',
+      nextTitle: "What's next",
+      next: [
+        'Transfers for about the price of a Bitcoin payment: anyone will be able to bundle many proofs into one transaction.',
+        'Private bitcoin in the same pool, as soon as Bitcoin can enforce its entry and exit without a federation.',
+        'Private swaps between tokens.',
+        'Viewing keys, to show one balance to an accountant and nothing else.',
+      ],
+      never: 'What SH-20 will never have: an admin key, a freeze button, a blacklist, or a server you have to trust.',
+      footer: 'SH-20 explorer, open source under the MIT license. It only reads from indexers and keeps your settings in this browser. SH-20 is a draft (v0.2) and is not activated on any network.',
+      close: 'Close', block: 'Block {h}', copy: 'Copy', copied: 'Copied', seeAll: 'Anyone can see', seeNone: 'Nobody can see',
+      notesMade: 'Notes created', nfs: 'Spent-note tags', viewOn: 'View on the Bitcoin explorer', demoTx: 'Demo transaction: it is not on any network.',
+      position: 'position {p}',
+      kMINT: 'Public note from a mint', kTEAM: 'Public note from the team allocation', kTAKE: 'Public note for the buyer', kCLAIM: 'Public note returned to the seller', kOUT: 'Sealed note',
+      hTransfer: ['Which token moved', 'How much', 'Who sent it', 'Who received it'],
+      hSpend: ['Which notes paid for it', 'What the sender has left, and in which token'],
+      hPublic: 'Nothing. This step is public by design; a note turns private the first time it is spent.',
+      vDeployRules: 'All of its rules: supply, mint size, price, team allocation and unlock block',
+      vMint: 'The token, the amount and the new note', vTransfer: 'That two notes were spent and three new ones created', vBurn: 'The token and the amount burned',
+      vList: 'The token, the amount and the price', vSale: 'The token, the amount, the price and the note given to the buyer', vClaim: 'The token, the amount and the note returned to the seller',
+      vFee: 'The Bitcoin address paying the network fee',
+      reasons: {},
+    },
+    fr: {
+      explorer: 'explorateur', navTransfer: 'Transfert', navActivity: 'Activité', navSupply: 'Offre', navIndexers: 'Indexeurs', navNext: 'La suite',
+      langSwitch: 'EN', langName: 'Read in English',
+      demoBanner: "Données de démonstration. Cette page affiche une chaîne de test rejouée par l'indexeur de référence SH-20. Aucun réseau SH-20 n'est encore en service, et aucune de ces transactions n'est sur Bitcoin.",
+      linkBanner: "Lecture depuis {url}, une adresse donnée dans le lien. Elle n'est pas enregistrée, et tes réglages ne changent pas.",
+      loadFail: "Impossible de lire {url} ({msg}). Vérifie l'adresse dans Indexeurs, ou lance un indexeur avec node bin/follow.js.",
+      h1: 'Un transfert de token que personne ne peut lire',
+      lede: "Sur BRC-20 et Runes, chaque transfert montre quel token a bougé, combien, et entre qui. SH-20 inscrit lui aussi ses transferts sur Bitcoin, mais avec ces quatre informations scellées. Voici le même genre de transfert sur trois protocoles.",
+      brc: 'BRC-20 ou Runes', tacit: 'Tacit', sh: 'SH-20', example: 'Exemple', fromChain: 'Sur cette chaîne', fromDemo: 'Sur la chaîne de démo',
+      rowToken: 'Token', rowAmount: 'Montant', rowFrom: 'Expéditeur', rowTo: 'Destinataire', rowFee: 'Frais réseau payés par',
+      sender: "l'expéditeur", oneTime: 'adresse à usage unique', hiddenLabel: 'caché',
+      feeSh: "l'adresse Bitcoin du payeur, ou celle d'un relayeur",
+      brcFoot: "Tout est public, et le reste pour quiconque regardera l'adresse plus tard.",
+      tacitFoot: 'Les montants sont cachés, le token reste public. Selon la documentation publique de Tacit, novembre 2026.',
+      shFoot: "Chaque indexeur vérifie une preuve que le transfert respecte les règles : aucun token créé, aucun dépensé deux fois. Aucun d'eux ne voit l'intérieur.",
+      onchainTitle: 'Ce que ce transfert SH-20 inscrit vraiment sur Bitcoin',
+      onNf: 'Deux marqueurs de notes dépensées. Ils montrent que deux notes ont été utilisées, sans dire lesquelles.',
+      onNotes: 'Trois notes scellées. Seul leur destinataire peut les ouvrir.',
+      onProof: 'Une preuve de {n} octets.',
+      openTx: 'Ouvrir cette transaction', noTransfer: "Pas encore de transfert privé sur cette chaîne. Le premier apparaîtra ici.",
+      stBlock: 'Bloc {h}', stNotes: '{n} notes dans le registre partagé', stSpent: '{n} dépensées', stTokens: '{n} tokens',
+      pillDemo: 'Échantillon de démo intégré', pillOne: 'Un seul indexeur : ajoutes-en un pour comparer', pillAgree: '{k} indexeurs sur {n} d’accord', pillDisagree: 'Les indexeurs ne sont pas d’accord', pillWait: 'Comparaison des indexeurs…',
+      activityTitle: 'Activité',
+      activityIntro: "Toutes les transactions SH-20, de la plus récente à la plus ancienne. Ce qu'une transaction montre dépend de son type : les déploiements, les mints et les ventes sont publics par nature, les transferts sont scellés.",
+      DEPLOY: 'Déploiement', MINT: 'Mint', TRANSFER: 'Transfert', BURN: 'Burn', LIST: 'Offre', TAKE: 'Vente', CLAIM: 'Récupération', CLOSED: 'Offre close', TEAM_UNLOCK: 'Déblocage équipe', REJECTED: 'Rejetée',
+      dDeploy: '{ticker} créé : jusqu’à {max}, {lim} par mint, {price}.',
+      dDeployTeam: ' Allocation équipe de {pre}, débloquée au bloc {unlock}.',
+      dDeployBurn: ' A brûlé {d} {g} pour déployer.',
+      pFree: 'mint gratuit', pBurn: '{p} sats par mint, brûlés', pPay: '{p} sats par mint, payés au déployeur',
+      dMint: '{v} {ticker} mintés, {price}', mFree: 'gratuitement', mBurn: '{p} sats brûlés', mPay: '{p} sats payés au déployeur',
+      dTransfer: 'Token', dTransferAmount: 'montant', dTransferParties: 'expéditeur et destinataire',
+      dBurn: '{v} {ticker} brûlés définitivement',
+      dList: '{a} {ticker} proposés pour {p} sats',
+      dSold: '{a} {ticker} vendus pour {p} sats', dCancelled: 'Offre de {a} {ticker} annulée par le vendeur',
+      dClosed: 'Offre de {a} {ticker} close sans vente', dClaim: 'Le vendeur a récupéré {a} {ticker}',
+      dUnlock: 'Allocation équipe libérée : {v} {ticker}',
+      dRejected: 'Rejetée : {r}',
+      dMints: '{k} × {v} {ticker} mintés, {price}', gFree: 'gratuitement', gBurn: '{p} sats chacun, brûlés', gPay: '{p} sats chacun au déployeur',
+      open: 'Détails', empty: 'Aucune transaction SH-20 pour le moment.',
+      supplyTitle: 'Offre totale',
+      supplyIntro: "Les transferts sont scellés, donc personne ne peut les additionner. Ce que tout le monde peut vérifier, c'est que les tokens qui sortent du registre en public, brûlés ou bloqués dans une offre ouverte, ne dépassent jamais ce qui a été émis. Des tokens contrefaits apparaîtraient ici dès que quelqu'un les brûlerait ou les vendrait.",
+      cToken: 'Token', cMax: 'Offre max', cMinted: 'Mintés', cTeam: 'Allocation équipe', cBurned: 'Brûlés', cOffers: 'Dans des offres', cCheck: 'Contrôle',
+      mintsOf: '{m} mints sur {c}', mintWindow: 'Mint ouvert dès le bloc {s}', mintWindowEnd: 'Mint du bloc {s} au bloc {e}',
+      teamNone: 'Aucune', teamLocked: '{v} ({pct}), bloquée jusqu’au bloc {h}', teamUnlocked: '{v} ({pct}), libérée au bloc {h}',
+      checkOk: 'Dans l’offre émise', checkBad: 'Dépasse l’offre émise',
+      noTokens: 'Aucun token déployé pour le moment.',
+      indexersTitle: 'Indexeurs',
+      indexersIntro: "Un indexeur relit Bitcoin et applique les règles SH-20. N'importe quel indexeur peut mentir : cette page peut donc en interroger plusieurs et comparer leur état au même bloc. Celui que tu fais tourner toi-même, sur ton propre nœud Bitcoin, ne demande aucune confiance.",
+      ixListLabel: 'Adresses des indexeurs, une par ligne', ixListHint: "Sans adresse, la page affiche son échantillon de démo. La page lit les données depuis la première adresse.",
+      ixExplorerLabel: 'Explorateur Bitcoin pour les liens de transaction', ixSave: 'Enregistrer et recharger',
+      cmpDemo: 'Échantillon de démo intégré : rien à comparer.', cmpAgree: 'Même état au bloc {h}', cmpDiffer: 'État différent au bloc {h}', cmpDown: 'Injoignable ({m})',
+      nextTitle: 'La suite',
+      next: [
+        "Des transferts presque au prix d'un paiement Bitcoin : n'importe qui pourra regrouper de nombreuses preuves dans une seule transaction.",
+        "Du bitcoin privé dans le même registre, dès que Bitcoin pourra garantir son entrée et sa sortie sans fédération.",
+        'Des échanges privés entre tokens.',
+        "Des clés de lecture, pour montrer un solde à un comptable et rien d'autre.",
+      ],
+      never: "Ce que SH-20 n'aura jamais : une clé admin, un bouton de gel, une liste noire, ou un serveur auquel il faut faire confiance.",
+      footer: "Explorateur SH-20, open source sous licence MIT. Il ne fait que lire les indexeurs et garde tes réglages dans ce navigateur. SH-20 est un brouillon (v0.2), activé sur aucun réseau.",
+      close: 'Fermer', block: 'Bloc {h}', copy: 'Copier', copied: 'Copié', seeAll: 'Tout le monde voit', seeNone: 'Personne ne voit',
+      notesMade: 'Notes créées', nfs: 'Marqueurs de notes dépensées', viewOn: "Voir sur l'explorateur Bitcoin", demoTx: "Transaction de démo : elle n'est sur aucun réseau.",
+      position: 'position {p}',
+      kMINT: "Note publique issue d'un mint", kTEAM: "Note publique de l'allocation équipe", kTAKE: "Note publique pour l'acheteur", kCLAIM: 'Note publique rendue au vendeur', kOUT: 'Note scellée',
+      hTransfer: ['Quel token a bougé', 'Combien', "Qui l'a envoyé", "Qui l'a reçu"],
+      hSpend: ['Quelles notes ont payé', "Ce qu'il reste à l'expéditeur, et dans quel token"],
+      hPublic: "Rien. Cette étape est publique par nature ; une note devient privée dès qu'elle est dépensée.",
+      vDeployRules: 'Toutes ses règles : offre, taille du mint, prix, allocation équipe et bloc de déblocage',
+      vMint: 'Le token, le montant et la nouvelle note', vTransfer: 'Que deux notes ont été dépensées et trois nouvelles créées', vBurn: 'Le token et le montant brûlé',
+      vList: 'Le token, le montant et le prix', vSale: "Le token, le montant, le prix et la note donnée à l'acheteur", vClaim: 'Le token, le montant et la note rendue au vendeur',
+      vFee: "L'adresse Bitcoin qui paie les frais réseau",
+      reasons: {
+        'mint not paid': 'mint non payé', 'unknown ticker': 'ticker inconnu', 'mint not open yet': 'mint pas encore ouvert', 'mint closed': 'mint terminé',
+        'sold out': 'tous les mints sont faits', 'ticker already deployed': 'ticker déjà pris', 'invalid proof': 'preuve invalide',
+        'nullifier already spent': 'note déjà dépensée', 'anchor outside the window': 'racine trop ancienne', 'unknown anchor': 'racine inconnue',
+        'DEPLOY must burn genesis units': 'le déploiement doit brûler du token de genèse', 'bad CLAIM signature': 'signature de récupération invalide',
+      },
+    },
+  };
+  let lang = store.get('lang') || ((navigator.language || '').toLowerCase().startsWith('fr') ? 'fr' : 'en');
+  const t = (k, p = {}) => String(T[lang][k] ?? T.en[k] ?? k).replace(/\{(\w+)\}/g, (_, x) => (p[x] !== undefined ? p[x] : ''));
+  const loc = () => (lang === 'fr' ? 'fr-FR' : 'en-US');
+  const n = (x) => { try { return BigInt(x).toLocaleString(loc()); } catch { return String(x); } };
+  const short = (hex) => (hex && hex.length > 22 ? hex.slice(0, 10) + '…' + hex.slice(-8) : hex || '');
+  const bar = (w, i) => html`<span class="bar" role="img" aria-label="${t('hiddenLabel')}" style="--w:${w}em;--i:${i}"></span>`;
+  const mark = (s) => html`<span class="mark">${s}</span>`;
+
+  // ---- where the data comes from ----
+  const DEMO = (() => { try { return JSON.parse($('#demo-data').textContent || '{}'); } catch { return {}; } })();
+  const validUrl = (u) => { try { const x = new URL(u); return x.protocol === 'https:' || x.protocol === 'http:'; } catch { return false; } };
+  function client(base) {
+    if (!base) {
+      return { name: 'demo', get: async (p) => { const v = DEMO.routes && DEMO.routes[p]; if (v === undefined) throw new Error('not in the demo sample'); return JSON.parse(JSON.stringify(v)); } };
+    }
+    const root = base.replace(/\/+$/, '');
+    return {
+      name: root,
+      get: async (p) => {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 8000);
+        try {
+          const r = await fetch(root + p, { signal: ctl.signal, headers: { accept: 'application/json' }, credentials: 'omit', referrerPolicy: 'no-referrer' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return await r.json();
+        } catch (e) {
+          throw new Error(e.name === 'AbortError' ? 'timeout' : e.message);
+        } finally { clearTimeout(timer); }
+      },
+    };
+  }
+
+  const S = { demo: true, fromLink: false, indexers: [], explorer: '', status: null, tokens: [], listings: [], blocks: [], hero: null, compare: null, error: null };
+  const tokenOf = (ticker) => S.tokens.find((x) => x.ticker === ticker);
+  const listingOf = (id) => S.listings.find((x) => x.listTxid === id);
+
+  async function load() {
+    const params = new URLSearchParams(location.search);
+    const fromLink = params.getAll('indexer').filter(validUrl);
+    S.fromLink = fromLink.length > 0;
+    S.indexers = S.fromLink ? fromLink : (store.get('indexers') || []).filter(validUrl);
+    S.explorer = validUrl(store.get('explorer') || '') ? store.get('explorer') : '';
+    S.demo = S.indexers.length === 0;
+    S.client = client(S.demo ? null : S.indexers[0]);
+    S.error = null; S.compare = null; S.hero = null;
+    try {
+      const [status, tokens, listings, blocks] = await Promise.all(['/status', '/tokens', '/listings', '/blocks?limit=200'].map((p) => S.client.get(p)));
+      Object.assign(S, { status, tokens, listings, blocks });
+      const latest = blocks.flatMap((b) => b.events).find((e) => e.type === 'TRANSFER');
+      if (latest) S.hero = await S.client.get('/tx/' + latest.txid);
+    } catch (e) {
+      S.error = { url: S.client.name, msg: e.message };
+      Object.assign(S, { status: null, tokens: [], listings: [], blocks: [] });
+    }
+    render();
+    compare();
+  }
+
+  async function compare() {
+    if (S.demo || S.error) { S.compare = S.demo ? { demo: true } : null; renderStatus(); renderCompare(); return; }
+    S.compare = { pending: true, rows: [] };
+    renderStatus(); renderCompare();
+    const clients = S.indexers.map(client);
+    const statuses = await Promise.all(clients.map((c) => c.get('/status').then((s) => ({ s }), (e) => ({ e: e.message }))));
+    const heights = statuses.filter((x) => x.s && Number.isInteger(x.s.height)).map((x) => x.s.height);
+    const common = heights.length ? Math.min(...heights) : null;
+    const digests = await Promise.all(clients.map((c, i) => (statuses[i].s && common !== null
+      ? c.get('/digest/' + common).then((d) => d.digest, (e) => ({ e: e.message }))
+      : Promise.resolve({ e: statuses[i].e || 'no status' }))));
+    const ref = typeof digests[0] === 'string' ? digests[0] : digests.find((d) => typeof d === 'string');
+    const rows = clients.map((c, i) => ({ url: c.name, down: typeof digests[i] === 'string' ? null : digests[i].e, digest: typeof digests[i] === 'string' ? digests[i] : null }));
+    for (const r of rows) r.same = r.digest !== null && r.digest === ref;
+    S.compare = { rows, height: common };
+    renderStatus(); renderCompare();
+  }
+
+  // ---- describing events ----
+  function priceOfDeploy(tk) {
+    if (!tk) return '';
+    if (tk.payMode === 0) return t('pFree');
+    return t(tk.payMode === 1 ? 'pBurn' : 'pPay', { p: n(tk.price) });
+  }
+  function priceOfMint(tk) {
+    if (!tk || tk.payMode === 0) return t('mFree');
+    return t(tk.payMode === 1 ? 'mBurn' : 'mPay', { p: n(tk.price) });
+  }
+  function describe(e) {
+    const tk = e.ticker ? tokenOf(e.ticker) : null;
+    const l = e.listTxid ? listingOf(e.listTxid) : null;
+    const la = l ? { a: n(l.amount), ticker: l.ticker, p: n(l.price) } : { a: '?', ticker: '?', p: '?' };
+    switch (e.type) {
+      case 'DEPLOY': {
+        let s = t('dDeploy', { ticker: e.ticker, max: tk ? n(tk.max) : '?', lim: tk ? n(tk.lim) : '?', price: priceOfDeploy(tk) });
+        if (tk && BigInt(tk.pre) > 0n) s += t('dDeployTeam', { pre: n(tk.pre), unlock: n(tk.unlock) });
+        if (e.burn && S.status) s += t('dDeployBurn', { d: n(S.status.deployBurn), g: S.status.genesis });
+        return html`${s}`;
+      }
+      case 'MINT': return html`${t('dMint', { v: n(e.v), ticker: e.ticker, price: priceOfMint(tk) })}`;
+      case 'TRANSFER': return html`${t('dTransfer')} ${bar(3, 0)} ${t('dTransferAmount')} ${bar(3, 0)} ${t('dTransferParties')} ${bar(4, 0)}`;
+      case 'BURN': return html`${t('dBurn', { v: n(e.v), ticker: e.ticker })}`;
+      case 'LIST': return html`${t('dList', { a: n(e.amount), ticker: e.ticker, p: n(e.price) })}`;
+      case 'TAKE': return html`${t(e.outcome === 'SOLD' ? 'dSold' : 'dCancelled', la)}`;
+      case 'CLOSED': return html`${t('dClosed', la)}`;
+      case 'CLAIM': return html`${t('dClaim', la)}`;
+      case 'TEAM_UNLOCK': return html`${t('dUnlock', { v: n(e.v), ticker: e.ticker })}`;
+      default: return html`${e.type}`;
+    }
+  }
+  const reason = (r) => (T[lang].reasons && T[lang].reasons[r]) || r;
+
+  // ---- rendering ----
+  function renderStatic() {
+    document.documentElement.lang = lang;
+    for (const el of document.querySelectorAll('[data-t]')) el.textContent = t(el.dataset.t);
+    const b = $('#lang');
+    b.textContent = t('langSwitch');
+    b.setAttribute('aria-label', t('langName'));
+    put($('#nextList'), html`${T[lang].next.map((x) => html`<li>${x}</li>`)}`);
+    $('#ixList').value = S.indexers.join('\n');
+    $('#ixExplorer').value = S.explorer;
+  }
+
+  function renderBanners() {
+    const parts = [];
+    if (S.error) parts.push(html`<div class="banner error"><div class="wrap"><p>${t('loadFail', { url: S.error.url, msg: S.error.msg })}</p></div></div>`);
+    else if (S.demo) parts.push(html`<div class="banner demo"><div class="wrap"><p>${t('demoBanner')}</p></div></div>`);
+    if (S.fromLink) parts.push(html`<div class="banner link"><div class="wrap"><p>${t('linkBanner', { url: S.indexers.join(', ') })}</p></div></div>`);
+    put($('#banners'), html`${parts}`);
+  }
+
+  function renderHero() {
+    const tag = S.demo ? t('fromDemo') : t('fromChain');
+    const row = (label, value) => html`<div><dt>${label}</dt><dd>${value}</dd></div>`;
+    const brc = html`<article class="sheet">
+      <header><h3>${t('brc')}</h3><span class="tag">${t('example')}</span></header>
+      <dl>${row(t('rowToken'), mark('NOVA'))}${row(t('rowAmount'), mark(n(1000)))}${row(t('rowFrom'), mark('bc1p8w…k2q4'))}${row(t('rowTo'), mark('bc1qz7…m9xa'))}${row(t('rowFee'), mark(t('sender')))}</dl>
+      <p class="foot">${t('brcFoot')}</p></article>`;
+    const tacit = html`<article class="sheet">
+      <header><h3>${t('tacit')}</h3><span class="tag">${t('example')}</span></header>
+      <dl>${row(t('rowToken'), mark('NOVA'))}${row(t('rowAmount'), bar(4.5, 0))}${row(t('rowFrom'), mark('bc1p8w…k2q4'))}${row(t('rowTo'), mark(t('oneTime')))}${row(t('rowFee'), mark(t('sender')))}</dl>
+      <p class="foot">${t('tacitFoot')}</p></article>`;
+    const sh = html`<article class="sheet sh20">
+      <header><h3>${t('sh')}</h3><span class="tag">${S.hero ? tag : t('example')}</span></header>
+      <dl>${row(t('rowToken'), bar(4, 0))}${row(t('rowAmount'), bar(5, 1))}${row(t('rowFrom'), bar(7.5, 2))}${row(t('rowTo'), bar(6.5, 3))}${row(t('rowFee'), mark(t('feeSh')))}</dl>
+      <p class="foot">${t('shFoot')}</p></article>`;
+    let onchain;
+    if (S.hero && S.hero.event) {
+      const ev = S.hero.event;
+      const outs = S.hero.notes.filter((x) => x.kind === 'OUT');
+      onchain = html`<div class="onchain">
+        <h3>${t('onchainTitle')}</h3>
+        <ul>
+          <li><span>${t('onNf')}</span><span class="hexes mono">${(ev.nullifiers || []).map((x) => html`<span>${x}</span>`)}</span></li>
+          <li><span>${t('onNotes')}</span><span class="hexes mono">${outs.map((x) => html`<span>${x.leaf}</span>`)}</span></li>
+          <li><span>${t('onProof', { n: 480 })}</span></li>
+        </ul>
+        <button class="btn quiet" type="button" data-tx="${ev.txid}">${t('openTx')}</button>
+      </div>`;
+    } else {
+      onchain = html`<div class="onchain"><p class="muted">${t('noTransfer')}</p></div>`;
+    }
+    put($('#hero'), html`<h1>${t('h1')}</h1><p class="lede">${t('lede')}</p><div class="sheets">${brc}${tacit}${sh}</div>${onchain}`);
+  }
+
+  function pillHtml() {
+    const c = S.compare;
+    if (S.error) return html``;
+    if (!c || c.demo) return html`<span class="pill na">${t('pillDemo')}</span>`;
+    if (c.pending) return html`<span class="pill na">${t('pillWait')}</span>`;
+    const live = c.rows.filter((r) => r.digest);
+    if (c.rows.length === 1) return html`<span class="pill na">${t('pillOne')}</span>`;
+    const same = live.filter((r) => r.same).length;
+    if (live.length && same === live.length && same === c.rows.length) return html`<span class="pill ok">${t('pillAgree', { k: same, n: c.rows.length })}</span>`;
+    if (live.length > 1 && same !== live.length) return html`<span class="pill bad">${t('pillDisagree')}</span>`;
+    return html`<span class="pill na">${t('pillAgree', { k: same, n: c.rows.length })}</span>`;
+  }
+  function renderStatus() {
+    const s = S.status;
+    if (!s) { put($('#status'), pillHtml()); return; }
+    put($('#status'), html`<span>${new Raw(t('stBlock', { h: `<b>${esc(n(s.height))}</b>` }))}</span>
+      <span>${new Raw(t('stNotes', { n: `<b>${esc(n(s.leaves))}</b>` }))}</span>
+      <span>${new Raw(t('stSpent', { n: `<b>${esc(n(s.nullifiers))}</b>` }))}</span>
+      <span>${new Raw(t('stTokens', { n: `<b>${esc(n(s.tokens))}</b>` }))}</span>
+      ${pillHtml()}`);
+  }
+
+  function groupPrice(tk) {
+    if (!tk || tk.payMode === 0) return t('gFree');
+    return t(tk.payMode === 1 ? 'gBurn' : 'gPay', { p: n(tk.price) });
+  }
+  function renderFeed() {
+    const items = [];
+    const row = (height, typeHtml, what, txid, cls = '') => html`<li${cls ? new Raw(` class="${cls}"`) : ''}><span class="blk">${t('block', { h: n(height) })}</span>${typeHtml}
+      <span class="what">${what}</span>${txid ? html`<button class="open" type="button" data-tx="${txid}">${t('open')}</button>` : html`<span></span>`}</li>`;
+    for (const b of S.blocks) {
+      const evs = b.events;
+      for (let i = 0; i < evs.length; i++) {
+        const e = evs[i];
+        if (e.type === 'MINT') {
+          let j = i;
+          while (j + 1 < evs.length && evs[j + 1].type === 'MINT' && evs[j + 1].ticker === e.ticker) j++;
+          if (j > i) {
+            const group = evs.slice(i, j + 1);
+            const what = html`<details><summary>${t('dMints', { k: group.length, v: n(e.v), ticker: e.ticker, price: groupPrice(tokenOf(e.ticker)) })}</summary>
+              <ul>${group.map((g) => html`<li><button class="open" type="button" data-tx="${g.txid}">${short(g.txid)}</button></li>`)}</ul></details>`;
+            items.push(row(b.height, html`<span class="type">${t('MINT')}</span>`, what, null));
+            i = j;
+            continue;
+          }
+        }
+        const priv = e.type === 'TRANSFER';
+        items.push(row(b.height, html`<span class="type${priv ? ' private' : ''}">${t(e.type)}</span>`, describe(e), e.txid));
+      }
+      for (const r of b.rejected) {
+        items.push(row(b.height, html`<span class="type rejected">${t('REJECTED')}</span>`, html`${t('dRejected', { r: reason(r.reason) })}`, r.txid, 'rejected'));
+      }
+    }
+    put($('#feed'), items.length ? html`${items}` : html`<li><span class="what muted">${t('empty')}</span></li>`);
+  }
+
+  function renderSupply() {
+    if (!S.tokens.length) { put($('#supplyTable'), html`<p class="muted sans">${t('noTokens')}</p>`); return; }
+    const h = S.status ? S.status.height : 0;
+    const rows = S.tokens.map((tk) => {
+      const max = BigInt(tk.max); const pre = BigInt(tk.pre); const lim = BigInt(tk.lim); const mints = BigInt(tk.mints);
+      const cap = (max - pre) / lim;
+      const minted = mints * lim;
+      const teamOut = pre > 0n && h >= tk.unlock ? pre : 0n;
+      const offers = S.listings.filter((l) => l.ticker === tk.ticker && (l.state === 'ACTIVE' || l.state === 'CLOSED')).reduce((a, l) => a + BigInt(l.amount), 0n);
+      const out = BigInt(tk.burned) + offers;
+      const ok = out <= minted + teamOut;
+      const pct = max > 0n ? (Number((pre * 10000n) / max) / 10000).toLocaleString(loc(), { style: 'percent', maximumFractionDigits: 2 }) : '';
+      const team = pre === 0n ? t('teamNone') : t(h >= tk.unlock ? 'teamUnlocked' : 'teamLocked', { v: n(pre), pct, h: n(tk.unlock) });
+      const share = cap > 0n ? Number((mints * 1000n) / cap) / 10 : 0;
+      const windowText = tk.end ? t('mintWindowEnd', { s: n(tk.start), e: n(tk.end) }) : t('mintWindow', { s: n(tk.start) });
+      return html`<tr>
+        <td class="ticker">${tk.ticker}</td>
+        <td>${n(tk.max)}<small>${priceOfDeploy(tk)}</small></td>
+        <td>${n(minted)}<small>${t('mintsOf', { m: n(mints), c: n(cap) })}</small><div class="meter" aria-hidden="true"><i style="width:${Math.min(100, share)}%"></i></div><small>${windowText}</small></td>
+        <td>${team}</td>
+        <td>${n(tk.burned)}</td>
+        <td>${n(offers)}</td>
+        <td><span class="pill ${ok ? 'ok' : 'bad'}">${t(ok ? 'checkOk' : 'checkBad')}</span></td>
+      </tr>`;
+    });
+    put($('#supplyTable'), html`<table><thead><tr><th scope="col">${t('cToken')}</th><th scope="col">${t('cMax')}</th><th scope="col">${t('cMinted')}</th><th scope="col">${t('cTeam')}</th><th scope="col">${t('cBurned')}</th><th scope="col">${t('cOffers')}</th><th scope="col">${t('cCheck')}</th></tr></thead><tbody>${rows}</tbody></table>`);
+  }
+
+  function renderCompare() {
+    const c = S.compare;
+    if (!c || S.error) { put($('#compare'), html``); return; }
+    if (c.demo) { put($('#compare'), html`<li><span class="pill na">${t('pillDemo')}</span><span class="muted">${t('cmpDemo')}</span></li>`); return; }
+    if (c.pending) { put($('#compare'), html`<li class="muted">${t('pillWait')}</li>`); return; }
+    put($('#compare'), html`${c.rows.map((r) => html`<li>
+      <span class="pill ${r.down ? 'bad' : r.same ? 'ok' : 'bad'}">${r.down ? t('cmpDown', { m: r.down }) : t(r.same ? 'cmpAgree' : 'cmpDiffer', { h: n(c.height) })}</span>
+      <span class="mono">${r.url}</span>${r.digest ? html`<span class="mono muted">${short(r.digest)}</span>` : ''}</li>`)}`);
+  }
+
+  function render() { renderStatic(); renderBanners(); renderHero(); renderStatus(); renderFeed(); renderSupply(); renderCompare(); }
+
+  // ---- transaction dialog ----
+  const dlg = $('#txd');
+  let returnTo = '';
+  async function openTx(txid) {
+    let tx;
+    try { tx = await S.client.get('/tx/' + txid); } catch (e) { tx = { txid, error: e.message }; }
+    const e = tx.event;
+    const type = e ? e.type : tx.rejected ? 'REJECTED' : 'TRANSFER';
+    const visible = [];
+    let hidden = null;
+    if (e) {
+      switch (e.type) {
+        case 'DEPLOY': visible.push(t('vDeployRules')); if (e.burn) hidden = T[lang].hSpend; break;
+        case 'MINT': visible.push(t('vMint')); break;
+        case 'TRANSFER': visible.push(t('vTransfer')); hidden = T[lang].hTransfer; break;
+        case 'BURN': visible.push(t('vBurn')); hidden = T[lang].hSpend; break;
+        case 'LIST': visible.push(t('vList')); hidden = T[lang].hSpend; break;
+        case 'TAKE': visible.push(t('vSale')); break;
+        case 'CLAIM': visible.push(t('vClaim')); break;
+        default: break;
+      }
+      if (e.type !== 'TRANSFER') visible.unshift(describe(e));
+      visible.push(t('vFee'));
+    } else if (tx.rejected) {
+      visible.push(t('dRejected', { r: reason(tx.rejected) }));
+    }
+    const nfs = e ? (e.nullifiers || (e.burn && e.burn.nullifiers) || []) : [];
+    const notes = tx.notes || [];
+    const link = !S.demo && S.explorer ? S.explorer.replace(/\/+$/, '') + '/tx/' + txid : null;
+    put($('#txdBody'), html`
+      <header><div><h2 id="txdTitle">${t(type)}</h2><p class="muted">${tx.height !== undefined ? t('block', { h: n(tx.height) }) : ''}</p></div>
+        <button class="btn quiet" type="button" id="txdClose">${t('close')}</button></header>
+      <div class="txid"><code>${txid}</code><button class="open" type="button" id="txdCopy">${t('copy')}</button></div>
+      ${tx.error ? html`<p class="muted">${tx.error}</p>` : ''}
+      ${visible.length ? html`<div><h3>${t('seeAll')}</h3><ul>${visible.map((v) => html`<li>${v}</li>`)}</ul></div>` : ''}
+      ${e ? html`<div><h3>${t('seeNone')}</h3>${hidden ? html`<ul>${hidden.map((v) => html`<li>${v}</li>`)}</ul>` : html`<p>${t('hPublic')}</p>`}</div>` : ''}
+      ${nfs.length ? html`<div><h3>${t('nfs')}</h3><ul class="notes">${nfs.map((x) => html`<li><code>${x}</code></li>`)}</ul></div>` : ''}
+      ${notes.length ? html`<div><h3>${t('notesMade')}</h3><ul class="notes">${notes.map((x) => html`<li><span>${t('k' + x.kind)}, ${t('position', { p: n(x.pos) })}</span><code>${x.leaf}</code></li>`)}</ul></div>` : ''}
+      ${link ? html`<a href="${link}" rel="noopener noreferrer">${t('viewOn')}</a>` : S.demo ? html`<p class="muted">${t('demoTx')}</p>` : ''}`);
+    $('#txdClose').addEventListener('click', () => dlg.close());
+    $('#txdCopy').addEventListener('click', async (ev) => {
+      try { await navigator.clipboard.writeText(txid); ev.target.textContent = t('copied'); } catch { /* copy refused */ }
+    });
+    if (!dlg.open) dlg.showModal();
+  }
+  dlg.addEventListener('close', () => {
+    if (location.hash.startsWith('#tx-')) { try { history.replaceState(null, '', '#' + returnTo); } catch { /* ignore */ } }
+  });
+  dlg.addEventListener('click', (ev) => { if (ev.target === dlg) dlg.close(); });
+  function fromHash() {
+    const m = location.hash.match(/^#tx-([0-9a-f]{64})$/);
+    if (m && S.client) openTx(m[1]);
+  }
+
+  document.addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-tx]');
+    if (!b) return;
+    returnTo = location.hash.startsWith('#tx-') ? returnTo : location.hash.slice(1);
+    location.hash = 'tx-' + b.dataset.tx;
+  });
+  window.addEventListener('hashchange', fromHash);
+  $('#lang').addEventListener('click', () => { lang = lang === 'fr' ? 'en' : 'fr'; store.set('lang', lang); render(); });
+  $('#ixForm').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const list = $('#ixList').value.split(/\s+/).map((x) => x.trim()).filter(validUrl);
+    const ex = $('#ixExplorer').value.trim();
+    store.set('indexers', list);
+    store.set('explorer', validUrl(ex) ? ex : '');
+    if (S.fromLink) { location.search = ''; return; }
+    load();
+  });
+
+  load().then(fromHash);
+})();
+</script>
+</body>
+</html>
