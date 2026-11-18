@@ -22,7 +22,8 @@ pub const N_PUBLIC: usize = 9;
 
 pub const TAG_LEAF: &str = "sh20/v0/leaf";
 pub const TAG_BODY: &str = "sh20/v0/body";
-const TAG_NONCE: &str = "sh20/v0/eddsa-nonce";
+/// Domain of the signing nonce (`sign`). A wallet convention, not a rule: any nonce gives a valid signature.
+pub const TAG_NONCE: &str = "sh20/v0/eddsa-nonce";
 
 /// BabyJubJub: a·x² + y² = 1 + d·x²·y² over Fr.
 pub const BJJ_A: u64 = 168700;
@@ -124,8 +125,9 @@ pub fn body_hash(body: &[u8]) -> Fr {
     Fr::from_be_bytes_mod_order(&sha(&[TAG_BODY.as_bytes(), body]))
 }
 
-/// 512 bits of SHA-256 output reduced modulo l (never 0).
-fn hash_to_scalar(tag: &str, parts: &[&[u8]]) -> BigUint {
+/// SHA256(tag ‖ parts ‖ 0x00) ‖ SHA256(tag ‖ parts ‖ 0x01), read as a big-endian integer and reduced
+/// modulo l (never 0).
+pub fn hash_to_scalar(tag: &str, parts: &[&[u8]]) -> BigUint {
     let mut m: Vec<u8> = tag.as_bytes().to_vec();
     for p in parts {
         m.extend_from_slice(p);
@@ -136,7 +138,8 @@ fn hash_to_scalar(tag: &str, parts: &[&[u8]]) -> BigUint {
     x
 }
 
-fn be32(x: &BigUint) -> [u8; 32] {
+/// 32 bytes, big-endian.
+pub fn be32(x: &BigUint) -> [u8; 32] {
     let v = x.to_bytes_be();
     let mut b = [0u8; 32];
     b[32 - v.len()..].copy_from_slice(&v);
@@ -251,7 +254,7 @@ pub struct Sig {
 }
 
 /// S·B8 = R8 + h·8·A with h = Poseidon(R8, A, m) and A = sk·B8. The nonce is derived from the key
-/// and the message.
+/// and the message: r = hash_to_scalar(TAG_NONCE, be32(sk) ‖ be32(m)).
 pub fn sign(sk: &BigUint, m: &Fr) -> Sig {
     let k = sk % l_big();
     let a = mul_b8(&k);
@@ -261,8 +264,13 @@ pub fn sign(sk: &BigUint, m: &Fr) -> Sig {
     Sig { r8, s: fr(&((r + BigUint::from(8u8) * h * k) % l_big())) }
 }
 
+/// What the circuit accepts for points on the curve: 0 ≤ S < l, 4·A with a non-zero x (A is not a
+/// small-order point), and the equation with h as the integer of the hash.
 pub fn verify_sig(a: &Pt, m: &Fr, sig: &Sig) -> bool {
     if &to_big(&sig.s) >= l_big() || !on_curve(a) || !on_curve(&sig.r8) {
+        return false;
+    }
+    if mul(a, &BigUint::from(4u8))[0].is_zero() {
         return false;
     }
     let h = to_big(&hash(&[sig.r8[0], sig.r8[1], a[0], a[1], *m]));

@@ -1,0 +1,11 @@
+{
+  "name": "sh20-circuit-js",
+  "version": "0.1.0",
+  "private": true,
+  "description": "What a wallet computes for an SH-20 spend, in plain JavaScript: note keys, nullifiers, EdDSA-Poseidon signatures. Checked against vectors written by the circuit's own model.",
+  "type": "module",
+  "license": "MIT",
+  "exports": "./index.js",
+  "scripts": { "test": "node --test 'test/*.test.js'" },
+  "engines": { "node": ">=20" }
+}
