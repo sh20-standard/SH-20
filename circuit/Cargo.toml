@@ -15,8 +15,11 @@ publish = false
 crate-type = ["rlib", "cdylib"]
 
 [features]
-default = ["parallel"]
+default = ["parallel", "wallet"]
 parallel = ["dep:rayon", "ark-ff/parallel", "ark-ec/parallel", "ark-poly/parallel", "ark-std/parallel"]
+# The wallet side of notes (docs/SPEC-NOTES.md): keys, addresses, sealing, scanning. The model that
+# writes the reference vectors; the WebAssembly prover is built without it.
+wallet = ["dep:x25519-dalek", "dep:hkdf", "dep:hmac", "dep:aes-gcm"]
 
 [dependencies]
 ark-bn254 = { version = "0.5", default-features = false, features = ["curve"] }
@@ -31,6 +34,10 @@ sha3 = "0.10"
 blake2 = "0.10"
 hex = "0.4"
 rayon = { version = "1", optional = true }
+x25519-dalek = { version = "2", optional = true }
+hkdf = { version = "0.12", optional = true }
+hmac = { version = "0.12", optional = true }
+aes-gcm = { version = "0.10", optional = true }
 
 # the operating system's randomness, for the command line and the tests; a wasm host passes a seed
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

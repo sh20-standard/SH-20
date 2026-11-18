@@ -1,7 +1,8 @@
-//! Reference vectors of what a wallet computes for a spend: ticker ids, note keys and `npk`, note
-//! leaves, nullifiers, body hashes, EdDSA-Poseidon signatures, and one whole transfer. Everything
-//! is produced by the model the circuit constrains (`model`), from fixed seeds, so the file is the
-//! same on every run.
+//! Reference vectors of what a wallet computes: ticker ids, note keys and `npk`, note leaves,
+//! nullifiers, body hashes, EdDSA-Poseidon signatures; and of docs/SPEC-NOTES.md: wallet keys,
+//! addresses, sealed outputs, public notes, and one whole transfer between three wallets.
+//! Everything is produced by the models the circuit constrains (`model`, `notes`), from fixed
+//! seeds, so the file is the same on every run.
 //!
 //!   cargo run --release --example vectors -- js/vectors.json
 //!
@@ -9,6 +10,7 @@
 //! the file in the repository is the one this module writes.
 
 use crate::model::{self, InputNote, NoteKeys, OutputNote, Pt, Tree, TREE_DEPTH};
+use crate::notes::{self, WalletKeys};
 use crate::plonk::json::dr;
 use crate::{poseidon, wire, Fr};
 use ark_ff::{PrimeField, Zero};
@@ -103,33 +105,153 @@ pub fn reference_vectors() -> String {
             .collect(),
     );
 
-    // one whole transfer of GENE: 600 + 400 → 700 + 250 + 50, anchored at height 7
-    let owners = [model::note_keys(&scalar("spend/in0/sk"), &scalar("spend/in0/nk")), model::note_keys(&scalar("spend/in1/sk"), &scalar("spend/in1/nk"))];
+    // ── docs/SPEC-NOTES.md ──
+
+    // three wallets, each from a 64-byte BIP39 seed
+    let names = ["payer", "recipient", "relayer"];
+    let seeds: Vec<Vec<u8>> = names.iter().map(|n| bytes(&format!("wallet/{n}/bip39-seed"), 64)).collect();
+    let masters: Vec<[u8; 32]> = seeds.iter().map(|seed| notes::master_secret(seed)).collect();
+    let wallets: Vec<WalletKeys> = masters.iter().map(|m| notes::wallet_keys(m).expect("keys")).collect();
+    let wallets_json = list(
+        (0..3)
+            .map(|i| {
+                let (w, a) = (&wallets[i], &wallets[i].address);
+                format!(
+                    r#"{{"name":"{}","bip39Seed":"{}","m":"{}","ask":"{}","nsk":"{}","ivk":"{}","IVK":"{}","A":{},"N":{},"packA":"{}","packN":"{}","address":"{}","addressTest":"{}"}}"#,
+                    names[i],
+                    hex::encode(&seeds[i]),
+                    hex::encode(masters[i]),
+                    w.ask,
+                    w.nsk,
+                    hex::encode(w.ivk),
+                    hex::encode(a.ivk_pub),
+                    pt(&a.a),
+                    pt(&a.n),
+                    hex::encode(notes::pack_point(&a.a)),
+                    hex::encode(notes::pack_point(&a.n)),
+                    notes::encode_address("sh20", a),
+                    notes::encode_address("tsh20", a),
+                )
+            })
+            .collect(),
+    );
+
+    // addresses a wallet must refuse, each with one defect
+    let good = wallets[1].address;
+    let raw = |version: u8, ivk: [u8; 32], a: [u8; 32], n: [u8; 32]| [&[version][..], &ivk, &a, &n].concat();
+    let (pa, pn) = (notes::pack_point(&good.a), notes::pack_point(&good.n));
+    let valid = notes::encode_address("sh20", &good);
+    let mut wrong_checksum = valid.clone().into_bytes();
+    let last = wrong_checksum.len() - 1;
+    wrong_checksum[last] = if wrong_checksum[last] == b'q' { b'p' } else { b'q' };
+    let mut mixed_case = valid.clone().into_bytes();
+    let at = mixed_case.iter().rposition(|c| c.is_ascii_lowercase()).unwrap();
+    mixed_case[at] = mixed_case[at].to_ascii_uppercase();
+    // the point of order 2, the identity, a y that is not a field element, and a y with no x
+    let order2 = notes::pack_point(&[Fr::zero(), -Fr::from(1u64)]);
+    let identity = notes::pack_point(&model::identity());
+    let torsion = notes::pack_point(&model::add(&good.a, &[Fr::zero(), -Fr::from(1u64)]));
+    let not_reduced = [0xffu8; 32].map(|b| b).iter().enumerate().map(|(i, b)| if i == 31 { 0x7f } else { *b }).collect::<Vec<u8>>();
+    let no_x = (2u64..).map(|y| notes::fr_le(&Fr::from(y))).find(|b| notes::unpack_point(b).is_none()).unwrap();
+    let mut negative_zero = identity;
+    negative_zero[31] |= 0x80;
+    let invalid: Vec<(String, &str)> = vec![
+        (String::from_utf8(wrong_checksum).unwrap(), "wrong checksum"),
+        (String::from_utf8(mixed_case).unwrap(), "mixed case"),
+        (notes::encode_address("bc", &good), "another network"),
+        (notes::bech32m_encode("sh20", &raw(1, good.ivk_pub, pa, pn)), "unknown version"),
+        (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, pa, pn)[..96]), "wrong length"),
+        (notes::bech32m_encode("sh20", &raw(0, [0u8; 32], pa, pn)), "IVK is a low-order point (zero)"),
+        (notes::bech32m_encode("sh20", &raw(0, { let mut one = [0u8; 32]; one[0] = 1; one }, pa, pn)), "IVK is a low-order point (one)"),
+        (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, identity, pn)), "A is the identity"),
+        (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, order2, pn)), "A has order 2"),
+        (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, torsion, pn)), "A is outside the prime-order subgroup"),
+        (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, pa, not_reduced.clone().try_into().unwrap())), "N: y is not below r"),
+        (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, pa, no_x)), "N is not on the curve"),
+        (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, negative_zero, pn)), "A: second encoding of x = 0"),
+    ];
+    for (addr, why) in &invalid {
+        assert!(notes::decode_address("sh20", addr).is_err(), "accepted: {why}");
+    }
+    assert_eq!(notes::decode_address("sh20", &valid), Ok(good));
+    let invalid_json = list(invalid.iter().map(|(addr, why)| format!(r#"{{"address":"{addr}","why":"{why}"}}"#)).collect());
+
+    // sealed outputs, each with a fixed ephemeral key
+    let seal_cases: Vec<(usize, &[u8; 4], u64)> = vec![(1, b"GENE", 1000), (1, b"GENE", 0), (2, b"ZZ99", u64::MAX), (0, b"0000", 1)];
+    let sealed_json = list(
+        seal_cases
+            .iter()
+            .enumerate()
+            .map(|(k, (to, ticker, v))| {
+                let e: [u8; 32] = bytes(&format!("sealed/{k}/e"), 32).try_into().unwrap();
+                let (out, sec, npk) = notes::seal(&wallets[*to].address, ticker, *v, &e).expect("seal");
+                let opened = notes::scan(&wallets[*to].ivk, &wallets[*to].address, &out).expect("the recipient opens it");
+                assert_eq!((opened.v, opened.ticker, &opened.secrets), (*v, **ticker, &sec));
+                for other in (0..3).filter(|w| w != to) {
+                    assert!(notes::scan(&wallets[other].ivk, &wallets[other].address, &out).is_none());
+                }
+                format!(
+                    r#"{{"to":"{}","ticker":"{}","v":"{v}","e":"{}","pkEph":"{}","tauA":"{}","tauN":"{}","rho":"{}","npk":"{}","leaf":"{}","ct":"{}"}}"#,
+                    names[*to],
+                    std::str::from_utf8(*ticker).unwrap(),
+                    hex::encode(e),
+                    hex::encode(out.pk_eph),
+                    sec.tau_a,
+                    sec.tau_n,
+                    dr(&sec.rho),
+                    dr(&npk),
+                    dr(&out.leaf),
+                    hex::encode(out.ct),
+                )
+            })
+            .collect(),
+    );
+
+    // public notes of the payer
+    let public_json = list(
+        [0u32, 1, 2, 49]
+            .iter()
+            .map(|i| {
+                let s_i = notes::self_secret(&wallets[0].ivk, *i);
+                let (npk, rho, sec) = notes::public_opening(&wallets[0].ivk, &wallets[0].address, *i).expect("opening");
+                format!(r#"{{"wallet":"payer","i":{i},"s":"{}","tauA":"{}","tauN":"{}","rho":"{}","npk":"{}"}}"#, hex::encode(s_i), sec.tau_a, sec.tau_n, dr(&rho), dr(&npk))
+            })
+            .collect(),
+    );
+
+    // one whole transfer of GENE, anchored at height 7: the payer spends its public notes 0 and 1
+    // (600 and 400) and pays 700 to the recipient, 250 back to itself and 50 to the relayer
+    let ticker = b"GENE";
+    let payer = &wallets[0];
     let in_v = [600u64, 400];
-    let in_rho = [field("spend/in0/rho"), field("spend/in1/rho")];
+    let opened: Vec<_> = (0..2).map(|i| notes::public_opening(&payer.ivk, &payer.address, i).expect("opening")).collect();
+    let owners: Vec<NoteKeys> = opened.iter().map(|o| notes::spend_keys(payer, &o.2).expect("keys")).collect();
     let mut tree_leaves: Vec<Fr> = (0..3).map(|i| field(&format!("spend/filler/{i}"))).collect();
     let mut index = [0u64; 2];
     for i in 0..2 {
         index[i] = tree_leaves.len() as u64;
-        tree_leaves.push(model::note_leaf(&gene, &Fr::from(in_v[i]), &owners[i].npk, &in_rho[i]));
+        tree_leaves.push(model::note_leaf(&gene, &Fr::from(in_v[i]), &opened[i].0, &opened[i].1));
         tree_leaves.push(field(&format!("spend/filler/after{i}")));
     }
     let tree = Tree::new(&tree_leaves);
-    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: owners[i].clone(), v: in_v[i], rho: in_rho[i], index: index[i], path: tree.path(index[i] as usize) });
-    let out_v = [700u64, 250, 50];
-    let outputs: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: model::note_keys(&scalar(&format!("spend/out{k}/sk")), &scalar(&format!("spend/out{k}/nk"))).npk, v: out_v[k], rho: field(&format!("spend/out{k}/rho")) });
-    let out_leaf: [Fr; 3] = std::array::from_fn(|k| model::note_leaf(&gene, &Fr::from(outputs[k].v), &outputs[k].npk, &outputs[k].rho));
+    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: owners[i].clone(), v: in_v[i], rho: opened[i].1, index: index[i], path: tree.path(index[i] as usize) });
+    let pay: [(usize, u64); 3] = [(1, 700), (0, 250), (2, 50)];
+    let es: Vec<[u8; 32]> = (0..3).map(|k| bytes(&format!("spend/out{k}/e"), 32).try_into().unwrap()).collect();
+    let sealed: Vec<_> = (0..3).map(|k| notes::seal(&wallets[pay[k].0].address, ticker, pay[k].1, &es[k]).expect("seal")).collect();
+    let outputs: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: sealed[k].2, v: pay[k].1, rho: sealed[k].1.rho });
+    let out_leaf: [Fr; 3] = std::array::from_fn(|k| sealed[k].0.leaf);
     let nf: [Fr; 2] = std::array::from_fn(|i| model::nullifier(&owners[i].nk, &tree_leaves[index[i] as usize], index[i]));
-    let sealed: [wire::Output; 3] = std::array::from_fn(|k| {
-        let mut pk_eph = [0u8; 33];
-        pk_eph[0] = 0x02;
-        pk_eph[1..].copy_from_slice(&bytes(&format!("spend/out{k}/pk_eph"), 32));
-        wire::Output { leaf: out_leaf[k], pk_eph, ct: bytes(&format!("spend/out{k}/ct"), 28).try_into().unwrap() }
-    });
-    let body = wire::transfer_body(7, &nf, &sealed);
-    let w = model::build_spend(model::ticker_t(b"GENE").unwrap(), tree.root, &inputs, &outputs, 0, 0, model::body_hash(&body));
+    let body = wire::transfer_body(7, &nf, &std::array::from_fn(|k| sealed[k].0.into()));
+    let w = model::build_spend(model::ticker_t(ticker).unwrap(), tree.root, &inputs, &outputs, 0, 0, model::body_hash(&body));
     assert_eq!((w.nf, w.out_leaf), (nf, out_leaf));
     assert!(crate::spend::synthesize(&w).is_satisfied(), "the transfer vector must satisfy the circuit");
+    // each wallet finds exactly its own output
+    for (k, (to, v)) in pay.iter().enumerate() {
+        for (wi, wallet) in wallets.iter().enumerate() {
+            let found = notes::scan(&wallet.ivk, &wallet.address, &sealed[k].0).map(|o| o.v);
+            assert_eq!(found, (wi == *to).then_some(*v));
+        }
+    }
     let spend_json = format!(
         r#"{{
     "ticker":"GENE","anchorHeight":7,"vPub":"0","tPub":"0",
@@ -142,8 +264,11 @@ pub fn reference_vectors() -> String {
     "publics":[{}]
   }}"#,
         tree_leaves.iter().map(|x| q(&dr(x))).collect::<Vec<_>>().join(","),
-        (0..2).map(|i| format!(r#"{{"sk":"{}","nk":"{}","v":"{}","rho":"{}","index":"{}"}}"#, owners[i].sk, owners[i].nk, in_v[i], dr(&in_rho[i]), index[i])).collect::<Vec<_>>().join(","),
-        outputs.iter().map(|o| format!(r#"{{"npk":"{}","v":"{}","rho":"{}"}}"#, dr(&o.npk), o.v, dr(&o.rho))).collect::<Vec<_>>().join(","),
+        (0..2).map(|i| format!(r#"{{"wallet":"payer","publicNote":{i},"sk":"{}","nk":"{}","v":"{}","rho":"{}","index":"{}"}}"#, owners[i].sk, owners[i].nk, in_v[i], dr(&opened[i].1), index[i])).collect::<Vec<_>>().join(","),
+        (0..3)
+            .map(|k| format!(r#"{{"to":"{}","v":"{}","e":"{}","npk":"{}","rho":"{}","pkEph":"{}","ct":"{}"}}"#, names[pay[k].0], pay[k].1, hex::encode(es[k]), dr(&outputs[k].npk), dr(&outputs[k].rho), hex::encode(sealed[k].0.pk_eph), hex::encode(sealed[k].0.ct)))
+            .collect::<Vec<_>>()
+            .join(","),
         hex::encode(&body),
         dr(&w.root),
         nf.iter().map(|x| q(&dr(x))).collect::<Vec<_>>().join(","),
@@ -155,7 +280,7 @@ pub fn reference_vectors() -> String {
 
     format!(
         r#"{{
-  "about": "SH-20 spend witness reference vectors, written by circuit/src/vectors.rs (cargo run --release --example vectors -- js/vectors.json). Field elements and scalars are decimal strings, bytes are hex.",
+  "about": "SH-20 wallet reference vectors (docs/SPEC-WIRE.md §4, docs/SPEC-NOTES.md), written by circuit/src/vectors.rs (cargo run --release --example vectors -- js/vectors.json). Field elements and scalars are decimal strings, bytes are hex.",
   "constants": {{"l":"{l}","base8":{},"tagLeaf":"{}","nonceTag":"{}"}},
   "poseidon": {poseidon_json},
   "tickers": {tickers_json},
@@ -164,6 +289,10 @@ pub fn reference_vectors() -> String {
   "nullifiers": {nullifiers_json},
   "bodies": {bodies_json},
   "signatures": {signatures_json},
+  "wallets": {wallets_json},
+  "invalidAddresses": {invalid_json},
+  "sealed": {sealed_json},
+  "publicNotes": {public_json},
   "spend": {spend_json}
 }}
 "#,
