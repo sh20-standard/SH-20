@@ -38,9 +38,11 @@ export function deriveNpk(seed, index) {
 
 /**
  * PROVISIONAL nullifier of the note at tree position `pos`. The circuit of PR #4
- * defines nf = Poseidon3(nk, leaf, index) (docs/SPEC-WIRE.md on that branch);
- * Poseidon with 3 inputs is not in the indexer yet, so this is a two-input
- * stand-in with the same inputs. Replace it together with deriveNpk.
+ * defines nf = Poseidon(nk, leaf, index) with 3 inputs. Do not write a Poseidon
+ * of our own for it: the circuit session provides a circomlib-compatible JS
+ * Poseidon (2 to 5 inputs) and reference npk / nullifier / EdDSA functions with
+ * test vectors. Until then this two-input stand-in takes the same inputs;
+ * replace it together with deriveNpk, using those reference functions.
  */
 export function deriveNullifier(nk, leaf, pos) {
   return poseidon2(poseidon2(nk, leaf), BigInt(pos));
