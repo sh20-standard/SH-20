@@ -1,7 +1,8 @@
 // ============================================================================
-// PROVISIONAL — the note public key derivation.
+// PROVISIONAL — the note key and nullifier derivations.
 //
-// This is the ONLY place where the vault turns its secret into an `npk`.
+// This is the ONLY place where the vault turns its secret into an `npk`, and
+// the only place that computes a nullifier.
 // It must later match the spend circuit exactly (CLAUDE.md: `npk` from tweaked
 // BabyJubJub spend and nullifier keys, as in Tacit; nullifier
 // Poseidon(nk_note, leaf, leaf_index); EdDSA-Poseidon over bodyHash).
@@ -33,4 +34,14 @@ export function deriveNpk(seed, index) {
   const nk = hashToFr('sh20/vault/provisional-0/nk', seed, index);
   const npk = poseidon2(poseidon2(TAG_NPK, ask), nk);
   return { npk, ask, nk, scheme: NPK_SCHEME };
+}
+
+/**
+ * PROVISIONAL nullifier of the note at tree position `pos`. The circuit of PR #4
+ * defines nf = Poseidon3(nk, leaf, index) (docs/SPEC-WIRE.md on that branch);
+ * Poseidon with 3 inputs is not in the indexer yet, so this is a two-input
+ * stand-in with the same inputs. Replace it together with deriveNpk.
+ */
+export function deriveNullifier(nk, leaf, pos) {
+  return poseidon2(poseidon2(nk, leaf), BigInt(pos));
 }

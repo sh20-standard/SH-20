@@ -74,11 +74,14 @@ async function main() {
   const pending = new Map();
   const problems = [];
   const dialogs = [];
+  const urls = [];
   ws.addEventListener('message', (ev) => {
     const m = JSON.parse(ev.data);
     if (m.id && pending.has(m.id)) {
       pending.get(m.id)(m);
       pending.delete(m.id);
+    } else if (m.method === 'Network.requestWillBeSent') {
+      urls.push(m.params.request.url);
     } else if (m.method === 'Page.javascriptDialogOpening') {
       dialogs.push(m.params.message);
       ws.send(JSON.stringify({ id: ++id, method: 'Page.handleJavaScriptDialog', params: { accept: true } }));
@@ -108,6 +111,7 @@ async function main() {
   };
   const click = (sel, text) => evaluate(`(() => { const b = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.textContent.includes(${JSON.stringify(text)})); if (!b) throw new Error('no button ${text}'); if (b.disabled) throw new Error('button ${text} disabled: ' + b.title); b.click(); return true; })()`);
 
+  await send('Network.enable');
   await send('Runtime.enable');
   await send('Log.enable');
   await send('Page.enable');
@@ -154,12 +158,17 @@ async function main() {
   await waitFor(`document.querySelector('#mint-body').innerText.includes('Broadcast:')`, 'broadcast');
   step(await evaluate(`document.querySelector('#mint-body .ok').innerText`));
 
-  await click('#notes button', 'Check indexer');
+  await click('#notes button', 'Sync');
   await waitFor(`document.querySelector('#notes-body').innerText.includes('in tree')`, 'note found in the tree');
   step('my notes: ' + (await evaluate(`document.querySelector('#notes-body tbody').innerText.replace(/\\s+/g, ' ')`)));
+  step('sync: ' + (await evaluate(`document.querySelector('#sync-status').innerText`)));
+  const leaks = urls.filter((u) => /\/path\/|\/nullifier\//.test(u));
+  if (leaks.length) throw new Error('per-note requests sent: ' + leaks.join(', '));
+  step(`${urls.filter((u) => u.includes(':80')).length} requests to the indexers and Esplora, none per note`);
 
   ws.close();
-  const real = problems.filter((p) => !/favicon/.test(p));
+  // a 404 on /nullifiers is expected from an indexer without the route (before PR #5): spends shown as unknown
+  const real = problems.filter((p) => !/favicon/.test(p) && !/404.*\/nullifiers\?from=/.test(p));
   if (real.length) {
     throw new Error('page problems:\n' + real.join('\n'));
   }

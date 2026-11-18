@@ -3,7 +3,7 @@
 // public note by rescanning the indexer. The state lives in localStorage,
 // encrypted with AES-GCM under a PBKDF2 passphrase key when a passphrase is set.
 
-import { deriveNpk } from './npk.js';
+import { deriveNpk, deriveNullifier } from './npk.js';
 import { hashToFr, frHex } from './fr.js';
 import { noteLeaf, tickerT } from './sh20.js';
 import { toHex, fromHex, toBase64, fromBase64, utf8 } from './bytes.js';
@@ -121,6 +121,11 @@ export class Vault {
 
   opening(index) {
     return noteOpening(this.#seed, index);
+  }
+
+  /** Nullifier of note `index` at tree position `pos`; the nullifier key never leaves the vault. */
+  nullifier(index, leaf, pos) {
+    return deriveNullifier(deriveNpk(this.#seed, index).nk, leaf, pos);
   }
 
   /** Records a public note the vault created (MINT): ticker, v and the expected leaf (t = tickerT(ticker)). */

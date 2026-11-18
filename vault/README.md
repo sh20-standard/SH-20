@@ -19,7 +19,7 @@ TRANSFER, BURN, LIST, TAKE and CLAIM wait for the spend circuit.
 ## Run
 
 ```sh
-npm test                 # 37 tests, Node ≥ 20, zero dependencies
+npm test                 # 43 tests (+1 skipped until /nullifiers exists), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development)
 npm run release          # a verifiable release from the current commit (below)
 ```
@@ -59,11 +59,13 @@ folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
   right bytes; a local IPFS node checks every block against the CID.
 - **New version, new origin:** each CID has its own storage. Download the vault backup before
   switching, and restore it on the new CID.
-- **Nothing from another domain:** the CSP allows scripts from the page's own origin, the import map
-  (by hash) and the wallet extensions' own scripts (`chrome-extension:` / `moz-extension:`, which only
-  an installed extension can serve and which some wallets use to inject their provider); no CDN, no
-  remote font or stylesheet. `test/page.test.js` and `test/release.test.js` check it. Network calls
-  (`connect-src`) go only to the indexer and Esplora servers you configure.
+- **Nothing from another domain:** the CSP allows scripts from the page's own origin and the import
+  map (by hash), no CDN, no remote font or stylesheet; `test/page.test.js` and `test/release.test.js`
+  check it. Network calls (`connect-src`) go only to the indexer and Esplora servers you configure.
+- **Why `chrome-extension:` and `moz-extension:` stay in `script-src`:** Xverse, UniSat and Leather
+  inject their wallet provider into the page as a script served from their own extension, which only
+  an installed extension can serve, so allowing these schemes lets the wallets work without letting
+  any website's script in.
 
 ## Hosting and keys
 
@@ -128,11 +130,34 @@ are the envelope) + 43 (change). The wallet side has nothing left to trim: getti
 target needs a smaller envelope, for example dropping `rho` from public openings (−32 vB → ~164 vB),
 which is a protocol decision (CLAUDE.md, cost lever 4). With no change output: −43 vB.
 
+## Private sync: tree, paths and spends on the device
+
+Asking an indexer `/path/:pos` or `/nullifier/:hex` for your own notes tells it which notes are
+yours. The vault never does (`test/page.test.js` fails if any source calls them, and the e2e run
+checks every request the page sends). Instead `src/sync.js`:
+
+- downloads **every leaf** (`/notes`, paged) and rebuilds the tree locally (`src/tree.js`: same tree
+  as `indexer/src/tree.js`, keeping every level, so appending k leaves costs about 2k + 32 Poseidon
+  hashes and a Merkle path costs none). The local root must equal the indexer's `root` at the same
+  height, or the sync fails: an indexer whose leaves do not hash to its own root is refused;
+- downloads **every spent nullifier** (`/nullifiers?from=H`, docs/API.md) and checks the vault's
+  notes against that set on the device. Until an indexer serves the route (PR #5) spends show as
+  "unknown"; the vault never falls back to per-note questions;
+- computes each owned note's Merkle path from the local tree and checks it against the local root
+  (`Sync.witness`, what a spend will need); nullifiers are computed inside the vault (`Vault.nullifier`),
+  so the nullifier key never leaves it;
+- **caches** the leaves and nullifiers in IndexedDB (public data only: everything, not what is
+  yours), so the next sync downloads only new blocks. Each sync re-reads the last 6 blocks to absorb
+  reorgs; a deeper reorg shows as a root mismatch and triggers one full re-download. "Rescan from
+  zero" ignores the cache; a restored vault always rescans everything to find its notes.
+
+Loading a cached tree recomputes it (about 0.2 ms per leaf) to check it against the cached root.
+
 ## Provisional note keys
 
-`src/npk.js` holds **the only** derivation of `npk` from the vault seed, marked `PROVISIONAL`
-(scheme `provisional-0`). It must be replaced by the spend circuit's exact derivation (tweaked
-BabyJubJub spend and nullifier keys, as in Tacit). Every stored note records its scheme. Notes
+`src/npk.js` holds **the only** derivation of `npk` and of the nullifier, marked `PROVISIONAL`
+(scheme `provisional-0`). They must be replaced by the spend circuit's exact derivations (PR #4:
+`npk = Poseidon(Ak.x, Ak.y, NK.x, NK.y)` over BabyJubJub keys, `nf = Poseidon(nk, leaf, index)`). Every stored note records its scheme. Notes
 minted with `provisional-0` are for signet testing and may not be spendable by the final circuit.
 `rho` is derived from the seed too (`keys.js`), so recovery needs only the seed.
 
@@ -143,6 +168,8 @@ The vault reads the API of `indexer/bin/follow.js` ([`docs/API.md`](../docs/API.
 - `GET /status` → `network` (must be `signet`), `height`, `digest`, `verifier`
 - `GET /tokens`, `GET /token/:ticker` → the reference indexer's token records
 - `GET /notes?from&limit` → `{ from, total, notes }`, read page by page (5,000 per page)
+- `GET /nullifiers?from=H` → every nullifier spent from block `H` on
+- never `/path/:pos` nor `/nullifier/:hex` (see Private sync)
 
 Big integers arrive as decimal strings, field elements as 64-char hex. The vault downloads every
 note and matches its own locally by `npk`, so the indexer does not learn which notes are yours.
@@ -152,7 +179,7 @@ the `ct` format exists.
 
 ## Reusing the indexer code in the browser
 
-`src/sh20.js` imports `indexer/src/codec.js`, `constants.js`, `notes.js` and `poseidon.js`
+`src/sh20.js` imports `indexer/src/carrier.js`, `codec.js`, `constants.js`, `notes.js`, `poseidon.js` and `tree.js`
 **unchanged**. Two small shims make that possible: `src/shim/buffer.js` (the subset of Node's
 `Buffer` those files use) and `src/shim/node-crypto.js` (synchronous SHA-256), which the import
 map in `index.html` puts in place of `node:crypto`. `test/shim.test.js` runs the indexer's vectors
@@ -166,7 +193,8 @@ repository layout (`dist/vault/` and `dist/indexer/src/`) so the relative import
 | `index.html`, `style.css` | the page |
 | `src/app.js` | UI: vault, wallet, tickers, mint, notes, settings |
 | `src/keys.js` | seed, encrypted storage, backup, note openings |
-| `src/npk.js` | **provisional** `npk` derivation, isolated |
+| `src/npk.js` | **provisional** `npk` and nullifier derivations, isolated |
+| `src/sync.js`, `src/tree.js`, `src/cache.js` | private sync: local tree, paths, spends, IndexedDB cache |
 | `src/mint.js` | MINT pre-flight checks, coin selection, transaction and PSBT |
 | `src/deploy.js` | checks the indexer's mint terms against the DEPLOY transaction |
 | `src/consensus.js` | cross-checks several indexers before a mint |
