@@ -53,5 +53,7 @@ test('every mint term is checked', () => {
     assert.match(deployMismatches({ ...token, [k]: v }, hex, 1).join(), new RegExp(`^${k}:`), k);
   }
   assert.match(deployMismatches(token, hex, 2).join(), /deploy height/);
-  assert.match(deployMismatches({ ...token, deployTxid: 'ab'.repeat(32) }, hex).join(), /another transaction/);
+  assert.match(deployMismatches({ ...token, deployTxid: 'ab'.repeat(32) }, hex, 1).join(), /another transaction/);
+  assert.match(deployMismatches({ ...token, deployHeight: null }, hex, 1).join(), /no deployHeight/, 'a missing height refuses, never skips');
+  assert.match(deployMismatches(token, hex, undefined).join(), /height is unknown/);
 });

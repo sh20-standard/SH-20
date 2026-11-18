@@ -29,8 +29,10 @@ const FIELDS = ['ticker', 'max', 'lim', 'pre', 'start', 'end', 'price', 'payMode
  * Compares the DEPLOY in `rawHex` with the indexer's `token`. Returns the list
  * of disagreements (empty when everything matches).
  */
-export function deployMismatches(token, rawHex, height = null) {
+export function deployMismatches(token, rawHex, height) {
   if (!token.deployTxid) return ['the indexer gives no deployTxid'];
+  if (token.deployHeight === null || token.deployHeight === undefined) return ['the indexer gives no deployHeight'];
+  if (!Number.isInteger(height)) return ['the DEPLOY confirmation height is unknown'];
   const tx = parseTx(fromHex(rawHex));
   if (txidOf(tx) !== token.deployTxid) return ['Esplora returned another transaction than deployTxid'];
   const found = extractEnvelope(toCarrierTx(tx));
@@ -49,7 +51,7 @@ export function deployMismatches(token, rawHex, height = null) {
     const b = String(token[k]);
     if (a !== b) out.push(`${k}: chain says ${a || '(empty)'}, indexer says ${b || '(empty)'}`);
   }
-  if (height !== null && token.deployHeight !== null && Number(token.deployHeight) !== height) {
+  if (Number(token.deployHeight) !== height) {
     out.push(`deploy height: chain says ${height}, indexer says ${token.deployHeight}`);
   }
   return out;
