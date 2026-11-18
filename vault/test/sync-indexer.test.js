@@ -25,7 +25,7 @@ const toIndexerTx = (t) => ({
 });
 
 test('sync finds the vault note, its path and its spend through the real API', async (t) => {
-  const idx = new Indexer({ profile: { activationHeight: 1 }, verifier: mockVerifier() });
+  const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n }, verifier: mockVerifier() });
   const c = chain(idx);
   c.block(helperTx({ env: deployEnv({ start: 2, unlock: 2 }) }));
 
