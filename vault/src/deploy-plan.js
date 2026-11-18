@@ -41,11 +41,12 @@ export function deployProblems(d, { nextHeight, taken = [] }) {
   return p;
 }
 
-// Placeholders with the real sizes: the bytes of a DEPLOY do not depend on their values.
+// Placeholders with the real sizes (wire v0.3: 32-byte pk_eph, a 480-byte proof with no length
+// field): the bytes of a DEPLOY do not depend on their values. Nothing here is sealed or sent.
 const dummySpend = () => ({
   anchorHeight: 0,
   nf: [1n, 1n],
-  outs: [0, 1, 2].map(() => ({ leaf: 1n, pkEph: Buffer.from([2, ...new Uint8Array(32)]), ct: Buffer.alloc(28) })),
+  outs: [0, 1, 2].map(() => ({ leaf: 1n, pkEph: Buffer.alloc(32), ct: Buffer.alloc(28) })), // v0.3: X25519 pk_eph, 32 bytes
   proof: Buffer.alloc(PROOF_BYTES),
 });
 
@@ -54,7 +55,7 @@ export function deployBytes(d, { burn }) {
   try {
     return serializeEnvelope({
       type: 'DEPLOY', ...d, payScript: Buffer.from(d.payScript ?? []),
-      team: d.pre > 0n ? { npk: 1n, rho: 1n } : null,
+      team: d.pre > 0n ? { npk: 1n } : null,
       spend: burn ? dummySpend() : null,
     }).length;
   } catch (e) {

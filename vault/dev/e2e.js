@@ -107,8 +107,8 @@ async function main() {
     if (r.result.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description || expr);
     return r.result.result.value;
   };
-  const waitFor = async (expr, what) => {
-    for (let i = 0; i < 100; i++) {
+  const waitFor = async (expr, what, tries = 100) => {
+    for (let i = 0; i < tries; i++) {
       if (await evaluate(expr)) return;
       await sleep(100);
     }
@@ -138,6 +138,9 @@ async function main() {
   const stored = await evaluate(`localStorage.getItem('sh20.vault.v0')`);
   if (/seed|GENE/.test(stored)) throw new Error('vault stored in clear');
   step('vault created, stored encrypted (' + stored.length + ' bytes)');
+  const address = await evaluate(`document.querySelector('#address')?.textContent`);
+  if (!/^tsh201[02-9ac-hj-np-z]{162}$/.test(address)) throw new Error('no signet sh20 address shown: ' + address);
+  step('sh20 address: ' + address.slice(0, 24) + '…');
 
   await waitFor(`[...document.querySelectorAll('#wallet-body button')].some((b) => b.textContent === 'UniSat' && !b.disabled)`, 'UniSat detected');
   await click('#wallet-body button', 'UniSat');
@@ -156,6 +159,9 @@ async function main() {
     console.log('\nOK: the lying indexer blocked the mint');
     return;
   }
+  // a batch of 2 mints (wire v0.3): one note of 2 × lim
+  await evaluate(`(() => { const k = document.querySelector('#mint-body input[name=k]'); k.value = '2'; k.dispatchEvent(new Event('input')); })()`);
+  if (!(await evaluate(`document.querySelector('#mint-body dl').innerText.includes('2,000 ${TICKER} (one public note, 2 mints)')`))) throw new Error('batch not shown');
   await click('#mint-body button', 'Prepare');
   await waitFor(`[...document.querySelectorAll('#mint-body button')].some((b) => b.textContent.includes('Sign with'))`, 'prepared tx');
   const source = D0 ? 'checked against the DEPLOY' : 'checked against the profile constants';
@@ -167,7 +173,8 @@ async function main() {
   step(await evaluate(`document.querySelector('#mint-body .ok').innerText`));
 
   await click('#notes button', 'Sync');
-  await waitFor(`document.querySelector('#notes-body').innerText.includes('in tree')`, 'note found in the tree');
+  await waitFor(`document.querySelector('#notes-body').innerText.includes('in tree')`, 'note found in the tree', 600); // the first sync derives 50 note keys
+  if (!(await evaluate(`document.querySelector('#notes-body tbody').innerText.includes('2,000')`))) throw new Error('the batch note is not 2,000');
   step('my notes: ' + (await evaluate(`document.querySelector('#notes-body tbody').innerText.replace(/\\s+/g, ' ')`)));
   step('sync: ' + (await evaluate(`document.querySelector('#sync-status').innerText`)));
   const leaks = urls.filter((u) => /\/path\/|\/nullifier\//.test(u));
@@ -178,7 +185,7 @@ async function main() {
   await evaluate(`(() => { const i = document.querySelector('#deploy-body input'); i.value = 'NEWT'; i.dispatchEvent(new Event('change')); })()`);
   await waitFor(`document.querySelector('#deploy-body').innerText.includes('Envelope')`, 'deploy plan');
   const plan = await evaluate(`document.querySelector('#deploy-body dl').innerText.replace(/\\n/g, ' | ')`);
-  const want = D0 ? ['D = 0', '56 bytes in one OP_RETURN'] : ['1,000 SH20 burned with a proof', '2 indexers agree on D', 'one note would pay the burn', '885 bytes in a tapscript witness'];
+  const want = D0 ? ['D = 0', '56 bytes in one OP_RETURN'] : ['1,000 SH20 burned with a proof', '2 indexers agree on D', 'one note would pay the burn', '880 bytes in a tapscript witness'];
   for (const w of want) if (!plan.includes(w)) throw new Error(`deploy screen lacks "${w}": ${plan}`);
   if (!(await evaluate(`[...document.querySelectorAll('#deploy-body button')].find((b) => b.textContent.includes('Sign')).disabled`))) throw new Error('deploy can be sent');
   step('deploy screen: ' + plan);

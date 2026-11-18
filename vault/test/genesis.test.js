@@ -27,7 +27,7 @@ function activated() {
 }
 
 test('the vault\'s genesis constants are the profile\'s and the vectors\'', () => {
-  const v = JSON.parse(readFileSync(new URL('../../indexer/vectors/v0.2.json', import.meta.url), 'utf8')).genesis;
+  const v = JSON.parse(readFileSync(new URL('../../indexer/vectors/v0.3.json', import.meta.url), 'utf8')).genesis;
   assert.equal(GENESIS.ticker, DEFAULT_PROFILE.genesis.ticker);
   assert.equal(GENESIS.max, DEFAULT_PROFILE.genesis.max);
   assert.equal(GENESIS.lim, DEFAULT_PROFILE.genesis.lim);
@@ -93,5 +93,5 @@ test('MINT of SH20 accepted by the indexer: free, 1,000 units, terms from the pr
   });
   assert.deepEqual(r.rejected, []);
   assert.equal(r.events[0].type, 'MINT');
-  assert.equal(idx.tree.leaves[r.events[0].pos], noteLeaf(tickerT('SH20'), 1000n, opening.npk, opening.rho));
+  assert.equal(idx.tree.leaves[r.events[0].pos], noteLeaf(tickerT('SH20'), 1000n, opening.npk, 0n));
 });

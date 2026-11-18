@@ -48,16 +48,22 @@ export function normToken(t) {
   };
 }
 
-/** A tree leaf: MINT / TEAM / TAKE / CLAIM carry a public opening (ticker, v, npk, rho); OUT does not. */
+const hexBytes = (h, n) => {
+  if (typeof h !== 'string' || !new RegExp(`^[0-9a-f]{${2 * n}}$`, 'i').test(h)) return null;
+  return Uint8Array.from(h.match(/../g), (x) => parseInt(x, 16));
+};
+
+/** A tree leaf: MINT / TEAM / TAKE / CLAIM carry a public opening (ticker, v, npk); OUT carries pkEph and ct. */
 export function normNote(n) {
   return {
     pos: n.pos ?? null,
     kind: n.kind ?? null,
     ticker: typeof n.ticker === 'string' && /^[A-Z0-9]{4}$/.test(n.ticker) ? n.ticker : null,
     v: n.v === undefined ? null : big(n.v),
-    npk: frOf(n.npk),
-    rho: frOf(n.rho),
+    npk: frOf(n.npk), // public notes: their opening (rho is 0, v0.3)
     leaf: frOf(n.leaf),
+    pkEph: hexBytes(n.pkEph, 32), // OUT notes: the sealed output (docs/SPEC-NOTES.md §3)
+    ct: hexBytes(n.ct, 28),
     txid: n.txid ?? null,
     height: n.height ?? null,
   };

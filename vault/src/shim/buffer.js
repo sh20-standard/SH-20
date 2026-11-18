@@ -1,5 +1,5 @@
 // Minimal Node `Buffer` for the browser: exactly the subset that
-// indexer/src/{constants,codec,notes}.js use, so those files load unchanged.
+// indexer/src/{constants,codec,notes}.js and circuit/js/{address,seal}.js use, so those files load unchanged.
 // In Node the real Buffer is kept.
 
 const HEX = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
@@ -63,7 +63,8 @@ class ShimBuffer extends Uint8Array {
     return true;
   }
 
-  toString(enc = 'utf8') {
+  toString(enc = 'utf8', start = 0, end = this.length) {
+    if (start !== 0 || end !== this.length) return ShimBuffer.from(this.subarray(start, end)).toString(enc);
     if (enc === 'hex') {
       let s = '';
       for (const x of this) s += HEX[x];
@@ -86,6 +87,12 @@ class ShimBuffer extends Uint8Array {
   }
   readBigUInt64LE(o = 0) {
     return this._dv.getBigUint64(o, true);
+  }
+  /** write(string, offset, encoding): the bytes that fit, like Node; returns how many were written. */
+  write(s, o = 0, enc = 'utf8') {
+    const b = ShimBuffer.from(s, enc).subarray(0, Math.max(0, this.length - o));
+    this.set(b, o);
+    return b.length;
   }
   writeUInt16LE(v, o = 0) {
     check(v, 0xffff, 'writeUInt16LE');

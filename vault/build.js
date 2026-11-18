@@ -4,6 +4,7 @@
 //   index.html            → redirects to vault/
 //   vault/…               → the page, styles and src/
 //   indexer/src/…         → only the indexer modules the vault loads
+//   circuit/js/…          → the wallet reference (note keys, addresses, sealing), unchanged
 //   LICENSE
 //
 // `npm run build` writes it to vault/dist/ from the working tree (development).
@@ -20,6 +21,8 @@ const root = join(here, '..');
 
 // The indexer modules reachable from vault/src/sh20.js.
 export const INDEXER = ['carrier.js', 'codec.js', 'constants.js', 'notes.js', 'poseidon.js', 'tree.js'];
+// The circuit/js modules reachable from vault/src/sh20.js (docs/SPEC-NOTES.md).
+export const CIRCUIT_JS = ['address.js', 'babyjub.js', 'notes.js', 'seal.js'];
 
 const REDIRECT = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=vault/"><title>SH-20 Vault</title><a href="vault/">SH-20 Vault</a>\n';
 
@@ -30,7 +33,7 @@ const REDIRECT = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh
  */
 export function site(reader) {
   const files = new Map();
-  for (const p of ['vault/index.html', 'vault/style.css', ...reader.list('vault/src'), ...INDEXER.map((f) => `indexer/src/${f}`), 'LICENSE']) {
+  for (const p of ['vault/index.html', 'vault/style.css', ...reader.list('vault/src'), ...INDEXER.map((f) => `indexer/src/${f}`), ...CIRCUIT_JS.map((f) => `circuit/js/${f}`), 'LICENSE']) {
     files.set(p, reader.read(p));
   }
   files.set('index.html', Buffer.from(REDIRECT));
