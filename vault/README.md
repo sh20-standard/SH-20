@@ -19,9 +19,9 @@ TRANSFER, BURN, LIST, TAKE and CLAIM wait for the spend circuit.
 ## Run
 
 ```sh
-npm test                 # 34 tests, Node ≥ 20, zero dependencies
-npm run build            # vault/dist/ = the site to publish
-ipfs add -r --cid-version=1 dist
+npm test                 # 37 tests, Node ≥ 20, zero dependencies
+npm run build            # vault/dist/ from the working tree (development)
+npm run release          # a verifiable release from the current commit (below)
 ```
 
 Development (serves the repository root, a mock indexer API and a mock Esplora):
@@ -37,6 +37,33 @@ E2E_LIAR=1 node dev/e2e.js                    # a lying indexer in the list: the
 serialised transactions. Its mock Esplora serves those transactions and "mines" every broadcast
 one into the next block, so the e2e test checks the DEPLOY terms, that the indexer accepts the
 vault's MINT, and that the vault finds the note in the tree afterwards.
+
+## Releases and IPFS hosting
+
+`npm run release` builds the site **from the git objects of the current commit** (not from the
+working tree), packs it as `release/sh20-vault-<version>.tar` and writes the same files to
+`release/sh20-vault-<version>/`. It records the source commit, the package's SHA-256 and the
+folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
+
+- **Reproducible:** same commit → same bytes, on any machine. The tar is written by
+  `tools/pack.js` with fixed metadata (sorted paths, mode 0644, uid/gid 0, mtime 0, no compression,
+  since gzip output depends on the zlib build). `node release.js --check <sha256>` rebuilds and
+  compares; `test/release.test.js` builds twice and requires identical bytes.
+- **The CID is the fingerprint.** `tools/pack.js` computes it the way `ipfs add -r --cid-version=1`
+  does (raw leaves, sha2-256, sorted dag-pb directories; checked against kubo 0.32.1), so the CID
+  is known before publishing and anyone can recompute it from the commit.
+- **Publish:** `ipfs add -r --cid-version=1 --pin release/sh20-vault-<version>` must print the
+  recorded CID. Pin it on several nodes or pinning services; nobody needs to keep a server for it.
+- **Open:** `https://<cid>.ipfs.dweb.link/vault/` (subdomain gateway: one origin per CID), or a
+  local node at `http://<cid>.ipfs.localhost:8080/vault/`. A public gateway is trusted to serve the
+  right bytes; a local IPFS node checks every block against the CID.
+- **New version, new origin:** each CID has its own storage. Download the vault backup before
+  switching, and restore it on the new CID.
+- **Nothing from another domain:** the CSP allows scripts from the page's own origin, the import map
+  (by hash) and the wallet extensions' own scripts (`chrome-extension:` / `moz-extension:`, which only
+  an installed extension can serve and which some wallets use to inject their provider); no CDN, no
+  remote font or stylesheet. `test/page.test.js` and `test/release.test.js` check it. Network calls
+  (`connect-src`) go only to the indexer and Esplora servers you configure.
 
 ## Hosting and keys
 
@@ -149,7 +176,8 @@ repository layout (`dist/vault/` and `dist/indexer/src/`) so the relative import
 | `src/api.js` | indexer API and Esplora clients |
 | `src/hash.js`, `src/bytes.js`, `src/fr.js` | SHA-256, RIPEMD-160, bytes, field elements |
 | `src/sh20.js`, `src/shim/` | the reused indexer modules and their browser shims |
-| `build.js` | builds `dist/` for IPFS |
+| `build.js` | the site's file set; `npm run build` writes `dist/` |
+| `release.js`, `tools/pack.js` | reproducible release: tar, SHA-256, IPFS CID, `RELEASES.md` |
 | `dev/` | dev server (real indexer API, mock Esplora) and the headless-Chrome end-to-end run |
 
 ## Not tested yet
