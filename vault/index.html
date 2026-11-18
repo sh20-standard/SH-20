@@ -41,8 +41,10 @@
   </section>
 
   <section id="notes">
-    <h2>My notes <button id="scan" type="button" class="small">Check indexer</button></h2>
+    <h2>My notes <button id="scan" type="button" class="small">Sync</button> <button id="rescan" type="button" class="small secondary">Rescan from zero</button></h2>
+    <p id="sync-status" class="muted"></p>
     <div id="notes-body"></div>
+    <p class="muted">The vault downloads every leaf and every spent nullifier and works out here which are yours: the indexer never learns which notes you own.</p>
   </section>
 
   <section id="settings">

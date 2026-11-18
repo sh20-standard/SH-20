@@ -19,7 +19,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 
 // The indexer modules reachable from vault/src/sh20.js.
-export const INDEXER = ['carrier.js', 'codec.js', 'constants.js', 'notes.js', 'poseidon.js'];
+export const INDEXER = ['carrier.js', 'codec.js', 'constants.js', 'notes.js', 'poseidon.js', 'tree.js'];
 
 const REDIRECT = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=vault/"><title>SH-20 Vault</title><a href="vault/">SH-20 Vault</a>\n';
 

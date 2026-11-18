@@ -21,6 +21,13 @@ test('CSP allows exactly the inline import map, by hash', () => {
   assert.match(csp, /style-src 'self'(;|$)/);
 });
 
+test('privacy: no source asks per-note routes (/path/:pos, /nullifier/:hex)', () => {
+  for (const f of readdirSync(new URL('../src/', import.meta.url), { recursive: true }).filter((x) => x.endsWith('.js'))) {
+    const src = readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8').replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '');
+    assert.ok(!/\/path\/|\/nullifier\//.test(src), `${f} must not call /path/:pos or /nullifier/:hex`);
+  }
+});
+
 test('only relative URLs, so the page works under any IPFS CID', () => {
   for (const [, url] of html.matchAll(/(?:src|href)="([^"]+)"/g)) assert.match(url, /^\.\//, url);
   for (const f of readdirSync(new URL('../src/', import.meta.url), { recursive: true }).filter((x) => x.endsWith('.js'))) {

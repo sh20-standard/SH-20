@@ -10,6 +10,8 @@ import { crossCheck, TERMS } from './consensus.js';
 import { finalizePsbt, sameUnsignedTx, scriptType, addressToScript } from './btc.js';
 import { frHex } from './fr.js';
 import { NPK_SCHEME } from './npk.js';
+import { Sync } from './sync.js';
+import { defaultCache } from './cache.js';
 import { PAY_MODE, noteLeaf, tickerT } from './sh20.js';
 import { toHex } from './bytes.js';
 
@@ -57,7 +59,7 @@ const explorerTx = (id) => settings.esplora.replace(/\/api\/?$/, '') + '/tx/' + 
 
 // ---- state ----------------------------------------------------------------------
 
-const st = { vault: null, wallet: null, tokens: [], status: null, tip: null };
+const st = { vault: null, wallet: null, tokens: [], status: null, tip: null, sync: null };
 
 // ---- DOM helpers ----------------------------------------------------------------
 
@@ -137,6 +139,7 @@ function renderVault() {
       busy(btn, async () => {
         st.vault = await Vault.open(localStorage, pass.value);
         renderAll();
+        syncNotes().catch(report);
       })();
     });
     fill('vault-body', h('p', {}, 'A vault exists on this device.'), form);
@@ -161,6 +164,7 @@ function renderVault() {
     if (!file.files[0]) throw new Error('choose a backup file');
     st.vault = await Vault.restore(localStorage, await file.files[0].text(), rpass.value);
     renderAll();
+    syncNotes({ full: true }).catch(report); // a restored vault looks for its notes in every leaf
   }));
   fill('vault-body',
     h('p', {}, 'No vault on this device. The seed is generated here and never leaves it.'),
@@ -362,7 +366,17 @@ async function signAndSend(token, m, opening, out) {
 
 // ---- notes -----------------------------------------------------------------------
 
+function spentText(n) {
+  if (n.spent === undefined || n.spent === 'unknown') return n.pos === null ? '—' : 'unknown';
+  return n.spent === 'no' ? 'no' : `yes, ${n.spent}`;
+}
+
 function renderNotes() {
+  const ss = st.sync;
+  fill('sync-status', ss
+    ? [`Synced to block ${ss.height}: ${ss.leaves} leaves, rebuilt here; the root matches the indexer. `,
+      ss.nullifiersKnown ? 'Spends from the full nullifier list.' : h('span', { class: 'err' }, 'This indexer has no /nullifiers yet: spends unknown.')]
+    : 'Not synced yet.');
   if (!st.vault) {
     fill('notes-body', h('p', { class: 'muted' }, 'Unlock the vault to see your notes.'));
     return;
@@ -373,23 +387,31 @@ function renderNotes() {
     return;
   }
   fill('notes-body', h('div', { class: 'table-wrap' }, h('table', {},
-    h('thead', {}, h('tr', {}, ['Ticker', 'Amount', 'Status', 'Position', 'Transaction', 'Key'].map((x) => h('th', {}, x)))),
+    h('thead', {}, h('tr', {}, ['Ticker', 'Amount', 'Status', 'Position', 'Merkle path', 'Spent', 'Transaction', 'Key'].map((x) => h('th', {}, x)))),
     h('tbody', {}, notes.map((n) => h('tr', {},
       h('td', {}, n.ticker),
       h('td', { class: 'num' }, units(n.v)),
       h('td', { class: n.status === 'in tree' ? 'ok' : '' }, n.status),
       h('td', { class: 'num' }, n.pos ?? '—'),
+      h('td', {}, n.pathAt ? `checked at block ${n.pathAt}` : '—'),
+      h('td', {}, spentText(n)),
       h('td', {}, n.txid ? h('a', { href: explorerTx(n.txid), target: '_blank', rel: 'noopener noreferrer', class: 'mono' }, short(n.txid)) : '—'),
       h('td', { class: 'muted' }, `#${n.index} ${n.scheme}`)))))));
 }
 
-/**
- * Downloads the public notes and matches them locally against the vault's
- * keys: confirms pending mints and recovers notes after a restore.
- */
-async function scanNotes() {
-  if (!st.vault) throw new Error('unlock the vault first');
-  const pub = await indexer.notes();
+let syncer = null;
+
+async function getSyncer() {
+  if (!syncer || syncer.base !== indexer.base) {
+    syncer = new Sync(await defaultCache(), indexer.base);
+    syncer.base = indexer.base;
+    await syncer.load();
+  }
+  return syncer;
+}
+
+/** Recognises the vault's public notes among notes read by a sync (by npk, leaf recomputed). */
+async function matchNotes(pub) {
   const v = st.vault;
   const keys = v.npkWindow(20);
   let found = 0;
@@ -399,7 +421,7 @@ async function scanNotes() {
     if (index === undefined) continue;
     const o = v.opening(index);
     if (n.rho !== null && n.rho !== o.rho) continue;
-    // never trust the API's (t, v) alone: they must give back the leaf it put in the tree
+    // never trust the API's (ticker, v) alone: they must give back the leaf it put in the tree
     const leaf = frHex(noteLeaf(tickerT(n.ticker), n.v, o.npk, o.rho));
     if (n.leaf !== null && frHex(n.leaf) !== leaf) continue;
     const mine = v.state.notes.find((x) => x.index === index);
@@ -414,7 +436,39 @@ async function scanNotes() {
       found++;
     }
   }
-  await v.save();
+  return found;
+}
+
+/** Merkle path and spent status of every owned note, from the local tree and nullifier set only. */
+async function checkOwned(s) {
+  const v = st.vault;
+  for (const n of v.state.notes) {
+    if (n.pos === null || n.pos === undefined) continue;
+    const leaf = BigInt('0x' + n.leaf);
+    if (n.pos >= s.tree.size || s.tree.leaf(n.pos) !== leaf) {
+      await v.updateNote(n.index, { status: 'not in tree (reorg?)', pos: null, pathAt: null, spent: undefined });
+      continue;
+    }
+    s.witness(n.pos, leaf); // throws if the local path does not reach the local root
+    const at = s.spentAt(frHex(v.nullifier(n.index, leaf, n.pos)));
+    await v.updateNote(n.index, { pathAt: s.height, spent: at === undefined ? 'unknown' : at === null ? 'no' : `block ${at}` });
+  }
+}
+
+/**
+ * Private sync: downloads every leaf and every spent nullifier (only what is
+ * new since the cached block), rebuilds the tree here, then finds the vault's
+ * notes, their Merkle paths and their spends on the device.
+ */
+async function syncNotes({ full = false } = {}) {
+  const s = await getSyncer();
+  const r = await s.sync(indexer, { full });
+  st.sync = { height: r.height, leaves: r.leaves, nullifiersKnown: r.nullifiersKnown };
+  let found = 0;
+  if (st.vault) {
+    found = await matchNotes(r.notes);
+    await checkOwned(s);
+  }
   renderAll();
   staticWarnings();
   if (found) $('warnings').append(h('div', { class: 'warn' }, `${found} note(s) found in the tree.`));
@@ -456,6 +510,7 @@ initSettings();
 renderAll();
 refresh();
 $('refresh').addEventListener('click', busy($('refresh'), refresh));
-$('scan').addEventListener('click', busy($('scan'), scanNotes));
+$('scan').addEventListener('click', busy($('scan'), () => syncNotes()));
+$('rescan').addEventListener('click', busy($('rescan'), () => syncNotes({ full: true })));
 // extensions inject their providers a little after load
 setTimeout(renderWallet, 600);
