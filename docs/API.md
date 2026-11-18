@@ -1,4 +1,4 @@
-# SH-20 indexer API — draft v0.1
+# SH-20 indexer API — draft v0.2
 
 Read-only JSON over HTTP, served by `indexer/bin/follow.js`. GET only, CORS open (`*`), no
 authentication: it reports what the chain implies and can change nothing. Anyone can run it;
@@ -14,8 +14,8 @@ node bin/follow.js --esplora https://mempool.space/signet/api --activation H
 
 | Route | Returns |
 | --- | --- |
-| `GET /status` | `{ network, activationHeight, height, digest, root, leaves, nullifiers, tokens, verifier }` |
-| `GET /tokens` | every deployed token: `{ tokenNum, ticker, max, lim, pre, start, end, unlock, price, payMode, payScript, mints, burned, deployTxid, deployHeight }` |
+| `GET /status` | `{ network, activationHeight, height, digest, root, leaves, nullifiers, tokens, genesis, verifier }` |
+| `GET /tokens` | every deployed token, in DEPLOY order: `{ ticker, t, max, lim, pre, start, end, unlock, price, payMode, payScript, mints, burned, deployTxid, deployHeight }` |
 | `GET /token/:ticker` | one token (`[A-Z0-9]{4}`), or 404 |
 | `GET /notes?from=0&limit=1000` | `{ from, total, notes }`, one entry per tree leaf in tree order; `limit` ≤ 5000 |
 | `GET /path/:pos` | `{ pos, height, root, siblings[32] }` for the leaf at `pos`, against the current root |
@@ -24,11 +24,17 @@ node bin/follow.js --esplora https://mempool.space/signet/api --activation H
 | `GET /listings?state=ACTIVE` | listings, optionally filtered by state (ACTIVE, SOLD, CANCELLED, CLOSED, CLAIMED) |
 | `GET /listing/:txid` | one listing, or 404 |
 
+**Tokens.** `t` is the ticker's id inside notes and proofs (`tickerT`, SPEC-WIRE §2), as a decimal string;
+a wallet can recompute it from the ticker. Before paying for a mint, a wallet should check the token's
+conditions against the DEPLOY transaction itself (`deployTxid`), which any Bitcoin source returns, and compare
+`digest` and the token across several independent indexers: only the full history proves which DEPLOY of a
+ticker came first.
+
 **Notes.** Every note has `pos`, `height`, `txid`, `leaf` and `kind`:
 
 | kind | extra fields | created by |
 | --- | --- | --- |
-| `MINT`, `TEAM`, `TAKE`, `CLAIM` | `t`, `v`, `npk`, `rho` (public opening) | proof-less envelopes and team unlocks |
+| `MINT`, `TEAM`, `TAKE`, `CLAIM` | `ticker`, `v`, `npk`, `rho` (public opening) | proof-less envelopes and team unlocks |
 | `OUT` | `j` (output index), `pkEph`, `ct` | the three outputs of every spend |
 
 A wallet scans `OUT` notes with its viewing key (decrypting `ct` with the ECDH secret from `pkEph`),

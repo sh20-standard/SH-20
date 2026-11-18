@@ -45,6 +45,7 @@ export function apiHandler(indexer, { network } = {}) {
       leaves: ix.tree.size,
       nullifiers: ix.nullifiers.size,
       tokens: ix.tokens.size,
+      genesis: ix.genesis ?? null,
       verifier: ix.verifier.name ?? 'custom',
     })],
     [/^\/tokens$/, () => [...ix.tokens.values()]],

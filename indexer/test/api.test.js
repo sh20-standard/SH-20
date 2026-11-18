@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Indexer } from '../src/indexer.js';
 import { listen } from '../src/api.js';
 import { rootFromPath } from '../src/tree.js';
-import { noteLeaf } from '../src/notes.js';
+import { noteLeaf, tickerT } from '../src/notes.js';
 import { chain, deployEnv, mockVerifier, opening, spend, tx } from './helpers.js';
 
 async function withApi(fn) {
@@ -11,7 +11,7 @@ async function withApi(fn) {
   const c = chain(ix);
   const o = opening();
   c.block(tx({ env: deployEnv() }));
-  c.block(tx({ env: { type: 'MINT', tokenNum: 1, ...o }, burnSats: 1000n }));
+  c.block(tx({ env: { type: 'MINT', ticker: 'GENE', ...o }, burnSats: 1000n }));
   const s = spend(2);
   c.block(tx({ env: { type: 'TRANSFER', spend: s }, carrier: 'witness' }));
   const server = await listen(ix, { port: 0 });
@@ -49,7 +49,7 @@ test('notes give wallets what they need to scan, in tree order', () =>
     const [m, ...outs] = body.notes;
     assert.equal(m.kind, 'MINT');
     assert.equal(m.v, '1000');
-    assert.equal(BigInt('0x' + m.leaf), noteLeaf(1, 1000n, o.npk, o.rho));
+    assert.equal(BigInt('0x' + m.leaf), noteLeaf(tickerT('GENE'), 1000n, o.npk, o.rho));
     assert.deepEqual(outs.map((n) => [n.kind, n.j, n.pkEph]), s.outs.map((x, j) => ['OUT', j, x.pkEph.toString('hex')]));
     assert.equal((await get('/notes?from=3')).body.notes.length, 1);
     assert.equal((await get('/notes?from=-1')).status, 400);

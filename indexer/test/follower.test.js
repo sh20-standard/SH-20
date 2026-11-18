@@ -7,7 +7,7 @@ import { Follower, EsploraSource, BitcoindSource } from '../src/follower.js';
 import { deployEnv, mockVerifier, opening, spend, tx } from './helpers.js';
 
 const h = (s) => createHash('sha256').update(s).digest('hex');
-const mint = () => tx({ env: { type: 'MINT', tokenNum: 1, ...opening() }, burnSats: 1000n });
+const mint = () => tx({ env: { type: 'MINT', ticker: 'GENE', ...opening() }, burnSats: 1000n });
 
 /** Builds linked blocks; `parent` is the hash the first block points to. */
 function blocks(txLists, { start = 1, salt = 'a', parent = 'genesis' } = {}) {

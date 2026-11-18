@@ -1,4 +1,4 @@
-// SH-20 envelope codec (draft v0.1). Strict: any deviation from the canonical
+// SH-20 envelope codec (draft v0.2). Strict: any deviation from the canonical
 // layout throws, and parse(serialize(x)) must give back the same bytes.
 //
 // Integers are little-endian. Field elements are 32-byte little-endian
@@ -11,6 +11,17 @@ import {
 export class CodecError extends Error {}
 
 const TICKER_RE = /^[A-Z0-9]{4}$/;
+
+function readTicker(r) {
+  const ticker = r.bytes(4).toString('latin1');
+  if (!TICKER_RE.test(ticker)) throw new CodecError('bad ticker');
+  return ticker;
+}
+
+function writeTicker(w, ticker) {
+  if (typeof ticker !== 'string' || !TICKER_RE.test(ticker)) throw new CodecError('bad ticker');
+  w.bytes(Buffer.from(ticker, 'latin1'));
+}
 
 class Reader {
   constructor(buf) {
@@ -167,8 +178,7 @@ export function parseEnvelope(buf) {
 
   switch (type) {
     case TYPE.DEPLOY: {
-      const ticker = r.bytes(4).toString('latin1');
-      if (!TICKER_RE.test(ticker)) throw new CodecError('bad ticker');
+      const ticker = readTicker(r);
       const max = r.u64();
       const lim = r.u64();
       const pre = r.u64();
@@ -190,7 +200,7 @@ export function parseEnvelope(buf) {
       break;
     }
     case TYPE.MINT:
-      env = { type: name, tokenNum: r.u32(), ...readOpening(r) };
+      env = { type: name, ticker: readTicker(r), ...readOpening(r) };
       break;
     case TYPE.TRANSFER: {
       const res = readSpend(r);
@@ -199,21 +209,21 @@ export function parseEnvelope(buf) {
       break;
     }
     case TYPE.BURN: {
-      const tokenNum = r.u32();
+      const ticker = readTicker(r);
       const vPub = r.u64();
       const res = readSpend(r);
-      env = { type: name, tokenNum, vPub, spend: res.spend };
+      env = { type: name, ticker, vPub, spend: res.spend };
       bodyEnd = res.bodyEnd;
       break;
     }
     case TYPE.LIST: {
-      const tokenNum = r.u32();
+      const ticker = readTicker(r);
       const amount = r.u64();
       const price = r.u64();
       const lockVout = r.u8();
       const payScript = readPayScript(r);
       const res = readSpend(r);
-      env = { type: name, tokenNum, amount, price, lockVout, payScript, spend: res.spend };
+      env = { type: name, ticker, amount, price, lockVout, payScript, spend: res.spend };
       bodyEnd = res.bodyEnd;
       break;
     }
@@ -239,8 +249,7 @@ export function serializeEnvelope(env) {
   w.u8(type);
   switch (type) {
     case TYPE.DEPLOY:
-      if (!TICKER_RE.test(env.ticker)) throw new CodecError('bad ticker');
-      w.bytes(Buffer.from(env.ticker, 'latin1'));
+      writeTicker(w, env.ticker);
       w.u64(env.max);
       w.u64(env.lim);
       w.u64(env.pre);
@@ -255,19 +264,19 @@ export function serializeEnvelope(env) {
       if (env.spend) writeSpend(w, env.spend);
       break;
     case TYPE.MINT:
-      w.u32(env.tokenNum);
+      writeTicker(w, env.ticker);
       writeOpening(w, env);
       break;
     case TYPE.TRANSFER:
       writeSpend(w, env.spend);
       break;
     case TYPE.BURN:
-      w.u32(env.tokenNum);
+      writeTicker(w, env.ticker);
       w.u64(env.vPub);
       writeSpend(w, env.spend);
       break;
     case TYPE.LIST:
-      w.u32(env.tokenNum);
+      writeTicker(w, env.ticker);
       w.u64(env.amount);
       w.u64(env.price);
       w.u8(env.lockVout);
