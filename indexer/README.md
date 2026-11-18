@@ -16,10 +16,14 @@ checked, spends (TRANSFER, BURN, LIST, later DEPLOYs) are rejected until a verif
 Node 20 or newer, no dependencies.
 
 ```sh
-npm test                  # 27 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement
+npm test                  # 37 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, API
 npm run vectors           # regenerates vectors/v0.1.json (deterministic)
 node bin/replay.js <dir>  # replays a folder of `bitcoin-cli getblock <hash> 2` JSON files
+node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser U --rpcpass P --activation H   # live, own node
+node bin/follow.js --esplora https://mempool.space/signet/api --activation H             # live, Esplora
 ```
+
+The live follower serves a read-only JSON API for wallets: see [`docs/API.md`](../docs/API.md).
 
 ## Layout
 
@@ -33,15 +37,16 @@ node bin/replay.js <dir>  # replays a folder of `bitcoin-cli getblock <hash> 2` 
 | `src/notes.js` | the note leaf formula |
 | `src/indexer.js` | the state machine: tickers, mints, team unlocks, spends, listings, digest, rollback |
 | `src/adapters/bitcoind.js` | Bitcoin Core `getblock 2` JSON → indexer blocks |
-| `bin/` | `replay.js`, `vectors.js` |
+| `src/follower.js` | live chain follower (Bitcoin Core RPC or Esplora) with reorg handling |
+| `src/api.js` | read-only HTTP API (`docs/API.md`) |
+| `bin/` | `follow.js`, `replay.js`, `vectors.js` |
 
 ## What is still missing
 
 1. The spend circuit (Halo2-KZG over the public Hermez setup, based on Tacit's MIT pool circuit with the asset made private) and its pinned verifier.
-2. A live follower for Bitcoin Core RPC or Esplora.
-3. The browser vault: keys on the device, proofs in the browser, PSBTs signed by Xverse / UniSat / Leather.
-4. A second, independent indexer that matches `vectors/v0.1.json`.
-5. Freezing the profile (activation height, D) and the event encoding of the digest.
+2. The browser vault: keys on the device, proofs in the browser, PSBTs signed by Xverse / UniSat / Leather.
+3. A second, independent indexer that matches `vectors/v0.1.json`.
+4. Freezing the profile (activation height, D) and the event encoding of the digest.
 
 ## License
 

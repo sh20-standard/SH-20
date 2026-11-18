@@ -35,10 +35,11 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `docs/SPEC-WIRE.md` | wire format and acceptance rules, draft v0.1 (normative for the indexer) |
 | `indexer/` | reference indexer, Node ≥ 20, zero dependencies |
 | `indexer/vectors/v0.1.json` | deterministic vectors for a second implementation |
+| `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` (for the vault and relayers) |
 
 ```sh
 cd indexer
-npm test            # 27 tests
+npm test            # 37 tests
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 ```
@@ -50,10 +51,10 @@ Done in `indexer/`:
 - Two carriers: OP_RETURN (small proof-less envelopes, one transaction) and a tapscript witness on input 0 (proof-carrying envelopes, ~2.4 KB).
 - State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest.
 - Poseidon over BN254 written from scratch (constants generated with the Grain LFSR, matches circomlib's `poseidon([1,2])`), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
+- Live chain follower (Bitcoin Core RPC or Esplora, reorgs with 288 blocks of undo) and a read-only HTTP API with a per-leaf note log for wallets (`docs/API.md`).
 - Proof verification is an interface (`verifier.verifySpend`). **The default verifier rejects every spend**, so TRANSFER, BURN, LIST and non-genesis DEPLOY are not accepted yet.
 
-Not done: the spend circuit and its pinned verifier, the `ct` sealing format, a live chain follower
-(Bitcoin Core RPC / Esplora), the browser vault, a relayer, a second independent indexer, the
+Not done: the spend circuit and its pinned verifier, the `ct` sealing format, the browser vault, a relayer, a second independent indexer, the
 profile constants (activation height, `D`), the canonical event encoding inside the digest.
 
 ## Next task: the spend circuit
@@ -84,7 +85,7 @@ inflation, double spend, bad range, wrong signature); a WASM prover for the brow
 verifier the indexer can call as `verifySpend`; the pinned verifying-key hash; measured proof size,
 proving time (laptop and phone) and transaction vsize. Update `docs/SPEC-WIRE.md` if anything differs.
 
-After that: wire the verifier into the indexer, specify `ct` sealing, a chain follower, the browser vault
+After that: wire the verifier into the indexer, specify `ct` sealing, the browser vault
 (keys on device, PSBTs signed by Xverse / UniSat / Leather), a public signet run, an audit.
 
 ## Cost budget — keep it light
