@@ -39,17 +39,18 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
 | `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
 | `circuit/` | the spend circuit: PLONK prover and verifier in Rust, WebAssembly build, measurements ([`circuit/README.md`](circuit/README.md)) |
+| `circuit/js/` | what a wallet computes for a spend, in dependency-free JavaScript, checked against vectors written by the circuit's model (`cd circuit/js && npm test`) |
 | `circuit/circom/` | the same relation in circom, used only to cross-check the Rust circuit |
 | `circuit/web/` | the phone test page, and the host side of the threaded WebAssembly prover |
 
 ```sh
 cd indexer
-npm test            # 46 tests (4 need the verifier module below and are skipped without it)
+npm test            # 47 tests (4 need the verifier module below and are skipped without it)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
 cd circuit
-cargo test --release    # 18 tests, with the shipped proving key (artifacts/spend.pk)
+cargo test --release    # 21 tests, with the shipped proving key (artifacts/spend.pk)
 ./build-wasm.sh         # two WebAssembly builds: one thread with no imports, and a thread pool over Web Workers
 bench/cross-check.sh    # snarkjs against our verifier, both ways (hard requirement 4)
 web/build.sh            # the phone test page, in web/dist/ (see circuit/web/README.md)
@@ -63,7 +64,7 @@ Done in `indexer/`:
   types `0x08`–`0x0f` for extensions.
 - Two carriers: OP_RETURN (small proof-less envelopes, one transaction) and a tapscript witness on input 0 (proof-carrying envelopes, 835 bytes for a TRANSFER).
 - State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest.
-- Poseidon over BN254 written from scratch (constants generated with the Grain LFSR, matches circomlib's `poseidon([1,2])`), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
+- Poseidon over BN254 written from scratch for 2 to 5 inputs (constants generated with the Grain LFSR, checked against circomlibjs for every width; `poseidon2` is unchanged), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
 - Live chain follower (Bitcoin Core RPC or Esplora, reorgs with 288 blocks of undo) and a read-only HTTP API with a per-leaf note log for wallets (`docs/API.md`).
 - Explorer (`explorer/index.html`): a block explorer in one static page with no dependency; reads any indexer; demo data built from real indexer output.
 - Proof verification is an interface (`verifier.verifySpend`). **The default verifier still rejects every spend.**
@@ -86,9 +87,13 @@ Done in `circuit/` (2026-11-18):
   worker), one thread otherwise. Checked in headless Chrome for each case.
 - Checks: 26 adversarial witnesses, every variable pinned by a gate, circomlib's statement of the relation accepts the
   witnesses, and snarkjs both ways: its verifier accepts our proofs, our verifier accepts its proofs (`bench/cross-check.sh`).
+- A wallet reference in dependency-free JavaScript (`circuit/js/`): note keys and `npk`, the nullifier, the body hash, the
+  EdDSA-Poseidon signature. Its vectors are written by the Rust model (`circuit/src/vectors.rs`) and a test fails if they drift.
 
-Not done: an audit; the figures on a real phone (the page exists and was measured on a laptop browser: 4.5 s on 10 threads,
-25.5 s on one; nobody has run it on a phone yet); the `ct` sealing format; transfers in the vault (it mints and syncs privately
+Measured on a phone (maintainer, 2026-11-18, iPhone 18 Pro Max, Safari): 14.5 s per proof on 4 threads, 31.9 s on one thread,
+232 MB; in Chrome on the laptop, 4.5 s on 10 threads and 25.5 s on one.
+
+Not done: an audit; a mid-range phone; the `ct` sealing format; transfers in the vault (it mints and syncs privately
 today); a relayer; a second independent indexer; the
 profile constants (activation height, `D`); the canonical event encoding inside the digest.
 
@@ -97,9 +102,9 @@ profile constants (activation height, `D`); the canonical event encoding inside 
 The relation, the proof system, the verifier and a prover that runs in a browser exist. What is still unknown is how long a
 real phone takes.
 
-1. **Get the page run on phones.** `circuit/web/README.md` says how to serve it and what to send back. Record the results in
-   `circuit/README.md` next to the laptop figures: at least a recent phone and a mid-range one, on all cores and on one thread.
-   Laptop figures are not phone figures.
+1. **Phones.** One recent phone is measured (`circuit/README.md`, "On a phone"). Open: four threads are only 2.2 times
+   faster than one there, the key takes 5.5 s to load in single-thread mode against 0.7 s with threads, and no mid-range
+   phone has been tried. `circuit/web/README.md` says how to serve the page and what to send back.
 2. **Act on them.** If memory fails (the prover needs about 230 MB), hold less: the wire evaluations and the key file are
    kept longer than needed. If time is the problem, see 3.
 3. **Fewer gates.** A 2^16 domain (65,536 gates) would halve the proving time. Sparse Poseidon partial rounds, 2-bit windows
@@ -114,7 +119,8 @@ real phone takes.
    that gives the same bytes.
 5. The soundness-critical code is `circuit/src/gadgets.rs`, `circuit/src/spend.rs` and `circuit/src/plonk/verifier.rs`.
    It is new and unaudited. Do not weaken a check to save gates without the maintainer.
-6. The vault embeds the prover the way the test page does: `circuit/web/host.js` and the two workers.
+6. The vault embeds the prover the way the test page does: `circuit/web/host.js` and the two workers. It computes note keys,
+   nullifiers and signatures as `circuit/js/` does, and checks itself against `circuit/js/vectors.json`.
 
 Where the relation comes from: Tacit's Bitcoin shielded pool (MIT, `https://github.com/z0r0z/tacit`),
 `dapp/circuits/btc-pool/spend.circom` and `contracts/sp1/confidential/btc-pool-halo2/`. SH-20 changed the ticker to a private `t`
