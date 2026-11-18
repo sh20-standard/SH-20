@@ -73,8 +73,11 @@ vout n  change to the payer                                     only if above du
   and `codec.js`, and refuses the mint if `ticker`, `max`, `lim`, `pre`, `start`, `end`, `price`,
   `payMode` or `payScript` differ (`src/deploy.js`). This stops an indexer that lies about a real
   DEPLOY, for example with its own `payScript`. It cannot tell which of two DEPLOYs of a ticker
-  came first: an indexer naming a later, rejected DEPLOY is only caught by comparing the `digest`
-  of several independent indexers.
+  came first, and it does **not** verify `tokenNum`: that number is not in the envelope (it is the
+  DEPLOY's rank among accepted ones), so a lying indexer could pair the true terms of one token
+  with the number of another, and the mint would go to that other token or be rejected. The page
+  shows the token number as unverified. Both gaps are closed only by comparing several independent
+  indexers (`digest`, `tokenNum`), which the vault does not do yet.
 - After signing, the vault checks that the wallet did not change the transaction, records the
   note, then broadcasts through Esplora. Xverse and Leather return partial signatures and UniSat
   finalizes; `btc.finalizePsbt` handles both.

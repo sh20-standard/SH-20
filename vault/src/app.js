@@ -310,7 +310,8 @@ async function prepareMint(token, feeRate, out) {
       h('dt', {}, 'Network fee'), h('dd', {}, sats(m.fee)),
       h('dt', {}, 'Mint price'), h('dd', {}, sats(m.price)),
       h('dt', {}, 'Total'), h('dd', {}, h('strong', {}, sats(m.fee + m.price))),
-      h('dt', {}, 'Terms'), h('dd', {}, 'checked against the DEPLOY transaction on chain'),
+      h('dt', {}, 'Terms'), h('dd', {}, 'price, payment, window and supply checked against the DEPLOY transaction on chain'),
+      h('dt', {}, 'Token number'), h('dd', {}, h('span', { class: 'err' }, `#${token.tokenNum}, from the indexer only (not verified)`)),
       h('dt', {}, 'Envelope'), h('dd', {}, h('code', {}, toHex(m.envelope)))),
     h('p', { class: 'muted' }, 'A mint rejected by the indexers (for example sold out by a mint in the same block) is not refunded.'),
     sign);

@@ -4,9 +4,14 @@
 // and refuses the mint if the terms it would pay against differ.
 //
 // This catches an indexer that lies about a real DEPLOY (for example a payScript
-// of its own). It cannot catch an indexer that names a different DEPLOY of the
-// same ticker that honest indexers rejected (a later one): only comparing the
-// digest of several independent indexers does that.
+// of its own). It does NOT verify:
+//  - tokenNum, which is not in the envelope: it is the DEPLOY's rank among the
+//    accepted ones. A lying indexer can pair the true terms of one DEPLOY with
+//    the tokenNum of another token, and honest indexers would then credit (or
+//    reject) the mint for that other token;
+//  - which DEPLOY of a ticker came first (a later, rejected one can be named).
+// Both need the whole history: compare several independent indexers (digest,
+// tokenNum) until the vault can do that itself.
 
 import { extractEnvelope, parseEnvelope } from './sh20.js';
 import { parseTx, txid as txidOf } from './btc.js';
