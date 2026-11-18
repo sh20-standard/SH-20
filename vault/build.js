@@ -4,7 +4,9 @@
 //   index.html            → redirects to vault/
 //   vault/…               → the page, styles and src/
 //   indexer/src/…         → only the indexer modules the vault loads
-//   circuit/js/…          → the wallet reference (note keys, addresses, sealing), unchanged
+//   circuit/js/…          → the wallet reference (note keys, addresses, sealing, signatures), unchanged
+//   circuit/web/…         → the prover's host side and pool thread, unchanged
+//   circuit/artifacts/spend.pk, vault/prover/*.wasm → the proving key and the two prover builds
 //   LICENSE
 //
 // `npm run build` writes it to vault/dist/ from the working tree (development).
@@ -20,9 +22,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 
 // The indexer modules reachable from vault/src/sh20.js.
-export const INDEXER = ['carrier.js', 'codec.js', 'constants.js', 'notes.js', 'poseidon.js', 'tree.js'];
+export const INDEXER = ['carrier.js', 'codec.js', 'constants.js', 'notes.js', 'poseidon.js', 'schnorr.js', 'tree.js'];
 // The circuit/js modules reachable from vault/src/sh20.js (docs/SPEC-NOTES.md).
-export const CIRCUIT_JS = ['address.js', 'babyjub.js', 'notes.js', 'seal.js'];
+export const CIRCUIT_JS = ['address.js', 'babyjub.js', 'eddsa.js', 'notes.js', 'seal.js'];
+// The prover's host side and pool thread, unchanged (circuit/web), and the shipped proving key.
+export const CIRCUIT_WEB = ['host.js', 'thread-worker.js'];
+export const PROVING_KEY = 'circuit/artifacts/spend.pk';
+export const PROVER = ['sh20_circuit.wasm', 'sh20_circuit_threads.wasm']; // vault/prover/, tools/prover.sh
 
 const REDIRECT = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=vault/"><title>SH-20 Vault</title><a href="vault/">SH-20 Vault</a>\n';
 
@@ -33,7 +39,7 @@ const REDIRECT = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh
  */
 export function site(reader) {
   const files = new Map();
-  for (const p of ['vault/index.html', 'vault/style.css', ...reader.list('vault/src'), ...INDEXER.map((f) => `indexer/src/${f}`), ...CIRCUIT_JS.map((f) => `circuit/js/${f}`), 'LICENSE']) {
+  for (const p of ['vault/index.html', 'vault/style.css', ...reader.list('vault/src'), ...INDEXER.map((f) => `indexer/src/${f}`), ...CIRCUIT_JS.map((f) => `circuit/js/${f}`), ...CIRCUIT_WEB.map((f) => `circuit/web/${f}`), PROVING_KEY, ...PROVER.map((f) => `vault/prover/${f}`), 'LICENSE']) {
     files.set(p, reader.read(p));
   }
   files.set('index.html', Buffer.from(REDIRECT));

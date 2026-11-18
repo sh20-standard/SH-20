@@ -61,6 +61,11 @@ export class Vault {
     return (this.#wallet ??= wallet(this.#seed));
   }
 
+  /** The keys, for building a spend (send.js); they never leave the page. */
+  get wallet() {
+    return this.#w;
+  }
+
   /** The vault's sh20 address on signet (tsh20…): payers seal notes to it. */
   get address() {
     return this.#w.addressString;
@@ -202,6 +207,28 @@ export class Vault {
     this.state.notes.push(note);
     await this.save();
     return note;
+  }
+
+  /**
+   * A spend under way (send.js pendingRecord): saved before the wallet signs the commit, since its
+   * one-time key is the only way to send the reveal or to take the commit output back.
+   */
+  async addPending(rec) {
+    const id = `spend:${Date.now()}:${(this.state.pending ?? []).length}`;
+    (this.state.pending ??= []).push({ id, ...rec });
+    for (const nid of rec.inputs ?? []) {
+      const n = this.state.notes.find((x) => x.id === nid);
+      if (n) n.status = 'spending';
+    }
+    await this.save();
+    return id;
+  }
+
+  async updatePending(id, patch) {
+    const p = (this.state.pending ?? []).find((x) => x.id === id);
+    if (!p) return;
+    Object.assign(p, patch);
+    await this.save();
   }
 
   /** Forgets a note (a sealed output no longer in the tree: scanning finds it again wherever it is). */

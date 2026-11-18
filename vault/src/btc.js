@@ -145,7 +145,7 @@ export const p2shP2wpkhRedeem = (pubkey33) => concat(new Uint8Array([0x00, 0x14]
 
 // ---- transactions ------------------------------------------------------------
 
-function compactSize(n) {
+export function compactSize(n) {
   if (n < 0xfd) return new Uint8Array([n]);
   if (n <= 0xffff) return new Uint8Array([0xfd, n & 0xff, n >> 8]);
   return concat(new Uint8Array([0xfe]), u32le(n));

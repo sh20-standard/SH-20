@@ -91,14 +91,28 @@ export function selectCoins(utxos, fixed, inType, changeScript, feeRate) {
 export function buildMint({ token, opening, payer, utxos, feeRate, tipHeight, k = 1 }) {
   const problems = mintProblems(token, tipHeight + 1, k);
   if (problems.length) throw new Error(problems.join('; '));
+  // 42 bytes: npk alone, rho = 0 (v0.3); 43 with the count byte when k > 1
+  const envelope = serializeEnvelope({ type: 'MINT', ticker: token.ticker, npk: opening.npk, k });
+  const fixed = fixedOutputs(token, envelope, k);
+  return {
+    ...buildFunded({ fixed, payer, utxos, feeRate, tipHeight }),
+    envelope,
+    k,
+    v: token.lim * BigInt(k), // the note's amount
+    price: token.payMode === PAY_MODE.NONE ? 0n : fixed[token.payMode === PAY_MODE.BURN ? 0 : 1].value,
+  };
+}
+
+/**
+ * A transaction paying the `fixed` outputs from the payer's address, with change, and its PSBT for
+ * the wallet: the MINT, the commit of a proof-carrying envelope, a DEPLOY without a burn.
+ * payer = { address, publicKey (hex, optional for p2wpkh) }; utxos = [{ txid, vout, value }] there.
+ */
+export function buildFunded({ fixed, payer, utxos, feeRate, tipHeight }) {
   if (!(feeRate > 0) || feeRate > MAX_FEE_RATE) throw new Error(`fee rate must be between 0 and ${MAX_FEE_RATE} sat/vB`);
   const payScript = addressToScript(payer.address);
   const inType = scriptType(payScript);
   if (!SUPPORTED_INPUTS.includes(inType)) throw new Error(`pay from a native segwit, nested segwit or taproot address, not ${inType}`);
-
-  // 42 bytes: npk alone, rho = 0 (v0.3); 43 with the count byte when k > 1
-  const envelope = serializeEnvelope({ type: 'MINT', ticker: token.ticker, npk: opening.npk, k });
-  const fixed = fixedOutputs(token, envelope, k);
   const { picked, change, fee } = selectCoins(utxos, fixed, inType, payScript, feeRate);
 
   const tx = {
@@ -122,12 +136,8 @@ export function buildMint({ token, opening, payer, utxos, feeRate, tipHeight, k 
   return {
     tx,
     psbt: createPsbt(tx, meta),
-    envelope,
-    k,
-    v: token.lim * BigInt(k), // the note's amount
     fee,
     vsizeEstimate: estimateVsize(picked.map(() => inType), tx.vout.map((o) => o.script)),
-    price: token.payMode === PAY_MODE.NONE ? 0n : fixed[token.payMode === PAY_MODE.BURN ? 0 : 1].value,
     inputIndexes: picked.map((_, i) => i),
   };
 }

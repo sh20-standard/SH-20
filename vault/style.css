@@ -63,7 +63,7 @@ select { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-
 .grid label input, .grid label select { display: block; width: 100%; box-sizing: border-box; margin-top: 2px; }
 input { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
 label { display: block; margin: 6px 0; }
-label input[type=url], label input[type=password], label textarea { width: 100%; max-width: 420px; display: block; margin-top: 2px; }
+label input[type=url], label input[type=password], label textarea, label input.wide { width: 100%; max-width: 420px; display: block; margin-top: 2px; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
 .table-wrap { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }

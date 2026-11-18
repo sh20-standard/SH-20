@@ -87,7 +87,7 @@ function record(r, commit) {
 
 function main(argv) {
   const commit = git('rev-parse', 'HEAD').toString('utf8').trim();
-  const dirty = git('status', '--porcelain', '--', 'vault', 'indexer/src', 'circuit/js', 'LICENSE').toString('utf8')
+  const dirty = git('status', '--porcelain', '--', 'vault', 'indexer/src', 'circuit/js', 'circuit/web', 'circuit/artifacts', 'LICENSE').toString('utf8')
     .split('\n').filter((l) => l && !l.endsWith('vault/RELEASES.md') && !/ vault\/(dist|release)\//.test(l));
   if (dirty.length) console.warn(`note: uncommitted changes are NOT in the release (built from ${commit.slice(0, 12)}):\n${dirty.join('\n')}\n`);
 

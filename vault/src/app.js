@@ -13,7 +13,9 @@ import { frHex } from './fr.js';
 import { Sync } from './sync.js';
 import { defaultCache } from './cache.js';
 import { PAY_MODE, PUBLIC_RHO, MINT_BATCH_MAX, noteLeaf, tickerT } from './sh20.js';
-import { toHex } from './bytes.js';
+import { toHex, fromHex } from './bytes.js';
+import { loadProver } from './prover.js';
+import { planTransfer, planDeployBurn, proveSpend, planCarrier, revealFor, pendingRecord, planFromPending, buildPlainDeploy } from './send.js';
 
 if (window.top !== window.self) {
   document.documentElement.textContent = 'The SH-20 vault refuses to run inside a frame.';
@@ -406,11 +408,9 @@ function deployBurn() {
   return { D: ps[0].deployBurn, agreed: ps.length };
 }
 
-function renderDeploy() {
-  const H = chainHeight();
+/** The DEPLOY terms the form holds now, as deploy-plan.js reads them. */
+function currentTerms() {
   const f = deployForm;
-  if (!f.start && H !== null) f.start = String(H + 12);
-  if (!f.unlock && f.start) f.unlock = f.start;
   let payScript = new Uint8Array(0);
   let payProblem = null;
   if (f.payMode === '2' && f.payTo.trim()) {
@@ -425,6 +425,15 @@ function renderDeploy() {
     start: heightField(f.start), end: heightField(f.end), unlock: heightField(f.unlock),
     payMode: Number(f.payMode), price: f.payMode === '0' ? 0n : bigField(f.price), payScript,
   };
+  return { d, payProblem };
+}
+
+function renderDeploy() {
+  const H = chainHeight();
+  const f = deployForm;
+  if (!f.start && H !== null) f.start = String(H + 12);
+  if (!f.unlock && f.start) f.unlock = f.start;
+  const { d, payProblem } = currentTerms();
   const { D, why, agreed } = deployBurn();
   const plan = planDeploy(d, {
     nextHeight: H === null ? null : H + 1,
@@ -477,10 +486,195 @@ function renderDeploy() {
         ? `${units(plan.bytes)} bytes in a tapscript witness (commit and reveal transactions, ≈ ${Math.ceil(plan.bytes / 4)} vB for the envelope)`
         : `${plan.bytes} bytes in one OP_RETURN transaction`)] : null),
     plan.problems.map((p) => h('div', { class: 'warn' }, p)),
-    h('button', { type: 'button', disabled: true }, 'Sign and broadcast'),
-    h('p', { class: 'muted' }, plan.proof
-      ? 'Not yet: a DEPLOY that burns SH20 is a spend, like a transfer, and this vault does not prove spends yet.'
-      : 'Sending a DEPLOY is not in this version of the vault.'));
+    deployButton(d, plan, D),
+    h('div', { id: 'deploy-out' }));
+}
+
+function deployButton(d, plan, D) {
+  const need = [];
+  if (plan.problems.length || plan.bytes === null) need.push('fix the terms');
+  if (D === null) need.push('agree on D');
+  if (!st.vault) need.push('unlock the vault');
+  if (!st.wallet) need.push('connect a wallet');
+  if (D > 0n && !plan.inputs?.pick) need.push('hold enough unspent SH20');
+  const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: '2', class: 'narrow', name: 'deploy-fee' });
+  const b = h('button', { type: 'button', disabled: need.length > 0, name: 'deploy' }, D > 0n ? `Prove the burn of ${units(D)} SH20, sign and broadcast` : 'Sign and broadcast');
+  b.addEventListener('click', busy(b, () => sendDeploy(d, D, Number(fee.value))));
+  return [h('div', { class: 'row' }, h('label', {}, 'Fee rate (sat/vB) ', fee), b),
+    need.length ? h('p', { class: 'muted' }, `First ${need.join(', ')}.`) : null,
+    h('p', { class: 'muted' }, D > 0n
+      ? 'The burn is a spend: the vault proves it on this device (about half a minute on one thread), then your wallet signs the commit transaction and the vault the reveal that carries it.'
+      : 'One OP_RETURN transaction. A DEPLOY rejected by the indexers (a ticker taken in the same block) is not refunded.')];
+}
+
+const termsKey = (d) => JSON.stringify(d, (_, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v));
+
+async function sendDeploy(shown, D, feeRate) {
+  const out = $('deploy-out');
+  await refresh(); // D, the tickers taken and the tip, now
+  if (String(deployBurn().D) !== String(D)) throw new Error('D changed: check again');
+  const tip = await esplora.tipHeight();
+  const plan = planDeploy(shown, { nextHeight: tip + 1, taken: st.tokens.map((t) => t.ticker), deployBurn: D, notes: st.vault.state.notes });
+  if (plan.problems.length) throw new Error(plan.problems.join('; '));
+  if (termsKey(currentTerms().d) !== termsKey(shown)) throw new Error('the terms changed: check them again');
+  if (!confirm(`Deploy ${shown.ticker}${D > 0n ? `, burning ${units(D)} SH20` : ''}? The terms are public and final.`)) return;
+  // the team note, if any, is a public note of this vault, created at block `unlock`
+  const team = shown.pre > 0n ? { npk: (await st.vault.reserveNote()).npk } : null;
+  if (D === 0n) {
+    const m = buildPlainDeploy({ d: shown, team, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip });
+    const done = await signFunded(m);
+    const id = await esplora.broadcast(done.hex);
+    out.replaceChildren(h('p', { class: 'ok' }, `DEPLOY of ${shown.ticker} broadcast (${done.vsize} vB).`), txLink(id));
+    return;
+  }
+  const s = await getSyncer();
+  await carry({
+    kind: 'DEPLOY', out, feeRate, tip,
+    plan: () => planDeployBurn({ vault: st.vault, sync: s, tip, d: shown, D, team }),
+    label: `DEPLOY of ${shown.ticker}, burning ${units(D)} SH20`,
+  });
+}
+
+// ---- spends: proved here; the wallet signs the commit, the vault the reveal --------------------
+
+const txLink = (id) => h('p', {}, h('a', { href: explorerTx(id), target: '_blank', rel: 'noopener noreferrer', class: 'mono' }, id));
+
+async function walletUtxos() {
+  const w = st.wallet;
+  let utxos = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
+  if (!utxos) utxos = await esplora.utxos(w.address);
+  if (!utxos.length) throw new Error(`no UTXO at ${w.address}; get signet coins from a faucet first`);
+  return utxos;
+}
+
+/** Has the wallet sign a PSBT the vault built, and checks it signed exactly that transaction. */
+async function signFunded(m) {
+  const w = st.wallet;
+  if (m.fee > MAX_FEE_SATS && !confirm(`The network fee is ${sats(m.fee)}, which is unusually high. Sign anyway?`)) throw new Error('not signed');
+  const signed = await w.adapter.signPsbt(m.psbt, m.inputIndexes, w.address);
+  const done = finalizePsbt(signed);
+  if (!sameUnsignedTx(done.tx, m.tx)) throw new Error('the wallet changed the transaction; nothing was sent');
+  return done;
+}
+
+/**
+ * A proof-carrying spend: plan (witness), prove, commit (wallet), reveal (vault), broadcast both.
+ * The one-time key is saved before the wallet signs, so the reveal can always be sent again.
+ */
+async function carry({ kind, out, feeRate, tip, plan, label }) {
+  const status = (t) => out.replaceChildren(h('p', { class: 'muted' }, t));
+  status('Building the spend: note keys, sealed outputs, signatures…');
+  await new Promise((r) => setTimeout(r, 30));
+  const built = plan();
+  const prover = await loadProver({ onStatus: status });
+  status(`Proving on ${prover.threads} thread${prover.threads > 1 ? 's' : ''}… keep this tab open.`);
+  const t0 = performance.now();
+  const envelope = await proveSpend(prover, built);
+  const proveS = ((performance.now() - t0) / 1000).toFixed(1);
+  const cp = planCarrier({ envelope, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip });
+  const draft = revealFor(cp, '00'.repeat(32));
+  if (!confirm(`${label}: proved in ${proveS} s. Commit ≈ ${cp.commit.vsizeEstimate} vB, reveal ${draft.vsize} vB, network fees ≈ ${sats(cp.commit.fee + draft.fee)}. Sign the commit with ${st.wallet.adapter.name}?`)) {
+    status('Not sent.');
+    return;
+  }
+  const pid = await st.vault.addPending(pendingRecord(kind, cp, envelope, built.inputs));
+  const done = await signFunded(cp.commit);
+  const reveal = revealFor(cp, done.txid);
+  await st.vault.updatePending(pid, { commitTxid: done.txid, commitHex: done.hex, revealHex: reveal.hex, revealTxid: reveal.txid, status: 'signed' });
+  await esplora.broadcast(done.hex);
+  await st.vault.updatePending(pid, { status: 'commit broadcast' });
+  await esplora.broadcast(reveal.hex);
+  await st.vault.updatePending(pid, { status: 'broadcast' });
+  renderAll();
+  out.replaceChildren(
+    h('p', { class: 'ok' }, `${label}: broadcast. Proved in ${proveS} s; ${envelope.length}-byte envelope; reveal ${reveal.vsize} vB.`),
+    h('p', { class: 'muted' }, 'Commit, then reveal:'), txLink(done.txid), txLink(reveal.txid),
+    h('p', { class: 'muted' }, 'Sync after the next block: the notes spent show their block, and the change shows as a received note.'));
+}
+
+// ---- send ------------------------------------------------------------------------
+
+const sendForm = { ticker: '', amount: '', to: '', fee: '2' };
+
+function balances() {
+  const out = new Map();
+  for (const n of st.vault?.state.notes ?? []) {
+    if (n.status !== 'in tree' || n.spent !== 'no' || BigInt(n.v) === 0n) continue;
+    out.set(n.ticker, (out.get(n.ticker) ?? 0n) + BigInt(n.v));
+  }
+  return out;
+}
+
+function renderSend() {
+  if (!st.vault) {
+    fill('send-body', h('p', { class: 'muted' }, 'Unlock the vault to send.'));
+    fill('pending-body');
+    return;
+  }
+  const bal = balances();
+  const f = sendForm;
+  if (!bal.has(f.ticker)) f.ticker = [...bal.keys()][0] ?? '';
+  const ticker = h('select', { name: 'ticker' }, [...bal].map(([t, v]) => h('option', { value: t, selected: t === f.ticker }, `${t} (${units(v)})`)));
+  ticker.addEventListener('change', () => { f.ticker = ticker.value; });
+  const input = (key, attrs) => {
+    const el = h('input', { value: f[key], spellcheck: 'false', autocomplete: 'off', ...attrs });
+    el.addEventListener('input', () => { f[key] = el.value; });
+    return el;
+  };
+  const out = h('div', { id: 'send-out' });
+  const need = [];
+  if (!bal.size) need.push('hold a note that is in the tree and known unspent (sync)');
+  if (!st.wallet) need.push('connect a wallet (it pays the network fees)');
+  const b = h('button', { type: 'button', disabled: need.length > 0, name: 'send' }, 'Prove and send');
+  b.addEventListener('click', busy(b, () => sendTransfer(out)));
+  fill('send-body',
+    h('p', { class: 'muted' }, 'A private TRANSFER, proved on this device: the amount, the ticker, the sender and the recipient stay hidden. Your Bitcoin wallet pays the network fees.'),
+    h('div', { class: 'grid' },
+      h('label', {}, 'Ticker ', ticker),
+      h('label', {}, 'Amount ', input('amount', { inputmode: 'numeric', name: 'amount' })),
+      h('label', {}, 'Fee rate (sat/vB) ', input('fee', { type: 'number', min: '0.1', step: '0.1', name: 'fee' }))),
+    h('label', {}, 'To (an sh20 address, tsh20…) ', input('to', { name: 'to', class: 'wide' })),
+    h('div', { class: 'row' }, b),
+    need.length ? h('p', { class: 'muted' }, `First ${need.join(' and ')}.`) : null,
+    out);
+  renderPending();
+}
+
+async function sendTransfer(out) {
+  const f = sendForm;
+  if (!/^[0-9]{1,20}$/.test(f.amount.trim())) throw new Error('the amount is a whole number of units');
+  const amount = BigInt(f.amount.trim());
+  const s = await getSyncer();
+  const tip = await esplora.tipHeight();
+  await carry({
+    kind: 'TRANSFER', out, feeRate: Number(f.fee), tip,
+    plan: () => planTransfer({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount, to: f.to }),
+    label: `TRANSFER of ${units(amount)} ${f.ticker}`,
+  });
+}
+
+/** Spends whose reveal may still need sending: their one-time key is in the vault. */
+function renderPending() {
+  const open = (st.vault?.state.pending ?? []).filter((p) => p.status !== 'prepared');
+  if (!open.length) return fill('pending-body');
+  fill('pending-body', h('h3', {}, 'Spends sent from this vault'), h('div', { class: 'table-wrap' }, h('table', {},
+    h('thead', {}, h('tr', {}, ['What', 'Status', 'Commit', 'Reveal', ''].map((x) => h('th', {}, x)))),
+    h('tbody', {}, open.map((p) => {
+      const again = h('button', { type: 'button', class: 'small secondary', disabled: !p.commitHex }, 'Broadcast again');
+      again.addEventListener('click', busy(again, async () => {
+        // the same signed transactions; a reveal is signed again only if it was never made
+        const reveal = p.revealHex ? { hex: p.revealHex, txid: p.revealTxid } : revealFor(planFromPending(p), p.commitTxid);
+        try { await esplora.broadcast(p.commitHex); } catch (e) { if (!/already|known|exists|conflict/i.test(e.message)) throw e; }
+        await esplora.broadcast(reveal.hex);
+        await st.vault.updatePending(p.id, { status: 'broadcast', revealHex: reveal.hex, revealTxid: reveal.txid });
+        renderPending();
+      }));
+      return h('tr', {},
+        h('td', {}, p.kind), h('td', {}, p.status),
+        h('td', { class: 'mono' }, p.commitTxid ? short(p.commitTxid) : '—'),
+        h('td', { class: 'mono' }, p.revealTxid ? short(p.revealTxid) : '—'),
+        h('td', {}, again));
+    })))));
 }
 
 // ---- notes -----------------------------------------------------------------------
@@ -552,7 +746,7 @@ async function matchNotes(pub) {
       const txid = n.txid ? { txid: n.txid } : {};
       const here = v.state.notes.find((x) => x.pos === n.pos);
       if (here) {
-        if (here.leaf === leaf && here.status !== 'in tree') {
+        if (here.leaf === leaf && here.status !== 'in tree' && here.status !== 'spending') {
           await v.updateNote(here.id, { status: 'in tree', ...txid });
           found++;
         }
@@ -634,6 +828,7 @@ function renderAll() {
   renderTokens();
   renderDeploy();
   renderNotes();
+  renderSend();
 }
 
 staticWarnings();
