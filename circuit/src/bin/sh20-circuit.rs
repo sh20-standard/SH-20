@@ -2,15 +2,19 @@
 //!
 //!   sh20-circuit srs <hermez.ptau> <out.srs>     extract the SRS from the pinned Hermez pot18
 //!   sh20-circuit keygen <srs> <out.vk>           derive the keys, write the verifying key, print its digest
+//!   sh20-circuit pk <srs> <out.pk>               derive the keys, write the proving key file, print its SHA-256
 //!   sh20-circuit info                            size of the circuit
 //!   sh20-circuit sample <out.json>               a sample witness as circom input signals
-//!   sh20-circuit prove-sample <srs> <dir>        prove a sample spend; write proof, key and publics (binary and snarkjs JSON)
+//!   sh20-circuit prove-sample <pk> <dir>         prove a sample spend; write proof, key and publics (binary and snarkjs JSON)
 //!   sh20-circuit verify <vk> <proof-hex> <public>×9 (decimal)
-//!   sh20-circuit bench <srs> [runs]              keygen, prove and verify timings (RAYON_NUM_THREADS=1 for one thread)
-//!   sh20-circuit scenario <srs> <out.json>       two mints, a TRANSFER and a BURN with real proofs, for the indexer's end-to-end test
+//!   sh20-circuit verify-snarkjs <vk.json> <proof.json> <public.json>   check a PLONK proof made by snarkjs (any circuit)
+//!   sh20-circuit bench <pk> [runs]               key loading, key generation, prove and verify timings (RAYON_NUM_THREADS=1 for one thread)
+//!   sh20-circuit scenario <pk> <out.json>        two mints, a TRANSFER and a BURN with real proofs, for the indexer's end-to-end test
+//!
+//! <pk> is artifacts/spend.pk, the shipped proving key; <srs> is the file `srs` writes.
 
 use rand_core::OsRng;
-use sh20_circuit::{fixture, keygen, model, plonk, prove, spend, srs_size, verify, Fr, SpendWitness, Srs, VerifyingKey, N_PUBLIC};
+use sh20_circuit::{fixture, keygen, load_key, model, plonk, prove, spend, srs_size, verify, Fr, ProvingKey, SpendWitness, Srs, VerifyingKey, N_PUBLIC};
 use std::time::Instant;
 
 fn read(path: &str) -> Vec<u8> {
@@ -22,6 +26,9 @@ fn fail(msg: &str) -> ! {
 }
 fn load_srs(path: &str) -> Srs {
     Srs::from_bytes(&read(path)).unwrap_or_else(|e| fail(&e))
+}
+fn load_pk(path: &str) -> ProvingKey {
+    load_key(&read(path)).unwrap_or_else(|e| fail(&e))
 }
 
 /// The witness as the input signals of circom/spend.circom.
@@ -138,13 +145,20 @@ fn main() {
             std::fs::write(arg(2), pk.vk.to_bytes()).unwrap_or_else(|e| fail(&e.to_string()));
             println!("vk digest {}", hex::encode(pk.vk.digest()));
         }
+        "pk" => {
+            let srs = load_srs(arg(1));
+            srs.check().unwrap_or_else(|e| fail(&e));
+            let pk = keygen(&srs).unwrap_or_else(|e| fail(&e));
+            let out = pk.to_bytes();
+            std::fs::write(arg(2), &out).unwrap_or_else(|e| fail(&e.to_string()));
+            println!("{} bytes, sha256 {}, vk digest {}", out.len(), hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&out)), hex::encode(pk.vk.digest()));
+        }
         "sample" => {
             std::fs::write(arg(1), circom_input(&fixture::transfer(&mut OsRng))).unwrap_or_else(|e| fail(&e.to_string()));
         }
         "prove-sample" => {
-            let srs = load_srs(arg(1));
             let dir = arg(2);
-            let pk = keygen(&srs).unwrap_or_else(|e| fail(&e));
+            let pk = load_pk(arg(1));
             let w = fixture::transfer(&mut OsRng);
             let proof = prove(&pk, &w, &mut OsRng).unwrap_or_else(|e| fail(&e));
             let publics = w.publics();
@@ -181,18 +195,29 @@ fn main() {
             println!("{}", if ok { "valid" } else { "invalid" });
             std::process::exit(if ok { 0 } else { 1 });
         }
+        "verify-snarkjs" => {
+            let text = |i: usize| String::from_utf8(read(arg(i))).unwrap_or_else(|_| fail("not UTF-8"));
+            let vk = plonk::json::vk_from_json(&text(1)).unwrap_or_else(|e| fail(&e));
+            let proof = plonk::json::proof_from_json(&text(2)).unwrap_or_else(|e| fail(&e));
+            let publics = plonk::json::publics_from_json(&text(3)).unwrap_or_else(|e| fail(&e));
+            let ok = plonk::verify(&vk, &publics, &proof);
+            println!("{}", if ok { "valid" } else { "invalid" });
+            std::process::exit(if ok { 0 } else { 1 });
+        }
         "bench" => {
             let runs: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
             #[cfg(feature = "parallel")]
             let threads = rayon::current_num_threads();
             #[cfg(not(feature = "parallel"))]
             let threads = 1;
+            let bytes = read(arg(1));
             let t = Instant::now();
-            let srs = load_srs(arg(1));
-            let t_srs = t.elapsed();
+            let pk = load_key(&bytes).unwrap_or_else(|e| fail(&e));
+            let t_load = t.elapsed();
             let t = Instant::now();
-            let pk = keygen(&srs).unwrap_or_else(|e| fail(&e));
+            let fresh = keygen(&pk.srs()).unwrap_or_else(|e| fail(&e));
             let t_keygen = t.elapsed();
+            assert!(fresh.vk == pk.vk, "the shipped key is not what key generation computes");
             let w = fixture::transfer(&mut OsRng);
             let t = Instant::now();
             let cs = spend::synthesize(&w);
@@ -221,12 +246,11 @@ fn main() {
                 times.iter().map(|x| format!("{x:.2}")).collect::<Vec<_>>().join(" / "),
                 t_witness.as_secs_f64()
             );
-            println!("verify {:.2} ms; SRS load {:.2} s; keygen {:.2} s", t_verify * 1e3, t_srs.as_secs_f64(), t_keygen.as_secs_f64());
+            println!("verify {:.2} ms; loading the shipped key {:.2} s; key generation from the SRS {:.2} s", t_verify * 1e3, t_load.as_secs_f64(), t_keygen.as_secs_f64());
             println!("vk digest {}", hex::encode(pk.vk.digest()));
         }
         "scenario" => {
-            let srs = load_srs(arg(1));
-            let pk = keygen(&srs).unwrap_or_else(|e| fail(&e));
+            let pk = load_pk(arg(1));
             std::fs::write(arg(2), scenario(&pk)).unwrap_or_else(|e| fail(&e.to_string()));
             println!("vk digest {}", hex::encode(pk.vk.digest()));
         }

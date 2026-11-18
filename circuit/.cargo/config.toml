@@ -1,0 +1,9 @@
+# The threaded WebAssembly build (./build-wasm.sh). The module imports its shared memory and is
+# initialised by its host: `__wasi_init_tp` then `__wasm_call_ctors`, once, in the first instance
+# (what a WASI reactor's `_initialize` does; rustc links no reactor start file into a cdylib).
+# Exporting `__wasm_call_ctors` also keeps the linker from running constructors on every call.
+[target.wasm32-wasip1-threads]
+rustflags = [
+  "-C", "link-arg=--export=__wasi_init_tp",
+  "-C", "link-arg=--export=__wasm_call_ctors",
+]

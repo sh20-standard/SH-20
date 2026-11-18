@@ -94,3 +94,30 @@ fn proofs_are_randomized() {
     assert!(plonk::verify(&pk.vk, &[y], &a) && plonk::verify(&pk.vk, &[y], &b));
     let _ = (Fr::zero(), Fr::rand(&mut OsRng).square());
 }
+
+/// The verifier against a proof it did not make: snarkjs' PLONK prover on circom/cubic.circom
+/// (3³ + 3 + 5 = 35), kept in tests/fixtures/snarkjs/ and rewritten by bench/cross-check.sh.
+#[test]
+fn a_proof_made_by_snarkjs_is_accepted() {
+    let read = |name: &str| std::fs::read_to_string(format!("{}/tests/fixtures/snarkjs/cubic.{name}.json", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let vk = plonk::json::vk_from_json(&read("vk")).unwrap();
+    let proof = plonk::json::proof_from_json(&read("proof")).unwrap();
+    let publics = plonk::json::publics_from_json(&read("public")).unwrap();
+    assert_eq!(publics, vec![Fr::from(35u64)]);
+    assert!(plonk::verify(&vk, &publics, &proof));
+    assert!(!plonk::verify(&vk, &[Fr::from(36u64)], &proof));
+
+    // through the wire encoding, and with each of its 15 fields altered
+    let bytes = proof.to_bytes().unwrap();
+    assert!(plonk::verify(&vk, &publics, &Proof::from_bytes(&bytes).unwrap()));
+    for i in 0..15 {
+        let mut bad = bytes;
+        bad[i * 32 + 1] ^= 1;
+        if let Some(p) = Proof::from_bytes(&bad) {
+            assert!(!plonk::verify(&vk, &publics, &p), "field {i}");
+        }
+    }
+    // the JSON forms round-trip
+    assert_eq!(plonk::json::proof_from_json(&plonk::json::proof_json(&proof)).unwrap(), proof);
+    assert_eq!(plonk::json::vk_from_json(&plonk::json::vk_json(&vk)).unwrap(), vk);
+}

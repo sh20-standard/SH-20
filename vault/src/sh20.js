@@ -6,6 +6,7 @@ import './shim/buffer.js';
 
 export { serializeEnvelope, parseEnvelope, CodecError } from '../../indexer/src/codec.js';
 export { extractEnvelope } from '../../indexer/src/carrier.js';
-export { FR, MAGIC, PAY_MODE, DOMAIN } from '../../indexer/src/constants.js';
+export { FR, MAGIC, PAY_MODE, DOMAIN, TREE_DEPTH } from '../../indexer/src/constants.js';
 export { noteLeaf, tickerT } from '../../indexer/src/notes.js';
 export { poseidon2 } from '../../indexer/src/poseidon.js';
+export { rootFromPath } from '../../indexer/src/tree.js';

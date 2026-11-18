@@ -1,4 +1,6 @@
 // Read-only clients: the SH-20 indexer API (docs/API.md) and an Esplora server.
+// Only bulk routes are used for wallet state (/notes, /nullifiers): per-note
+// routes (/path/:pos, /nullifier/:hex) would tell the indexer which notes are yours.
 // Both URLs are settings; any honest indexer and any Esplora work.
 // Everything they return is untrusted input: it is normalised here and only
 // ever rendered as text.
@@ -95,6 +97,26 @@ export class IndexerApi {
       from += page.length;
       if (page.length === 0 || (typeof j.total === 'number' && from >= j.total) || Array.isArray(j)) return out;
     }
+  }
+
+  /**
+   * Every nullifier spent from block `from` on, in one list (docs/API.md
+   * /nullifiers). Returns null when the indexer does not serve the route yet;
+   * the vault then reports spends as unknown and never falls back to asking
+   * /nullifier/:hex for its own notes.
+   */
+  async nullifiers(from = 0) {
+    let j;
+    try {
+      j = await getJson(`${this.base}/nullifiers?from=${from}`);
+    } catch (e) {
+      if (e.status === 404) return null;
+      throw e;
+    }
+    return list(j, 'nullifiers').map((n) => {
+      if (!/^[0-9a-f]{64}$/.test(n?.nullifier) || !Number.isInteger(n.height)) throw new Error('bad nullifier entry from the indexer');
+      return { nullifier: n.nullifier, height: n.height };
+    });
   }
 }
 

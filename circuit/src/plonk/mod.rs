@@ -19,7 +19,7 @@ pub mod verifier;
 use ark_bn254::{Fq, Fr, G1Affine};
 use ark_ff::{BigInteger, Field, PrimeField, Zero};
 
-pub use keys::{setup, ProvingKey, VerifyingKey};
+pub use keys::{setup, setup_with_vk, ProvingKey, VerifyingKey};
 pub use prover::prove;
 pub use srs::Srs;
 pub use verifier::verify;

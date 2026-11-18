@@ -44,13 +44,11 @@ pub struct ProvingKey {
     pub n_vars: usize,
     /// Variable on each wire of each row (padding rows hold variable 0).
     pub wires: [Vec<u32>; 3],
-    /// Selector polynomials ql, qr, qo, qm, qc: coefficients, and evaluations on the 4n coset.
+    /// Selector polynomials ql, qr, qo, qm, qc, as coefficients.
     pub q: [Vec<Fr>; 5],
-    pub q4: [Vec<Fr>; 5],
-    /// Permutation polynomials: coefficients, evaluations on the domain and on the 4n coset.
+    /// Permutation polynomials: coefficients, and evaluations on the domain.
     pub sigma: [Vec<Fr>; 3],
     pub sigma_h: [Vec<Fr>; 3],
-    pub sigma4: [Vec<Fr>; 3],
     /// τ^i·G1 for i < n + 6.
     pub srs_g1: Vec<G1Affine>,
 }
@@ -62,8 +60,16 @@ pub fn domain(n: usize) -> Domain {
 }
 
 /// The coset g·H' of size 4n the quotient is computed on (g = the field's multiplicative generator).
+/// The prover walks it as four cosets of the domain, `quarter(n, j)` for j < 4: element 4i + j of the
+/// large coset is element i of quarter j.
 pub fn coset4(n: usize) -> Domain {
     domain(4 * n).get_coset(Fr::GENERATOR).expect("coset")
+}
+
+/// The coset g·ω'^j·H of the domain, ω' the generator of the group of size 4n.
+pub fn quarter(n: usize, j: usize) -> Domain {
+    let shift = Fr::GENERATOR * domain(4 * n).group_gen().pow([j as u64]);
+    domain(n).get_coset(shift).expect("coset")
 }
 
 pub fn commit(srs_g1: &[G1Affine], coeffs: &[Fr]) -> G1Affine {
@@ -76,16 +82,24 @@ pub fn rows_for(gates: usize) -> usize {
     gates.next_power_of_two().max(1 << MIN_POWER)
 }
 
-pub fn setup(cs: &Cs, srs: &Srs) -> Result<ProvingKey, String> {
-    let n = rows_for(cs.gates.len());
-    if srs.g1.len() < n + SRS_EXTRA {
-        return Err(format!("the SRS holds {} powers, this circuit needs {}", srs.g1.len(), n + SRS_EXTRA));
-    }
-    let dom = domain(n);
-    let dom4 = coset4(n);
-    let srs_g1 = srs.g1[..n + SRS_EXTRA].to_vec();
+/// The parts of a proving key that depend only on the gates: wires, selector and permutation
+/// polynomials. No group operation.
+struct Structure {
+    n: usize,
+    n_vars: usize,
+    wires: [Vec<u32>; 3],
+    q: [Vec<Fr>; 5],
+    sigma: [Vec<Fr>; 3],
+    sigma_h: [Vec<Fr>; 3],
+}
 
-    let (k1, k2) = (Fr::from(2u64), Fr::from(3u64));
+const K1: u64 = 2;
+const K2: u64 = 3;
+
+fn structure(cs: &Cs) -> Result<Structure, String> {
+    let n = rows_for(cs.gates.len());
+    let dom = domain(n);
+    let (k1, k2) = (Fr::from(K1), Fr::from(K2));
     let pow_n = |x: Fr| x.pow([n as u64]);
     if pow_n(k1).is_one() || pow_n(k2).is_one() || pow_n(k2 * k1.inverse().unwrap()).is_one() {
         return Err("wire cosets are not disjoint".into());
@@ -139,26 +153,95 @@ pub fn setup(cs: &Cs, srs: &Srs) -> Result<ProvingKey, String> {
 
     let q: [Vec<Fr>; 5] = std::array::from_fn(|j| dom.ifft(&q_h[j]));
     let sigma: [Vec<Fr>; 3] = std::array::from_fn(|j| dom.ifft(&sigma_h[j]));
-    let q4: [Vec<Fr>; 5] = std::array::from_fn(|j| dom4.fft(&q[j]));
-    let sigma4: [Vec<Fr>; 3] = std::array::from_fn(|j| dom4.fft(&sigma[j]));
+    Ok(Structure { n, n_vars, wires, q, sigma, sigma_h })
+}
 
+/// Key generation: the structure of the circuit and the eight commitments of its verifying key.
+pub fn setup(cs: &Cs, srs: &Srs) -> Result<ProvingKey, String> {
+    let st = structure(cs)?;
+    let n = st.n;
+    if srs.g1.len() < n + SRS_EXTRA {
+        return Err(format!("the SRS holds {} powers, this circuit needs {}", srs.g1.len(), n + SRS_EXTRA));
+    }
+    let srs_g1 = srs.g1[..n + SRS_EXTRA].to_vec();
     let c = |p: &[Fr]| commit(&srs_g1, p);
     let vk = VerifyingKey {
         power: n.trailing_zeros(),
         n_public: cs.n_public,
-        k1,
-        k2,
-        ql: c(&q[0]),
-        qr: c(&q[1]),
-        qo: c(&q[2]),
-        qm: c(&q[3]),
-        qc: c(&q[4]),
-        s1: c(&sigma[0]),
-        s2: c(&sigma[1]),
-        s3: c(&sigma[2]),
+        k1: Fr::from(K1),
+        k2: Fr::from(K2),
+        ql: c(&st.q[0]),
+        qr: c(&st.q[1]),
+        qo: c(&st.q[2]),
+        qm: c(&st.q[3]),
+        qc: c(&st.q[4]),
+        s1: c(&st.sigma[0]),
+        s2: c(&st.sigma[1]),
+        s3: c(&st.sigma[2]),
         x2: srs.g2_tau,
     };
-    Ok(ProvingKey { vk, n, n_vars, wires, q, q4, sigma, sigma_h, sigma4, srs_g1 })
+    Ok(ProvingKey { vk, n, n_vars: st.n_vars, wires: st.wires, q: st.q, sigma: st.sigma, sigma_h: st.sigma_h, srs_g1 })
+}
+
+/// A proving key from a verifying key that is already known (shipped with its digest): the
+/// structure is recomputed from the gates, the commitments are taken from `vk`. A key that does
+/// not belong to this circuit and SRS only yields proofs that do not verify.
+pub fn setup_with_vk(cs: &Cs, srs_g1: Vec<G1Affine>, vk: VerifyingKey) -> Result<ProvingKey, String> {
+    let st = structure(cs)?;
+    if vk.power != st.n.trailing_zeros() || vk.n_public != cs.n_public || vk.k1 != Fr::from(K1) || vk.k2 != Fr::from(K2) {
+        return Err("the verifying key is not for this circuit".into());
+    }
+    if srs_g1.len() != st.n + SRS_EXTRA {
+        return Err(format!("the key holds {} SRS powers, this circuit needs {}", srs_g1.len(), st.n + SRS_EXTRA));
+    }
+    Ok(ProvingKey { vk, n: st.n, n_vars: st.n_vars, wires: st.wires, q: st.q, sigma: st.sigma, sigma_h: st.sigma_h, srs_g1 })
+}
+
+/// Magic of a serialized proving key.
+const PK_MAGIC: &[u8; 8] = b"SH20PK01";
+
+impl ProvingKey {
+    /// "SH20PK01" ‖ verifying key (712) ‖ count u32 ‖ count × (x ‖ y, 32-byte little-endian each):
+    /// the verifying key and the SRS powers. Everything else in a proving key follows from the gates.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(8 + VK_BYTES + 4 + self.srs_g1.len() * 64);
+        out.extend_from_slice(PK_MAGIC);
+        out.extend_from_slice(&self.vk.to_bytes());
+        out.extend_from_slice(&(self.srs_g1.len() as u32).to_le_bytes());
+        for p in &self.srs_g1 {
+            out.extend_from_slice(&fq_le(&p.x));
+            out.extend_from_slice(&fq_le(&p.y));
+        }
+        out
+    }
+
+    /// Parses `to_bytes` for the circuit `cs`. Points are checked to be on the curve; the caller
+    /// checks the digest of the file.
+    pub fn from_bytes(cs: &Cs, b: &[u8]) -> Result<ProvingKey, String> {
+        if b.len() < 8 + VK_BYTES + 4 || &b[..8] != PK_MAGIC {
+            return Err("not an SH-20 proving key".into());
+        }
+        let vk = VerifyingKey::from_bytes(&b[8..8 + VK_BYTES])?;
+        let rest = &b[8 + VK_BYTES..];
+        let count = u32::from_le_bytes(rest[..4].try_into().unwrap()) as usize;
+        if rest.len() != 4 + count * 64 {
+            return Err("proving key has the wrong length".into());
+        }
+        let mut srs_g1 = Vec::with_capacity(count);
+        for p in rest[4..].chunks(64) {
+            let pt = G1Affine::new_unchecked(fq_from(&p[..32]).ok_or("coordinate")?, fq_from(&p[32..]).ok_or("coordinate")?);
+            if !pt.is_on_curve() {
+                return Err("proving key point not on the curve".into());
+            }
+            srs_g1.push(pt);
+        }
+        setup_with_vk(cs, srs_g1, vk)
+    }
+
+    /// The SRS inside the key (the G2 power comes from the verifying key).
+    pub fn srs(&self) -> Srs {
+        Srs { g1: self.srs_g1.clone(), g2_tau: self.vk.x2 }
+    }
 }
 
 fn fq_le(x: &Fq) -> [u8; 32] {
