@@ -1,0 +1,113 @@
+# SH-20 design — draft v0.1
+
+SH-20 is an open standard for fungible shielded tokens on Bitcoin L1: anyone deploys a ticker, the
+mint is public and paid in BTC, and transfers are private. Bitcoin only publishes and orders data;
+every indexer recomputes the same state. Nothing is activated on any network.
+
+## What is public, what is private
+
+| Data | Visibility |
+| --- | --- |
+| Ticker, max supply, team allocation, mint price and window | Public |
+| Each mint: ticker, amount, receiving key | Public |
+| Circulating supply (minted minus burned) | Public |
+| Listing: ticker, amount, price | Public |
+| Transfer: ticker, amount, sender, recipient | Private |
+| A holder's balance | Private |
+
+Tokens enter and leave in public (mint, team unlock, purchase; burn, listing) and move in private
+inside one pool shared by every ticker. Each new ticker enlarges everyone's anonymity set.
+
+## Principles
+
+- **Open:** anyone deploys a ticker without permission.
+- **Unique tickers:** 4 characters `[A-Z0-9]`; the first valid DEPLOY keeps the name forever.
+- **Honest supply:** max supply, team allocation and its unlock block are public at DEPLOY.
+- **Real cost:** each mint costs a price in BTC set by the deployer, burned or paid to a public script.
+- **Public mint is mandatory:** a DEPLOY must leave something to mint (`pre < max`).
+- **Private transfers:** amount, ticker, sender and recipient are hidden.
+- **No third party:** no admin key, blacklist, co-signer or platform signature.
+
+Non-goals for v0: private BTC (no peg), DeFi, NFTs.
+
+## Launch and walk away
+
+After activation nothing depends on the team.
+
+| Piece | Who runs it after launch | Ready before activation |
+| --- | --- | --- |
+| Rules | Nobody: frozen, version `0x00` | Frozen spec and test vectors |
+| Activation | A block height written in the spec | Height fixed in advance |
+| Proof parameters | Nobody: public Hermez setup, key hash in the spec | Halo2-KZG, so no ceremony |
+| Indexer | Anyone, with their own node | Free code, two implementations with the same digest |
+| Wallet | The user, on their device | Static page on IPFS and a CLI; proofs computed locally |
+| Relayers | Anyone, paid inside the pool; optional | Relayer code; self-publishing always works |
+| Sale offers | Any marketplace or Nostr relay | A published offer format (partially signed transaction) |
+| Mint price | Nobody in the middle: BTC burn or direct payment | — |
+
+A fix after activation is a new version byte that each indexer chooses to adopt, as with Runes, so
+audits and public signet tests happen before activation.
+
+## Lifecycle
+
+- **DEPLOY** reserves a ticker and fixes its rules. The first accepted DEPLOY is the genesis ticker
+  (tokenNum 1). The team allocation, if any, enters the tree automatically at its public unlock block.
+- **Proposed rule:** every later DEPLOY burns `D` units of the genesis ticker, so the whole meta
+  consumes genesis supply after its mint-out. The trade-off: deployers must buy genesis first, which
+  slows spam but also adoption. The alternative is the plain BRC-20 model with no burn.
+- **MINT** creates a public note of exactly `lim` units, with no proof, in one OP_RETURN transaction.
+  All mints of a ticker are identical. A rejected mint is not refunded.
+- **TRANSFER** spends two notes and creates three, inside the pool; only nullifiers and new leaves are published.
+- **BURN** spends notes and publishes the amount and ticker that leave.
+- **Trading:** LIST moves an amount into a public escrow and creates a P2TR lock output. The seller
+  signs a spend of the lock with `SIGHASH_SINGLE | ANYONECANPAY` that pays the price to them, and
+  shares it anywhere. Anyone completes it with a TAKE: the tokens move only if the lock is spent, and a
+  lock is spent once, so a sale can be neither doubled nor unpaid. A TAKE without payment is the
+  seller cancelling; a lock spent with no TAKE closes the listing, and the seller CLAIMs with a signature.
+
+## Proof engine
+
+| Criterion | 77ph (Groth16) | Tacit (Halo2-KZG) — chosen |
+| --- | --- | --- |
+| Setup | New ceremony needed for a modified circuit | None: public Hermez `pot18` reused |
+| Proof size | 192 bytes | 2,080 bytes |
+| Notes per proof | 2 in, 2 out | 2 in, 3 out |
+| Proving time (published) | ~1.5 s (16 threads) | 12–15 s (browser, 1 thread); 17–24 s (Node) |
+| Transfer on signet (published) | 825–892 vB OP_RETURN; 447 vB witness | 805.5 vB for a relayed payment |
+| License | Apache 2.0 | MIT |
+
+An open standard without an admin should not rest on a ceremony run by its own authors. Proving
+time only affects transfers, burns and listings, never the mint. Figures are as published by the
+projects, not re-measured here.
+
+## Security, privacy, limits
+
+- **Main risk:** a circuit bug that accepts a bad proof would allow counterfeiting. Counterfeits are
+  invisible in transfers and would only show if a ticker's public outflows exceeded its minted supply.
+  Hence an audit, a public signet run and a bug bounty before activation.
+- **Still visible:** mints, listings, burns and purchases; the BTC inputs paying fees (mitigated by
+  relayers, fresh addresses, delayed publication); timing.
+- **Anonymity at launch** is small and grows with every mint, purchase and ticker.
+- **Relay policy:** witness envelopes are standard everywhere since Taproot; OP_RETURN above 83 bytes is
+  relayed by default since Bitcoin Core 30 but still filtered by some nodes and pools.
+- **Legal:** privacy tools are under regulatory pressure in several jurisdictions; get legal advice before mainnet.
+
+## Prior art and competitors
+
+- [Tacit](https://github.com/z0r0z/tacit) — confidential amounts on Bitcoin since May 2026, fair mint,
+  shielded pool; the asset id is public in each spend.
+- [zkCoins / Shielded CSV](https://zkcoins-docs.pages.dev/specification) — client-side validation,
+  hides the asset; only an asset's creator mints.
+- [Shielded Ordinals](https://github.com/Fl1ntstowned/shielded-ordinals) — private NFTs; the platform signs mints and buys.
+- [Shielded Bitcoin](https://www.allocinit.xyz/uploads/shielded-bitcoin.pdf) (alloc init) and
+  [77ph/shielded-bitcoin](https://github.com/77ph/shielded-bitcoin) — private BTC transfers, no tokens.
+- [pERC20](https://github.com/PLabs4/pERC20_) — private tokens on EVM chains, issuer-only mint.
+
+## Open decisions
+
+1. Final name and 4-byte magic.
+2. Value of `D`, or no genesis burn at all.
+3. Tickers of 4 characters only, or also 5 to 12.
+4. Genesis team allocation: zero or small.
+5. Several envelopes per transaction, so relayers can publish in batches.
+6. Exact event encoding inside the digest, frozen before activation.
