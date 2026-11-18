@@ -32,7 +32,7 @@ test('getblock-2 JSON maps to the indexer format with exact sats', () => {
 test('bin/replay.js replays a folder of blocks', () => {
   const dir = mkdtempSync(join(tmpdir(), 'sh20-'));
   writeFileSync(join(dir, '1.json'), JSON.stringify(rpcBlock(1, [{ value: 0, scriptPubKey: { hex: opReturn(serializeEnvelope(deployEnv())).toString('hex') } }])));
-  writeFileSync(join(dir, '2.json'), JSON.stringify(rpcBlock(2, [{ value: 0.00001, scriptPubKey: { hex: opReturn(serializeEnvelope({ type: 'MINT', tokenNum: 1, ...opening() })).toString('hex') } }])));
+  writeFileSync(join(dir, '2.json'), JSON.stringify(rpcBlock(2, [{ value: 0.00001, scriptPubKey: { hex: opReturn(serializeEnvelope({ type: 'MINT', ticker: 'GENE', ...opening() })).toString('hex') } }])));
   const out = execFileSync(process.execPath, [new URL('../bin/replay.js', import.meta.url).pathname, dir, '--activation', '1'], { encoding: 'utf8' });
   const lines = out.trim().split('\n');
   assert.match(lines[0], /^1 root=[0-9a-f]{64} digest=[0-9a-f]{64} accepted=1 rejected=0$/);

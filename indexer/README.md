@@ -4,20 +4,20 @@ Reference indexer for **SH-20**, an open standard for fungible shielded tokens o
 anyone deploys a 4-character ticker, anyone mints it for a public price, and transfers hide the
 amount, the sender, the recipient and the ticker. All tickers share one note tree.
 
-**Status: draft v0.1, not activated anywhere.** The spend circuit is not written yet, so the default
+**Status: draft v0.2, not activated anywhere.** The spend circuit is not written yet, so the default
 verifier rejects every proof: proof-less envelopes (genesis DEPLOY, MINT, TAKE, CLAIM) are fully
 checked, spends (TRANSFER, BURN, LIST, later DEPLOYs) are rejected until a verifier is pinned.
 
 - Wire format and rules: [`docs/SPEC-WIRE.md`](../docs/SPEC-WIRE.md)
-- Test vectors for a second implementation: [`vectors/v0.1.json`](./vectors/v0.1.json)
+- Test vectors for a second implementation: [`vectors/v0.2.json`](./vectors/v0.2.json)
 
 ## Run
 
 Node 20 or newer, no dependencies.
 
 ```sh
-npm test                  # 37 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, API
-npm run vectors           # regenerates vectors/v0.1.json (deterministic)
+npm test                  # 39 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, API
+npm run vectors           # regenerates vectors/v0.2.json (deterministic)
 node bin/replay.js <dir>  # replays a folder of `bitcoin-cli getblock <hash> 2` JSON files
 node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser U --rpcpass P --activation H   # live, own node
 node bin/follow.js --esplora https://mempool.space/signet/api --activation H             # live, Esplora
@@ -45,7 +45,7 @@ The live follower serves a read-only JSON API for wallets: see [`docs/API.md`](.
 
 1. The spend circuit (Halo2-KZG over the public Hermez setup, based on Tacit's MIT pool circuit with the asset made private) and its pinned verifier.
 2. The browser vault: keys on the device, proofs in the browser, PSBTs signed by Xverse / UniSat / Leather.
-3. A second, independent indexer that matches `vectors/v0.1.json`.
+3. A second, independent indexer that matches `vectors/v0.2.json`.
 4. Freezing the profile (activation height, D) and the event encoding of the digest.
 
 ## License

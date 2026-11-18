@@ -1,7 +1,11 @@
-# SH-20 wire format and acceptance rules — draft v0.1
+# SH-20 wire format and acceptance rules — draft v0.2
 
 Status: draft. Nothing here is activated on any network. This file is normative for
-`src/`; the design rationale lives in the SH-20 spec document.
+`indexer/src/`; the design rationale lives in [`DESIGN.md`](DESIGN.md).
+
+Changes from v0.1: tokens are named by their ticker everywhere. MINT, BURN and LIST carry `ticker(4)`
+instead of an indexer-assigned `tokenNum(4)` (same size), and the asset id inside notes and proofs is
+`t = tickerT(ticker)`. A wallet can therefore check on chain which token a mint or a listing is for.
 
 ## 1. Primitives
 
@@ -21,7 +25,9 @@ TAG_LEAF = SHA256("sh20/v0/leaf") mod r
 leaf     = H( H( H(TAG_LEAF, t), v ), H(npk, rho) )
 ```
 
-- `t` = tokenNum (u32), `v` = amount (u64), `npk` = note public key, `rho` = random field element.
+- `t` = `tickerT(ticker)` = the ticker's 4 ASCII bytes read as a big-endian u32 (`"GENE"` = `0x47454e45`),
+  `v` = amount (u64), `npk` = note public key, `rho` = random field element.
+- `t = 0` is reserved for native BTC; no valid ticker maps to it (the smallest is `"0000"` = `0x30303030`).
 - One append-only tree for every ticker: depth 32, nodes `H(left, right)`, empty leaf `0`,
   `Z[0] = 0`, `Z[i+1] = H(Z[i], Z[i])`. `R[h]` = root after block `h`.
 - A **public opening** is `npk (32) ‖ rho (32)` = 64 bytes. For public notes the indexer computes the leaf.
@@ -40,19 +46,20 @@ Proof-carrying envelopes (~2.4 KB with the pinned Halo2 proof) use the witness c
 ## 4. Envelopes
 
 Header (6 bytes): `"SH20" (4) ‖ version 0x00 (1) ‖ type (1)`. Unknown version: ignored. Unknown type: rejected.
+Types `0x08`–`0x0f` are reserved for extensions (aggregated batches; a BTC entry and exit once Bitcoin can enforce one).
 After parsing, re-serialising must give the same bytes; trailing bytes are rejected.
 
 | Type | Code | Body after the header | Bytes |
 | --- | --- | --- | --- |
 | DEPLOY | 0x01 | `ticker(4) max(8) lim(8) pre(8) start(4) end(4) unlock(4) price(8) payMode(1) psLen(1) payScript(psLen) [team opening(64) if pre > 0] [spend if bytes remain]` | 120 genesis with team; + spend |
-| MINT | 0x02 | `tokenNum(4) opening(64)` | 74 |
+| MINT | 0x02 | `ticker(4) opening(64)` | 74 |
 | TRANSFER | 0x03 | `spend` | 2,435 with a 2,080-byte proof |
-| BURN | 0x04 | `tokenNum(4) vPub(8) spend` | 2,447 |
-| LIST | 0x05 | `tokenNum(4) amount(8) price(8) lockVout(1) psLen(1) payScript(psLen) spend` | 2,457 + payScript |
+| BURN | 0x04 | `ticker(4) vPub(8) spend` | 2,447 |
+| LIST | 0x05 | `ticker(4) amount(8) price(8) lockVout(1) psLen(1) payScript(psLen) spend` | 2,457 + payScript |
 | TAKE | 0x06 | `opening(64)` | 70 |
 | CLAIM | 0x07 | `listTxid(32) opening(64) sig(64)` | 166 |
 
-- `ticker`: 4 ASCII characters `[A-Z0-9]`. `payMode`: 0 none, 1 burn, 2 pay to `payScript`.
+- `ticker`: 4 ASCII characters `[A-Z0-9]`, in every type that carries one; anything else is rejected. `payMode`: 0 none, 1 burn, 2 pay to `payScript`.
   `payScript` (≤ 34 bytes) is present only with payMode 2. `listTxid`: txid in display (RPC) byte order.
 
 **Spend section**
@@ -61,7 +68,7 @@ After parsing, re-serialising must give the same bytes; trailing bytes are rejec
 anchorHeight(4) ‖ nf0(32) ‖ nf1(32) ‖ 3 × [ leaf(32) ‖ pk_eph(33) ‖ ct(28) ] ‖ proofLen(2) ‖ proof(proofLen)
 ```
 
-- `pk_eph`: compressed secp256k1 point (prefix 02/03). `ct`: amount u64 ‖ tokenNum u32 ‖ 16-byte tag, sealed to the recipient.
+- `pk_eph`: compressed secp256k1 point (prefix 02/03). `ct`: amount u64 ‖ ticker (4) ‖ 16-byte tag, sealed to the recipient.
 - `1 ≤ proofLen ≤ 4096`.
 - `body` = every envelope byte before `proofLen`; `bodyHash = SHA256("sh20/v0/body" ‖ body) mod r`.
 
@@ -81,11 +88,11 @@ non-zero, distinct, never seen; output leaves non-zero; room in the tree; proof 
 
 | Type | Accepted when | Effect |
 | --- | --- | --- |
-| DEPLOY | ticker never deployed; `max > 0`, `lim > 0`, `pre < max`, `(max − pre) mod lim = 0`; `start > H`; `end = 0` or `end ≥ start`; `unlock ≥ start`; payMode 0 ⇔ `price = 0`. First accepted DEPLOY = genesis (tokenNum 1) and has no spend; every later one has a spend with `vPub = D`, `tPub = 1` | next tokenNum; `burned[1] += D`; team note scheduled for block `unlock` |
-| MINT | token exists; `start ≤ H`; `end = 0` or `H ≤ end`; mints `< (max − pre) / lim`; paid in the same tx: payMode 1 = OP_RETURN outputs carry ≥ `price` sats, payMode 2 = outputs to `payScript` total ≥ `price` | leaf `(t, lim, npk, rho)`; mints + 1 |
+| DEPLOY | ticker never deployed; `max > 0`, `lim > 0`, `pre < max`, `(max − pre) mod lim = 0`; `start > H`; `end = 0` or `end ≥ start`; `unlock ≥ start`; payMode 0 ⇔ `price = 0`. First accepted DEPLOY = genesis and has no spend; every later one has a spend with `vPub = D`, `tPub = t(genesis)` | token recorded under its ticker; `burned[genesis] += D`; team note scheduled for block `unlock` |
+| MINT | `ticker` deployed; `start ≤ H`; `end = 0` or `H ≤ end`; mints `< (max − pre) / lim`; paid in the same tx: payMode 1 = OP_RETURN outputs carry ≥ `price` sats, payMode 2 = outputs to `payScript` total ≥ `price` | leaf `(t, lim, npk, rho)`; mints + 1 |
 | TRANSFER | spend with `vPub = tPub = 0` | — |
-| BURN | token exists; `vPub > 0`; spend with `tPub = tokenNum` | `burned[t] += vPub` |
-| LIST | token exists; `amount > 0`, `price > 0`; output `lockVout` is P2TR with ≥ 330 sats; spend with `vPub = amount`, `tPub = tokenNum` | listing ACTIVE, lock = `(txid, lockVout)` |
+| BURN | `ticker` deployed; `vPub > 0`; spend with `tPub = t(ticker)` | `burned[ticker] += vPub` |
+| LIST | `ticker` deployed; `amount > 0`, `price > 0`; output `lockVout` is P2TR with ≥ 330 sats; spend with `vPub = amount`, `tPub = t(ticker)` | listing ACTIVE, lock = `(txid, lockVout)` |
 | TAKE | the tx spends the lock of an ACTIVE listing (first in input order) | leaf `(t, amount, npk, rho)`; SOLD if outputs to `payScript` total ≥ `price`, else CANCELLED |
 | CLAIM | listing is CLOSED; BIP340 signature by the lock's output key over `SHA256("sh20/v0/claim" ‖ listTxid ‖ npk ‖ rho)` | leaf `(t, amount, npk, rho)`; CLAIMED |
 
@@ -93,7 +100,7 @@ A rejected envelope changes nothing; sats it paid are not returned.
 
 ## 6. Block processing and digest
 
-1. If `H ≥ A`: append team notes whose `unlock = H` (by tokenNum), then for each transaction in block order:
+1. If `H ≥ A`: append team notes whose `unlock = H` (by ticker, in byte order), then for each transaction in block order:
    note the ACTIVE listings whose lock it spends; apply its envelope; set any of those still ACTIVE to CLOSED.
 2. Record `R[H]`.
 3. `digest_H = SHA256(digest_{H−1} ‖ u32le(H) ‖ R[H] (32, LE) ‖ SHA256(events_H))`, `digest_start = SHA256("sh20-v0")`,
