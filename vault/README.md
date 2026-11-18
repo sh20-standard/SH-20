@@ -1,6 +1,6 @@
 # sh20-vault
 
-Browser vault for **SH-20** (spec draft v0.2, **signet only**): a static page with no server of
+Browser vault for **SH-20** (spec draft v0.3, **signet only**): a static page with no server of
 ours, which you can host on IPFS. Keys are generated and kept on the device. Bitcoin is paid
 and signed by **Xverse, UniSat or Leather**. Tickers and mints are read from any SH-20 indexer API.
 
@@ -9,21 +9,25 @@ What works today, without proofs:
 - a vault seed created in the browser, stored in `localStorage`, encrypted with AES-GCM under
   a PBKDF2-SHA256 passphrase key (600,000 iterations), with backup and restore;
 - connecting a wallet and signing PSBTs that the vault builds itself;
-- **MINT** end to end: the 74-byte OP_RETURN envelope of `docs/SPEC-WIRE.md`, serialised by
-  `indexer/src/codec.js` itself, in one transaction;
+- **MINT** end to end: the 42-byte OP_RETURN envelope of `docs/SPEC-WIRE.md` (43 bytes for a
+  batch of `k` mints), serialised by `indexer/src/codec.js` itself, in one transaction of 164 vB;
+- note keys, the **sh20 address** (`tsh20…` on signet) and **scanning of sealed notes**, as
+  `docs/SPEC-NOTES.md` defines them, computed by `circuit/js` itself (checked against
+  `circuit/js/vectors.json`);
 - tickers, mint windows and mints from `GET /status`, `/tokens`, `/token/:ticker`, `/notes`;
-  your own notes are matched locally, and the seed alone recovers them after a restore;
+  your own notes, public or sealed to your address, are found locally, and the seed alone recovers
+  them after a restore;
 - the genesis token **SH20**, checked against profile constants in the vault (it has no DEPLOY);
 - a **deploy screen** that checks a new ticker's terms with the indexer's rules and shows its cost,
   including the burn of `D` SH20 with a proof.
 
-Sending a DEPLOY, and TRANSFER, BURN, LIST, TAKE and CLAIM, are spends: they wait for the
-circuit's reference keys in JavaScript and the `ct` sealing format.
+Sending a DEPLOY with a burn, and TRANSFER, BURN, LIST, TAKE and CLAIM, are spends: they need the
+WebAssembly prover wired into the vault, which is not done yet.
 
 ## Run
 
 ```sh
-npm test                 # 53 tests, Node ≥ 20, zero dependencies
+npm test                 # 59 tests, Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development)
 npm run release          # a verifiable release from the current commit (below)
 ```
@@ -97,16 +101,23 @@ folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
 ## How a MINT is built
 
 ```
-vout 0  OP_RETURN <"SH20" 00 02 ticker(4) npk(32) rho(32)>     value = price if payMode 1 (burn), else 0
-vout 1  payScript, value = max(price, dust)                     only if payMode 2
+vout 0  OP_RETURN <"SH20" 00 02 ticker(4) npk(32) [k(1)]>     value = k × price if payMode 1 (burn), else 0
+vout 1  payScript, value = max(k × price, dust)                 only if payMode 2
 vout n  change to the payer                                     only if above dust
 ```
 
+- The opening is `npk` alone: a public note has `rho = 0` (wire v0.3). `npk` is the vault's next
+  public note key (`docs/SPEC-NOTES.md` §5: derived from the viewing key `ivk` and a counter that
+  never repeats), so a restored or watch-only vault finds it again.
+- **Batch mint:** the mint panel takes `k` from 1 to 10. One envelope then asks for `k` mints and
+  pays `k × price`, for one note of `k × lim` (one more byte, `k` omitted when 1). The vault never
+  asks for more mints than are left: an indexer gives a late batch only what is left and keeps the
+  whole payment, which the panel says when `k > 1`.
 - payMode 1 burns the price **on the envelope output itself**, so a burn mint has no extra output.
 - Coins: the smallest single UTXO that pays everything, else the fewest UTXOs (largest first);
   the change output is dropped when it would be dust.
 - Before anything is signed, the vault checks what the indexers will check (window open at the
-  next block, not sold out, payment present), because a rejected mint is not refunded.
+  next block, not sold out, `k` not above what is left, payment present), because a rejected mint is not refunded.
 - **The genesis token SH20** is part of the profile, not a DEPLOY (`/tokens` lists it first, with
   `genesis: true` and `deployTxid: null`). Its terms are checked against constants in the vault
   (`src/profile.js`: `SH20`, max 21,000,000, 1,000 per mint, no team, price 0, payMode 0, no end,
@@ -139,13 +150,12 @@ Measured with a dummy signature of the real size (`test/mint.test.js`):
 
 | Payer | payMode | Outputs | vsize |
 | --- | --- | --- | --- |
-| P2TR | 1 (burn) or 0 | OP_RETURN + change | **196 vB** |
-| P2WPKH | 2 (pay) | OP_RETURN + payScript + change | 226 vB |
+| P2TR | 1 (burn) or 0 | OP_RETURN + change | **164 vB** |
+| P2WPKH | 2 (pay) | OP_RETURN + payScript + change | 194 vB |
 
-The 196 vB are 10.5 (transaction) + 57.5 (P2TR input) + 85 (OP_RETURN output, of which 74 bytes
-are the envelope) + 43 (change). The wallet side has nothing left to trim: getting to the ~165 vB
-target needs a smaller envelope, for example dropping `rho` from public openings (−32 vB → ~164 vB),
-which is a protocol decision (CLAUDE.md, cost lever 4). With no change output: −43 vB.
+The 164 vB are 10.5 (transaction) + 57.5 (P2TR input) + 53 (OP_RETURN output, of which 42 bytes
+are the envelope) + 43 (change): the ~165 vB target of CLAUDE.md, reached by v0.3's public
+openings without `rho` (it was 196 vB). A batch adds one byte for `k` mints. With no change output: −43 vB.
 
 ## Deploy screen
 
@@ -158,13 +168,13 @@ the reference indexer and requires the same verdict). It then shows what the DEP
   requires every configured indexer to report the same): the DEPLOY burns `D` SH20 with a proof. It
   carries a spend (`vPub = D`, `tPub = t("SH20")`) over at most two of your SH20 notes, and the
   change comes back as a shielded note; the screen shows which unspent SH20 notes would pay it, and
-  the envelope size in the witness carrier (56 bytes + `psLen`, + 64 with a team allocation, + 829
-  for the spend).
-- **`D = 0`**: no proof, one OP_RETURN transaction (56 bytes + `psLen`, + 64 with a team).
+  the envelope size in the witness carrier (56 bytes + `psLen`, + 32 with a team allocation, + 824
+  for the spend: wire v0.3, a 32-byte X25519 `pk_eph` per output and no `proofLen`). The size comes
+  from serialising a placeholder spend with the indexer's codec; nothing is sealed or sent.
+- **`D = 0`**: no proof, one OP_RETURN transaction (56 bytes + `psLen`, + 32 with a team).
 
-The button stays disabled: a DEPLOY with a burn is a spend, so it waits for the circuit's reference
-keys and the `ct` sealing format, like transfers. Notes minted today use provisional keys the
-circuit cannot spend.
+The button stays disabled: a DEPLOY with a burn is a spend, like a transfer, and the vault does
+not prove spends yet.
 
 ## Private sync: tree, paths and spends on the device
 
@@ -179,23 +189,37 @@ checks every request the page sends). Instead `src/sync.js`:
 - downloads **every spent nullifier** (`/nullifiers?from=H`, docs/API.md) and checks the vault's
   notes against that set on the device. An indexer without the route shows spends as "unknown";
   the vault never falls back to per-note questions;
+- finds the vault's notes in what it downloaded: public notes by `npk` (the next 50 unused public
+  keys are looked for, SPEC-NOTES §5), and **sealed outputs** (`OUT`) by opening each one with the
+  viewing key (`circuit/js` `scan`: X25519, HKDF, AES-256-GCM, then the leaf check of §4). An output
+  of `v = 0` is an unused one and is not kept. Notes are told apart by position, never by leaf;
 - computes each owned note's Merkle path from the local tree and checks it against the local root
-  (`Sync.witness`, what a spend will need); nullifiers are computed inside the vault (`Vault.nullifier`),
-  so the nullifier key never leaves it;
+  (`Sync.witness`, what a spend will need); nullifiers are computed inside the vault (`Vault.nullifier`,
+  `Poseidon(nsk + τn, leaf, pos)`), so the nullifier key never leaves it;
 - **caches** the leaves and nullifiers in IndexedDB (public data only: everything, not what is
   yours), so the next sync downloads only new blocks. Each sync re-reads the last 6 blocks to absorb
   reorgs; a deeper reorg shows as a root mismatch and triggers one full re-download. "Rescan from
   zero" ignores the cache; a restored vault always rescans everything to find its notes.
 
 Loading a cached tree recomputes it (about 0.2 ms per leaf) to check it against the cached root.
+Measured in Node under the browser shims: a public note key costs about 170 ms (two BabyJubJub
+multiplications in `circuit/js`), so a new vault spends about 8 s once on its first 50 keys,
+which it then keeps in its encrypted state; opening someone else's sealed output costs about 1.3 ms.
 
-## Provisional note keys
+## Note keys and the sh20 address
 
-`src/npk.js` holds **the only** derivation of `npk` and of the nullifier, marked `PROVISIONAL`
-(scheme `provisional-0`). They must be replaced by the spend circuit's exact derivations (PR #4:
-`npk = Poseidon(Ak.x, Ak.y, NK.x, NK.y)` over BabyJubJub keys, `nf = Poseidon(nk, leaf, index)`). Every stored note records its scheme. Notes
-minted with `provisional-0` are for signet testing and may not be spendable by the final circuit.
-`rho` is derived from the seed too (`keys.js`), so recovery needs only the seed.
+`src/notekeys.js` is the only place that turns the seed into keys, and it computes nothing of its
+own: it calls `circuit/js` (`walletKeys`, `publicOpening`, `scan`, `encodeAddress`, `nullifier`), the
+wallet reference that the circuit's Rust model checks. The vault's 32-byte seed is the master
+secret `m` of `docs/SPEC-NOTES.md` §1. From it come `ask`, `nsk` and the viewing key `ivk`, the
+address `tsh20…` (bech32m of `IVK ‖ A ‖ N`, shown in the vault section), the public notes of §5
+(from `ivk` and a counter) and the per-note keys of sealed notes.
+`test/keys.test.js` derives the three wallets of `circuit/js/vectors.json` from their `m` and requires
+every key, address, public note, sealed output and nullifier of the vectors.
+
+A vault made before v0.3 (scheme `provisional-0`) keeps its old notes aside in the backup and starts
+its counter again: those notes cannot exist on a v0.3 chain. The vault does not take a BIP39
+mnemonic yet (SPEC-NOTES §1 allows one); its seed is random and kept in the backup file.
 
 ## Indexer API
 
@@ -204,24 +228,36 @@ The vault reads the API of `indexer/bin/follow.js` ([`docs/API.md`](../docs/API.
 - `GET /status` → `network` (must be `signet`), `height`, `digest`, `verifier`, `activationHeight`,
   `deployBurn`, `genesis`
 - `GET /tokens`, `GET /token/:ticker` → the reference indexer's token records (SH20 first, `genesis: true`)
-- `GET /notes?from&limit` → `{ from, total, notes }`, read page by page (5,000 per page)
+- `GET /notes?from&limit` → `{ from, total, notes }`, read page by page (5,000 per page); public
+  notes carry `ticker`, `v`, `npk`, sealed ones (`OUT`) `pkEph` (32 bytes) and `ct` (28 bytes)
 - `GET /nullifiers?from=H` → every nullifier spent from block `H` on
 - never `/path/:pos` nor `/nullifier/:hex` (see Private sync)
 
 Big integers arrive as decimal strings, field elements as 64-char hex. The vault downloads every
 note and matches its own locally by `npk`, so the indexer does not learn which notes are yours.
-It does not take the API's word for a note: it recomputes the leaf from `(tickerT(ticker), v, npk, rho)` and
-requires it to equal the `leaf` the API reports. `OUT` notes (spend outputs) are skipped until
-the `ct` format exists.
+It does not take the API's word for a note: it recomputes the leaf from `(tickerT(ticker), v, npk, 0)` and
+requires it to equal the `leaf` the API reports; a sealed output counts only if it opens and its
+plaintext hashes to its leaf. The vault compares state digests between indexers as opaque values
+and never recomputes them, so the byte encoding of the events (SPEC-WIRE §6) does not concern it.
 
-## Reusing the indexer code in the browser
+## Reusing the indexer and circuit code in the browser
 
-`src/sh20.js` imports `indexer/src/carrier.js`, `codec.js`, `constants.js`, `notes.js`, `poseidon.js` and `tree.js`
-**unchanged**. Two small shims make that possible: `src/shim/buffer.js` (the subset of Node's
-`Buffer` those files use) and `src/shim/node-crypto.js` (synchronous SHA-256), which the import
-map in `index.html` puts in place of `node:crypto`. `test/shim.test.js` runs the indexer's vectors
-through that exact setup (no global `Buffer`, `node:crypto` remapped). The build keeps the
-repository layout (`dist/vault/` and `dist/indexer/src/`) so the relative imports stay valid.
+`src/sh20.js` imports `indexer/src/carrier.js`, `codec.js`, `constants.js`, `notes.js`, `poseidon.js`
+and `tree.js`, and `circuit/js/address.js`, `babyjub.js`, `notes.js` and `seal.js`, all
+**unchanged**. Two shims make that possible, which the import map in `index.html` puts in place:
+
+- `src/shim/buffer.js`: the subset of Node's `Buffer` those files use;
+- `src/shim/node-crypto.js`: Node's synchronous `createHash` (SHA-256, SHA-512), `createHmac`,
+  `hkdfSync`, AES-256-GCM ciphers and X25519 keys, in plain JavaScript (`src/hash.js`,
+  `src/aesgcm.js`, `src/x25519.js`). WebCrypto has all of them, but only asynchronously, and
+  `circuit/js` calls them synchronously. Like `circuit/js` itself, this code is **not constant
+  time** (BigInt and table lookups); SPEC-NOTES §6 says so for the reference too.
+
+`test/shim.test.js` compares every shimmed function with Node's own on random inputs, and runs the
+indexer's vectors and all of `circuit/js/vectors.json` (RFC 7748, wallets, addresses a payer must
+refuse, sealed outputs, public notes, a whole spend) through that exact setup (no global `Buffer`,
+`node:crypto` remapped). The build keeps the repository layout (`dist/vault/`, `dist/indexer/src/`,
+`dist/circuit/js/`) so the relative imports stay valid.
 
 ## Layout
 
@@ -229,8 +265,8 @@ repository layout (`dist/vault/` and `dist/indexer/src/`) so the relative import
 | --- | --- |
 | `index.html`, `style.css` | the page |
 | `src/app.js` | UI: vault, wallet, tickers, mint, deploy, notes, settings |
-| `src/keys.js` | seed, encrypted storage, backup, note openings |
-| `src/npk.js` | **provisional** `npk` and nullifier derivations, isolated |
+| `src/keys.js` | seed, encrypted storage, backup, the vault's notes (public and received) |
+| `src/notekeys.js` | note keys, address, scanning, nullifiers: `circuit/js`, nothing of its own |
 | `src/sync.js`, `src/tree.js`, `src/cache.js` | private sync: local tree, paths, spends, IndexedDB cache |
 | `src/mint.js` | MINT pre-flight checks, coin selection, transaction and PSBT |
 | `src/deploy.js` | checks the indexer's mint terms against the DEPLOY transaction, or SH20's against the profile |
@@ -240,8 +276,9 @@ repository layout (`dist/vault/` and `dist/indexer/src/`) so the relative import
 | `src/btc.js` | addresses, transactions, PSBT v0, finalization, size estimates |
 | `src/wallets.js` | Xverse, UniSat, Leather adapters (injected providers, no SDK) |
 | `src/api.js` | indexer API and Esplora clients |
-| `src/hash.js`, `src/bytes.js`, `src/fr.js` | SHA-256, RIPEMD-160, bytes, field elements |
-| `src/sh20.js`, `src/shim/` | the reused indexer modules and their browser shims |
+| `src/hash.js`, `src/bytes.js`, `src/fr.js` | SHA-256, RIPEMD-160, SHA-512, HMAC, HKDF, bytes, field elements |
+| `src/aesgcm.js`, `src/x25519.js` | AES-256-GCM and X25519, synchronous, for the `node:crypto` shim |
+| `src/sh20.js`, `src/shim/` | the reused indexer and `circuit/js` modules and their browser shims |
 | `build.js` | the site's file set; `npm run build` writes `dist/` |
 | `release.js`, `tools/pack.js` | reproducible release: tar, SHA-256, IPFS CID, `RELEASES.md` |
 | `dev/` | dev server (real indexer API, mock Esplora) and the headless-Chrome end-to-end run |
@@ -252,6 +289,8 @@ repository layout (`dist/vault/` and `dist/indexer/src/`) so the relative import
   November 2026), and the flow is tested with a fake UniSat only. A first signet mint with each
   real wallet is the next step.
 - A real signet broadcast, and the vault against `follow.js` on a live chain.
+- Receiving a real sealed note: scanning is tested on the vectors and on a spend made with the
+  indexer's mock verifier; the vault cannot send one itself yet.
 
 ## License
 

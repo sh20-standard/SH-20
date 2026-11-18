@@ -10,10 +10,9 @@ import { planDeploy } from './deploy-plan.js';
 import { crossCheck, TERMS, profileOf } from './consensus.js';
 import { finalizePsbt, sameUnsignedTx, scriptType, addressToScript } from './btc.js';
 import { frHex } from './fr.js';
-import { NPK_SCHEME } from './npk.js';
 import { Sync } from './sync.js';
 import { defaultCache } from './cache.js';
-import { PAY_MODE, noteLeaf, tickerT } from './sh20.js';
+import { PAY_MODE, PUBLIC_RHO, MINT_BATCH_MAX, noteLeaf, tickerT } from './sh20.js';
 import { toHex } from './bytes.js';
 
 if (window.top !== window.self) {
@@ -114,7 +113,7 @@ function staticWarnings() {
     w.push(`Using servers from the link, not your saved settings: ${Object.entries(urlServers).map(([k, v]) => `${k} ${v}`).join(', ')}. Check the price and outputs before signing.`);
   }
   if (!window.isSecureContext) w.push('Not a secure context: passphrase encryption is unavailable. Use https or localhost.');
-  w.push(`Note keys use the provisional derivation "${NPK_SCHEME}" until the spend circuit is fixed. Notes minted now are for signet testing and may not be spendable by the final circuit.`);
+  w.push('Note keys and sealing follow docs/SPEC-NOTES.md, draft v0.3, not audited yet: signet only.');
   fill('warnings', w.map((t) => h('div', { class: 'warn' }, t)));
 }
 
@@ -124,8 +123,12 @@ function renderVault() {
   if (st.vault) {
     const v = st.vault;
     fill('vault-body',
-      h('p', {}, h('span', { class: 'ok' }, 'Unlocked. '), `${v.state.next} note key(s) used, ${v.encrypted ? 'encrypted with your passphrase' : 'stored without passphrase'}.`),
+      h('p', {}, h('span', { class: 'ok' }, 'Unlocked. '), `${v.state.next} public note key(s) used, ${v.encrypted ? 'encrypted with your passphrase' : 'stored without passphrase'}.`),
+      h('p', {}, 'Your sh20 address (signet), for receiving sealed notes: '),
+      h('p', { class: 'mono', id: 'address' }, v.address),
+      v.state.obsolete?.length ? h('p', { class: 'muted' }, `${v.state.obsolete.length} note(s) made with the provisional keys of draft v0.2 are kept aside in the backup: they cannot exist on a v0.3 chain.`) : null,
       h('div', { class: 'row' },
+        h('button', { type: 'button', class: 'secondary', onclick: () => navigator.clipboard?.writeText(v.address).catch(report) }, 'Copy address'),
         h('button', { type: 'button', class: 'secondary', onclick: downloadBackup }, 'Download backup'),
         h('button', { type: 'button', class: 'secondary', onclick: () => { v.lock(); st.vault = null; renderAll(); } }, 'Lock')),
       h('p', { class: 'muted' }, 'The backup holds the seed (encrypted if you set a passphrase). A new version of this page on IPFS has a new origin and an empty storage: restore the backup there.'));
@@ -298,22 +301,32 @@ function renderMint(check, defaultFee) {
   if (!st.vault) need.push('unlock the vault');
   if (!st.wallet) need.push('connect a wallet');
   const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: String(defaultFee), class: 'narrow' });
+  // batch mint (wire v0.3): k mints in one envelope, one note of k × lim for k × price, never more than what is left
+  const most = Math.min(MINT_BATCH_MAX, Number(mintsLeft(token)));
+  const count = h('input', { type: 'number', min: '1', max: String(Math.max(1, most)), step: '1', value: '1', class: 'narrow', name: 'k' });
+  const receive = h('dd');
+  const showCount = () => {
+    const k = BigInt(Math.max(1, Math.min(most, Number(count.value) | 0)));
+    receive.textContent = `${units(token.lim * k)} ${token.ticker} (one public note${k > 1n ? `, ${k} mints` : ''}) for ${token.payMode === PAY_MODE.NONE ? 'network fees only' : sats(token.price * k)}`;
+  };
+  count.addEventListener('input', showCount);
+  showCount();
   const prep = h('button', { type: 'button', disabled: need.length > 0 }, 'Prepare transaction');
   const out = h('div');
-  prep.addEventListener('click', busy(prep, () => prepareMint(token, Number(fee.value), out)));
+  prep.addEventListener('click', busy(prep, () => prepareMint(token, Number(fee.value), Number(count.value), out)));
   fill('mint-body',
     h('dl', {},
-      h('dt', {}, 'You receive'), h('dd', {}, `${units(token.lim)} ${token.ticker} (one public note)`),
-      h('dt', {}, 'Price'), h('dd', {}, payText(token)),
+      h('dt', {}, 'You receive'), receive,
+      h('dt', {}, 'Price per mint'), h('dd', {}, payText(token)),
       h('dt', {}, 'Mints left'), h('dd', {}, units(mintsLeft(token))),
       h('dt', {}, 'Window'), h('dd', {}, `block ${token.start} to ${token.end || 'no end'}`)),
     checkNotes(check),
-    h('div', { class: 'row' }, h('label', {}, 'Fee rate (sat/vB) ', fee), prep),
+    h('div', { class: 'row' }, h('label', {}, `Mints (1 to ${Math.max(1, most)}) `, count), h('label', {}, 'Fee rate (sat/vB) ', fee), prep),
     need.length ? h('p', { class: 'muted' }, `First ${need.join(' and ')}.`) : null,
     out);
 }
 
-async function prepareMint(shown, feeRate, out) {
+async function prepareMint(shown, feeRate, k, out) {
   // ask every indexer again: the terms signed must be the ones shown, agreed on, and on chain
   const check = await crossCheck(indexers, shown.ticker);
   if (check.problems.length) throw new Error(`mint refused: ${check.problems.join('; ')}`);
@@ -327,7 +340,7 @@ async function prepareMint(shown, feeRate, out) {
   if (!utxos) utxos = await esplora.utxos(w.address);
   if (!utxos.length) throw new Error(`no UTXO at ${w.address}; get signet coins from a faucet first`);
   const opening = st.vault.opening(st.vault.state.next); // reserved only when signed
-  const m = buildMint({ token, opening, payer: w, utxos, feeRate, tipHeight: tip });
+  const m = buildMint({ token, opening, payer: w, utxos, feeRate, tipHeight: tip, k });
 
   const sign = h('button', { type: 'button' }, `Sign with ${w.adapter.name} and broadcast`);
   sign.addEventListener('click', busy(sign, () => signAndSend(token, m, opening, out)));
@@ -337,7 +350,8 @@ async function prepareMint(shown, feeRate, out) {
       h('dt', {}, 'Outputs'), h('dd', {}, m.tx.vout.map((o, i) => `#${i} ${scriptType(o.script)} ${sats(o.value)}`).join(' · ')),
       h('dt', {}, 'Size'), h('dd', {}, `≈ ${m.vsizeEstimate} vB (a plain P2TR payment is ≈ 154 vB)`),
       h('dt', {}, 'Network fee'), h('dd', {}, sats(m.fee)),
-      h('dt', {}, 'Mint price'), h('dd', {}, sats(m.price)),
+      h('dt', {}, 'You receive'), h('dd', {}, `${units(m.v)} ${token.ticker}${m.k > 1 ? ` (${m.k} mints in one note)` : ''}`),
+      h('dt', {}, 'Mint price'), h('dd', {}, token.payMode === PAY_MODE.NONE ? 'free' : m.k > 1 ? `${sats(m.price)} (${m.k} × ${sats(token.price)})` : sats(m.price)),
       h('dt', {}, 'Total'), h('dd', {}, h('strong', {}, sats(m.fee + m.price))),
       h('dt', {}, 'Terms'), h('dd', {}, source === 'genesis'
         ? `genesis token: price, payment, window and supply checked against the profile constants in this vault (start = activation block ${check.profile.activationHeight})`
@@ -345,7 +359,9 @@ async function prepareMint(shown, feeRate, out) {
       check.agreed > 1 ? [h('dt', {}, 'Indexers'), h('dd', {}, `${check.agreed} agree on these terms`)] : null,
       h('dt', {}, 'Envelope'), h('dd', {}, h('code', {}, toHex(m.envelope)))),
     checkNotes(check),
-    h('p', { class: 'muted' }, 'A mint rejected by the indexers (for example sold out by a mint in the same block) is not refunded.'),
+    h('p', { class: 'muted' }, m.k > 1
+      ? 'A mint rejected by the indexers is not refunded. If other mints in the same block leave fewer than k, the indexers give you what is left and keep the whole payment.'
+      : 'A mint rejected by the indexers (for example sold out by a mint in the same block) is not refunded.'),
     sign);
 }
 
@@ -357,16 +373,16 @@ async function signAndSend(token, m, opening, out) {
   if (!sameUnsignedTx(done.tx, m.tx)) throw new Error('the wallet changed the transaction; nothing was sent');
   const reserved = await st.vault.reserveNote();
   if (reserved.index !== opening.index) throw new Error('note index moved; prepare the transaction again');
-  await st.vault.addNote({ ...reserved, ticker: token.ticker, v: token.lim, txid: done.txid, status: 'signed' });
+  const note = await st.vault.addNote({ index: reserved.index, ticker: token.ticker, v: m.v, txid: done.txid, status: 'signed' });
   let id;
   try {
     id = await esplora.broadcast(done.hex);
   } catch (e) {
-    await st.vault.updateNote(reserved.index, { status: 'broadcast failed' });
+    await st.vault.updateNote(note.id, { status: 'broadcast failed' });
     renderNotes();
     throw e;
   }
-  await st.vault.updateNote(reserved.index, { status: 'broadcast', txid: id });
+  await st.vault.updateNote(note.id, { status: 'broadcast', txid: id });
   out.replaceChildren(
     h('p', { class: 'ok' }, `Broadcast: ${done.vsize} vB, fee ${sats(m.fee)}.`),
     h('p', {}, h('a', { href: explorerTx(id), target: '_blank', rel: 'noopener noreferrer' }, id)));
@@ -463,7 +479,7 @@ function renderDeploy() {
     plan.problems.map((p) => h('div', { class: 'warn' }, p)),
     h('button', { type: 'button', disabled: true }, 'Sign and broadcast'),
     h('p', { class: 'muted' }, plan.proof
-      ? 'Not yet: a DEPLOY that burns SH20 is a spend, like a transfer. It waits for the circuit\'s reference keys and the ct sealing format; notes minted now use provisional keys the circuit cannot spend.'
+      ? 'Not yet: a DEPLOY that burns SH20 is a spend, like a transfer, and this vault does not prove spends yet.'
       : 'Sending a DEPLOY is not in this version of the vault.'));
 }
 
@@ -499,7 +515,7 @@ function renderNotes() {
       h('td', {}, n.pathAt ? `checked at block ${n.pathAt}` : '—'),
       h('td', {}, spentText(n)),
       h('td', {}, n.txid ? h('a', { href: explorerTx(n.txid), target: '_blank', rel: 'noopener noreferrer', class: 'mono' }, short(n.txid)) : '—'),
-      h('td', { class: 'muted' }, `#${n.index} ${n.scheme}`)))))));
+      h('td', { class: 'muted' }, n.kind === 'sealed' ? 'received, sealed' : `public #${n.index}`)))))));
 }
 
 let syncer = null;
@@ -513,29 +529,39 @@ async function getSyncer() {
   return syncer;
 }
 
-/** Recognises the vault's public notes among notes read by a sync (by npk, leaf recomputed). */
+/**
+ * Finds the vault's notes among the notes read by a sync, on the device (docs/SPEC-NOTES.md §4, §5):
+ * public notes by npk (leaf recomputed with rho = 0), sealed outputs by opening them with the
+ * viewing key (leaf checked by circuit/js). Notes are told apart by position, never by leaf.
+ */
 async function matchNotes(pub) {
   const v = st.vault;
-  const keys = v.npkWindow(20);
   let found = 0;
-  for (const n of pub) {
-    if (n.npk === null || n.ticker === null || n.v === null) continue; // OUT notes: wait for the ct format
-    const index = keys.get(frHex(n.npk));
-    if (index === undefined) continue;
-    const o = v.opening(index);
-    if (n.rho !== null && n.rho !== o.rho) continue;
-    // never trust the API's (ticker, v) alone: they must give back the leaf it put in the tree
-    const leaf = frHex(noteLeaf(tickerT(n.ticker), n.v, o.npk, o.rho));
-    if (n.leaf !== null && frHex(n.leaf) !== leaf) continue;
-    const mine = v.state.notes.find((x) => x.index === index);
-    if (mine) {
-      if (mine.leaf !== leaf) continue; // same key, other amount or ticker: not the note we minted
-      if (mine.status !== 'in tree') found++;
-      await v.updateNote(index, { status: 'in tree', pos: n.pos, ...(n.txid ? { txid: n.txid } : {}) });
-    } else {
-      await v.addNote({ ...o, ticker: n.ticker, v: n.v, txid: n.txid, status: 'in tree' });
-      await v.updateNote(index, { pos: n.pos });
-      if (v.state.next <= index) v.state.next = index + 1;
+  for (const n of pub) if (n.kind === 'OUT' && n.pkEph && n.ct && n.leaf !== null && n.pos !== null && (await v.receive(n))) found++;
+  // public notes: repeat while a match moves the window of keys to look for (a restore)
+  for (let before = -1; before !== v.state.next;) {
+    before = v.state.next;
+    const keys = await v.npkWindow({ onProgress: (d, n) => fill('sync-status', `Deriving note keys on this device: ${d} / ${n} (once per key)…`) });
+    for (const n of pub) {
+      if (n.kind === 'OUT' || n.npk === null || n.ticker === null || n.v === null || n.pos === null) continue;
+      const index = keys.get(frHex(n.npk));
+      if (index === undefined) continue;
+      // never trust the API's (ticker, v) alone: they must give back the leaf it put in the tree
+      const leaf = frHex(noteLeaf(tickerT(n.ticker), n.v, n.npk, PUBLIC_RHO));
+      if (n.leaf !== null && frHex(n.leaf) !== leaf) continue;
+      const txid = n.txid ? { txid: n.txid } : {};
+      const here = v.state.notes.find((x) => x.pos === n.pos);
+      if (here) {
+        if (here.leaf === leaf && here.status !== 'in tree') {
+          await v.updateNote(here.id, { status: 'in tree', ...txid });
+          found++;
+        }
+        continue;
+      }
+      // our own mint confirmed; its amount is the indexer's when a late batch got fewer than k mints
+      const pending = v.state.notes.find((x) => x.kind === 'public' && x.index === index && x.pos === null);
+      if (pending) await v.updateNote(pending.id, { status: 'in tree', pos: n.pos, ticker: n.ticker, v: n.v.toString(), leaf, ...txid });
+      else await v.addNote({ index, ticker: n.ticker, v: n.v, txid: n.txid, status: 'in tree', pos: n.pos });
       found++;
     }
   }
@@ -545,16 +571,17 @@ async function matchNotes(pub) {
 /** Merkle path and spent status of every owned note, from the local tree and nullifier set only. */
 async function checkOwned(s) {
   const v = st.vault;
-  for (const n of v.state.notes) {
+  for (const n of [...v.state.notes]) {
     if (n.pos === null || n.pos === undefined) continue;
     const leaf = BigInt('0x' + n.leaf);
     if (n.pos >= s.tree.size || s.tree.leaf(n.pos) !== leaf) {
-      await v.updateNote(n.index, { status: 'not in tree (reorg?)', pos: null, pathAt: null, spent: undefined });
+      if (n.kind === 'sealed') await v.dropNote(n.id); // scanning finds it again wherever it now is
+      else await v.updateNote(n.id, { status: 'not in tree (reorg?)', pos: null, pathAt: null, spent: undefined });
       continue;
     }
     s.witness(n.pos, leaf); // throws if the local path does not reach the local root
-    const at = s.spentAt(frHex(v.nullifier(n.index, leaf, n.pos)));
-    await v.updateNote(n.index, { pathAt: s.height, spent: at === undefined ? 'unknown' : at === null ? 'no' : `block ${at}` });
+    const at = s.spentAt(frHex(v.nullifier(n)));
+    await v.updateNote(n.id, { pathAt: s.height, spent: at === undefined ? 'unknown' : at === null ? 'no' : `block ${at}` });
   }
 }
 

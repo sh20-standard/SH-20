@@ -29,14 +29,14 @@ test('the vault refuses exactly the DEPLOYs the indexer rejects', () => {
   }
 });
 
-test('envelope bytes: OP_RETURN without a burn, plus the 829-byte spend with one', () => {
+test('envelope bytes (wire v0.3): OP_RETURN without a burn, plus the 824-byte spend with one', () => {
   const env = base();
   const d = { ...env, payScript: new Uint8Array(0) };
   assert.equal(deployBytes(d, { burn: false }), serializeEnvelope(env).length);
   assert.equal(deployBytes(d, { burn: false }), 56);
-  assert.equal(deployBytes(d, { burn: true }), 56 + 829, 'SPEC-WIRE §4: + 829 with a spend');
+  assert.equal(deployBytes(d, { burn: true }), 56 + 824, 'SPEC-WIRE §4: + 824 with a spend (32-byte pk_eph, no proofLen)');
   const team = { ...d, pre: 1000n, unlock: 30 };
-  assert.equal(deployBytes(team, { burn: false }), 120, 'SPEC-WIRE §4: 120 with a team opening');
+  assert.equal(deployBytes(team, { burn: false }), 88, 'SPEC-WIRE §4: 88 with a team opening (npk alone)');
 });
 
 test('a burn is paid by one or two unspent SH20 notes', () => {
@@ -58,7 +58,7 @@ test('the plan shows the burn: D SH20 with a proof in the witness, or no proof w
   assert.equal(p.burn, 1000n);
   assert.equal(p.proof, true);
   assert.equal(p.carrier, 'witness');
-  assert.equal(p.bytes, 885);
+  assert.equal(p.bytes, 880);
   assert.equal(p.inputs.pick.length, 1);
   assert.equal(p.mints, 21000n);
   const free = planDeploy(d, { nextHeight: 4, taken: ['SH20'], deployBurn: 0n, notes });

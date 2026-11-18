@@ -1,13 +1,15 @@
 // MINT: one transaction, OP_RETURN carrier (docs/SPEC-WIRE.md §3, §4, §5).
 //
-//   vout 0  OP_RETURN <"SH20" 00 02 ticker opening>     value = price if payMode 1 (burn), else 0
-//   vout 1  payScript, value = price                    only if payMode 2
+//   vout 0  OP_RETURN <"SH20" 00 02 ticker npk [k]>      value = k × price if payMode 1 (burn), else 0
+//   vout 1  payScript, value = k × price                 only if payMode 2
 //   vout n  change to the payer                          only if above dust
 //
-// payMode 1 burns the price on the envelope output itself, so a burn mint has
-// no extra output. Inputs come from the payer's address, as few as possible.
+// A batch mint (wire v0.3) asks for k mints, 2 to 10, with one more byte: one note
+// of k × lim, paid k × price. payMode 1 burns the price on the envelope output
+// itself, so a burn mint has no extra output. Inputs come from the payer's
+// address, as few as possible.
 
-import { serializeEnvelope, PAY_MODE } from './sh20.js';
+import { serializeEnvelope, PAY_MODE, MINT_BATCH_MAX } from './sh20.js';
 import {
   addressToScript, scriptType, dustLimit, opReturnScript, p2shP2wpkhRedeem, estimateVsize, createPsbt, SUPPORTED_INPUTS,
 } from './btc.js';
@@ -21,25 +23,29 @@ const SEQUENCE = 0xfffffffd; // RBF on, no relative lock
  * Reasons a MINT confirming at `nextHeight` would be rejected (rejected mints are not refunded).
  * `token` as normalised by api.js.
  */
-export function mintProblems(token, nextHeight) {
+export function mintProblems(token, nextHeight, k = 1) {
   const p = [];
   if (!token) return ['unknown ticker'];
+  if (!Number.isInteger(k) || k < 1 || k > MINT_BATCH_MAX) return [`mint 1 to ${MINT_BATCH_MAX} at once`];
   if (nextHeight < token.start) p.push(`mint opens at block ${token.start} (next block is ${nextHeight})`);
   if (token.end !== 0 && nextHeight > token.end) p.push(`mint closed at block ${token.end}`);
   const total = (token.max - token.pre) / token.lim;
   if (token.mints >= total) p.push('sold out');
+  // an indexer gives a late batch only what is left, and keeps the overpayment: never ask for more
+  else if (BigInt(k) > total - token.mints) p.push(`only ${total - token.mints} mint(s) left`);
   if (token.payMode === PAY_MODE.PAY && !token.payScript) p.push('token has payMode 2 but no payScript');
   return p;
 }
 
 export const mintsLeft = (t) => (t.max - t.pre) / t.lim - t.mints;
 
-function fixedOutputs(token, envelope) {
-  const outs = [{ value: token.payMode === PAY_MODE.BURN ? token.price : 0n, script: opReturnScript(envelope) }];
+function fixedOutputs(token, envelope, k) {
+  const price = token.price * BigInt(k);
+  const outs = [{ value: token.payMode === PAY_MODE.BURN ? price : 0n, script: opReturnScript(envelope) }];
   if (token.payMode === PAY_MODE.PAY) {
     const script = fromHex(token.payScript);
     const d = dustLimit(script);
-    outs.push({ value: token.price > d ? token.price : d, script }); // ≥ price is accepted; never below dust
+    outs.push({ value: price > d ? price : d, script }); // ≥ k × price is accepted; never below dust
   }
   return outs;
 }
@@ -79,18 +85,20 @@ export function selectCoins(utxos, fixed, inType, changeScript, feeRate) {
  * Builds the MINT transaction and its PSBT.
  * payer = { address, publicKey (hex, optional for p2wpkh) }
  * utxos = [{ txid, vout, value: bigint }] at payer.address
- * opening = { npk, rho } from the vault
+ * opening = { npk } from the vault (a public note: rho = 0)
+ * k = how many mints at once (1 to 10): one note of k × lim for k × price
  */
-export function buildMint({ token, opening, payer, utxos, feeRate, tipHeight }) {
-  const problems = mintProblems(token, tipHeight + 1);
+export function buildMint({ token, opening, payer, utxos, feeRate, tipHeight, k = 1 }) {
+  const problems = mintProblems(token, tipHeight + 1, k);
   if (problems.length) throw new Error(problems.join('; '));
   if (!(feeRate > 0) || feeRate > MAX_FEE_RATE) throw new Error(`fee rate must be between 0 and ${MAX_FEE_RATE} sat/vB`);
   const payScript = addressToScript(payer.address);
   const inType = scriptType(payScript);
   if (!SUPPORTED_INPUTS.includes(inType)) throw new Error(`pay from a native segwit, nested segwit or taproot address, not ${inType}`);
 
-  const envelope = serializeEnvelope({ type: 'MINT', ticker: token.ticker, npk: opening.npk, rho: opening.rho });
-  const fixed = fixedOutputs(token, envelope);
+  // 42 bytes: npk alone, rho = 0 (v0.3); 43 with the count byte when k > 1
+  const envelope = serializeEnvelope({ type: 'MINT', ticker: token.ticker, npk: opening.npk, k });
+  const fixed = fixedOutputs(token, envelope, k);
   const { picked, change, fee } = selectCoins(utxos, fixed, inType, payScript, feeRate);
 
   const tx = {
@@ -115,6 +123,8 @@ export function buildMint({ token, opening, payer, utxos, feeRate, tipHeight }) 
     tx,
     psbt: createPsbt(tx, meta),
     envelope,
+    k,
+    v: token.lim * BigInt(k), // the note's amount
     fee,
     vsizeEstimate: estimateVsize(picked.map(() => inType), tx.vout.map((o) => o.script)),
     price: token.payMode === PAY_MODE.NONE ? 0n : fixed[token.payMode === PAY_MODE.BURN ? 0 : 1].value,

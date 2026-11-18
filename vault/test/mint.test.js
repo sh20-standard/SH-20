@@ -49,8 +49,8 @@ for (const [label, over, payer] of [
     const opening = noteOpening(seed, 0);
     const m = buildMint({ token, opening, payer, utxos: [utxo(3000n, 0), utxo(100000n, 1), utxo(20000n, 2)], feeRate: 2, tipHeight: c.next - 1 });
 
-    // the envelope is the 74-byte MINT and parses back with the indexer codec
-    assert.equal(m.envelope.length, 74);
+    // the envelope is the 42-byte MINT of wire v0.3 (npk alone) and parses back with the indexer codec
+    assert.equal(m.envelope.length, 42);
     assert.equal(parseEnvelope(Buffer.from(m.envelope)).env.npk, opening.npk);
     assert.equal(m.tx.vin.length, 1, 'one input');
 
@@ -61,7 +61,7 @@ for (const [label, over, payer] of [
     assert.deepEqual(r.rejected, []);
     assert.equal(r.events[0].type, 'MINT');
     assert.equal(parseEnvelope(Buffer.from(m.envelope)).env.ticker, 'GENE', 'the MINT names its token by ticker');
-    const leaf = noteLeaf(tickerT('GENE'), token.lim, opening.npk, opening.rho);
+    const leaf = noteLeaf(tickerT('GENE'), token.lim, opening.npk, 0n);
     assert.equal(idx.tree.leaves[r.events[0].pos], leaf);
 
     const outs = m.tx.vout.reduce((s, o) => s + o.value, 0n);
@@ -109,4 +109,39 @@ test('fee rate above the hard cap is refused', () => {
   const { idx, c } = setup({});
   const t = normToken(idx.token('GENE'));
   assert.throws(() => buildMint({ token: t, opening: noteOpening(seed, 0), payer: { address: WPKH }, utxos: [utxo(10n ** 8n)], feeRate: 5000, tipHeight: c.next }), /fee rate must be between/);
+});
+
+test('batch MINT (wire v0.3): k mints in a 43-byte envelope, paid k × price, one note of k × lim', () => {
+  for (const [over, payer] of [
+    [{ payMode: 1, price: 1000n }, { address: TR, publicKey: PUB }],
+    [{ payMode: 2, price: 5000n, payScript: Buffer.from('0014' + '66'.repeat(20), 'hex') }, { address: WPKH }],
+    [{ payMode: 0, price: 0n }, { address: TR, publicKey: PUB }],
+  ]) {
+    const { idx, c } = setup(over);
+    const token = normToken(idx.token('GENE'));
+    const opening = noteOpening(seed, 0);
+    const m = buildMint({ token, opening, payer, utxos: [utxo(100000n, 1)], feeRate: 2, tipHeight: c.next - 1, k: 3 });
+    assert.equal(m.envelope.length, 43);
+    assert.equal(parseEnvelope(Buffer.from(m.envelope)).env.k, 3);
+    assert.equal(m.price, over.payMode === 0 ? 0n : 3n * over.price);
+    assert.equal(m.v, 3000n);
+    const witnesses = fakeSign(m.psbt, scriptType(addressToScript(payer.address)));
+    m.tx.vin.forEach((i, j) => { i.witness = witnesses[j]; });
+    const r = c.block(toIndexerTx(m.tx));
+    assert.deepEqual(r.rejected, [], `payMode ${over.payMode}`);
+    assert.equal(r.events[0].v, 3000n);
+    assert.equal(idx.tree.leaves[r.events[0].pos], noteLeaf(tickerT('GENE'), 3000n, opening.npk, 0n));
+    assert.equal(idx.token('GENE').mints, 3n);
+  }
+});
+
+test('batch MINT: never more than 10, nor more than what is left (an indexer keeps the overpayment)', () => {
+  const { idx, c } = setup({ max: 5000n, lim: 1000n, payMode: 1, price: 1000n });
+  const t = normToken(idx.token('GENE'));
+  const args = { token: t, opening: noteOpening(seed, 0), payer: { address: WPKH }, utxos: [utxo(10n ** 6n)], feeRate: 1, tipHeight: c.next - 1 };
+  assert.throws(() => buildMint({ ...args, k: 6 }), /only 5 mint\(s\) left/);
+  assert.throws(() => buildMint({ ...args, k: 11 }), /1 to 10/);
+  assert.throws(() => buildMint({ ...args, k: 0 }), /1 to 10/);
+  assert.equal(buildMint({ ...args, k: 5 }).price, 5000n);
+  assert.equal(buildMint({ ...args, k: 1 }).envelope.length, 42, 'one mint has no count byte');
 });

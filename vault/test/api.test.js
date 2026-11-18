@@ -27,8 +27,8 @@ test('tokens: decimal strings become bigints', async () => {
 
 test('notes: follows pages until total, reads kind / t / leaf, skips nothing', async () => {
   const all = Array.from({ length: 7 }, (_, i) => (i % 2
-    ? { pos: i, height: 3, txid: 'aa'.repeat(32), leaf: i.toString(16).padStart(64, '0'), kind: 'OUT', j: 0, pkEph: '02' + '11'.repeat(32), ct: '00'.repeat(28) }
-    : { pos: i, height: 2, txid: 'bb'.repeat(32), leaf: i.toString(16).padStart(64, '0'), kind: 'MINT', ticker: 'GENE', v: '1000', npk: 'ff'.repeat(31) + '00', rho: '01'.repeat(32) }));
+    ? { pos: i, height: 3, txid: 'aa'.repeat(32), leaf: i.toString(16).padStart(64, '0'), kind: 'OUT', j: 0, pkEph: '11'.repeat(32), ct: '00'.repeat(28) }
+    : { pos: i, height: 2, txid: 'bb'.repeat(32), leaf: i.toString(16).padStart(64, '0'), kind: 'MINT', ticker: 'GENE', v: '1000', npk: 'ff'.repeat(31) + '00' }));
   const calls = fakeFetch((u) => {
     if (u.pathname !== '/notes') return undefined;
     const from = Number(u.searchParams.get('from'));
@@ -41,6 +41,9 @@ test('notes: follows pages until total, reads kind / t / leaf, skips nothing', a
   assert.equal(notes[0].ticker, 'GENE');
   assert.equal(notes[0].v, 1000n);
   assert.equal(notes[1].npk, null, 'OUT notes have no public opening');
+  assert.equal(notes[1].pkEph.length, 32, 'OUT notes carry their sealed output: a 32-byte X25519 pk_eph');
+  assert.equal(notes[1].ct.length, 28);
+  assert.equal(notes[0].pkEph, null);
   assert.equal(notes[6].leaf, 6n);
 });
 
