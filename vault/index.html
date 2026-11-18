@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-7rTJLdhU6/Z/XuAxl7sUPfc679tsaXSwHKVEJbBV3yI=' chrome-extension: moz-extension:; style-src 'self'; img-src 'self' data:; connect-src https: http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>SH-20 Vault</title>
+<link rel="stylesheet" href="./style.css">
+<script type="importmap">{"imports":{"node:crypto":"./src/shim/node-crypto.js"}}</script>
+<script type="module" src="./src/app.js"></script>
+</head>
+<body>
+<header>
+  <h1>SH-20 Vault <span class="tag">signet · draft v0.2</span></h1>
+  <p id="indexer-status" class="muted">Indexer: not connected</p>
+</header>
+
+<div id="warnings"></div>
+
+<main>
+  <section id="vault">
+    <h2>Vault</h2>
+    <div id="vault-body"></div>
+  </section>
+
+  <section id="wallet">
+    <h2>Bitcoin wallet</h2>
+    <p class="muted">Pays the mint and the fee. The vault builds the transaction; the wallet only signs it.</p>
+    <div id="wallet-body"></div>
+  </section>
+
+  <section id="tokens">
+    <h2>Tickers <button id="refresh" type="button" class="small">Refresh</button></h2>
+    <div id="tokens-body"><p class="muted">Loading…</p></div>
+  </section>
+
+  <section id="mint" hidden>
+    <h2>Mint <span id="mint-ticker"></span></h2>
+    <div id="mint-body"></div>
+  </section>
+
+  <section id="notes">
+    <h2>My notes <button id="scan" type="button" class="small">Check indexer</button></h2>
+    <div id="notes-body"></div>
+  </section>
+
+  <section id="settings">
+    <h2>Settings</h2>
+    <form id="settings-form">
+      <label>Indexer APIs, one per line (the first lists tickers and notes; all are compared before a mint)
+        <textarea name="indexer" rows="3" required spellcheck="false"></textarea></label>
+      <label>Esplora API <input name="esplora" type="url" required></label>
+      <button type="submit">Save</button>
+    </form>
+    <p class="muted">Any honest SH-20 indexer and any Esplora server work. Nothing secret is ever sent to them. Several independent indexers let the vault refuse a mint when they disagree; with one, it is trusted for which DEPLOY of a ticker came first.</p>
+  </section>
+</main>
+
+<footer class="muted">Static page: no server of ours, keys stay on this device. MIT.</footer>
+</body>
+</html>
