@@ -36,13 +36,15 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `indexer/` | reference indexer, Node ≥ 20, zero dependencies |
 | `indexer/vectors/v0.2.json` | deterministic vectors for a second implementation |
 | `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` (for the vault and relayers) |
+| `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
+| `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
 | `circuit/` | the spend circuit: PLONK prover and verifier in Rust, WebAssembly build, measurements ([`circuit/README.md`](circuit/README.md)) |
 | `circuit/circom/` | the same relation in circom, used only to cross-check the Rust circuit |
 | `circuit/web/` | the phone test page, and the host side of the threaded WebAssembly prover |
 
 ```sh
 cd indexer
-npm test            # 44 tests (4 need the verifier module below and are skipped without it)
+npm test            # 46 tests (4 need the verifier module below and are skipped without it)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
@@ -63,6 +65,7 @@ Done in `indexer/`:
 - State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest.
 - Poseidon over BN254 written from scratch (constants generated with the Grain LFSR, matches circomlib's `poseidon([1,2])`), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
 - Live chain follower (Bitcoin Core RPC or Esplora, reorgs with 288 blocks of undo) and a read-only HTTP API with a per-leaf note log for wallets (`docs/API.md`).
+- Explorer (`explorer/index.html`): a block explorer in one static page with no dependency; reads any indexer; demo data built from real indexer output.
 - Proof verification is an interface (`verifier.verifySpend`). **The default verifier still rejects every spend.**
   `src/adapters/plonk.js` is the real one: the WebAssembly build of `circuit/`, keyed by the pinned verifying-key digest.
   `test/plonk.test.js` replays a chain with a real TRANSFER and a real BURN. `bin/follow.js` and `bin/replay.js` take it with `--verifier <wasm>`; without the flag they reject every spend.
@@ -84,8 +87,9 @@ Done in `circuit/` (2026-11-18):
 - Checks: 26 adversarial witnesses, every variable pinned by a gate, circomlib's statement of the relation accepts the
   witnesses, and snarkjs both ways: its verifier accepts our proofs, our verifier accepts its proofs (`bench/cross-check.sh`).
 
-Not done: an audit; the figures on a real phone (the page exists, nobody has run it on one yet); the `ct` sealing
-format; a live chain follower (Bitcoin Core RPC / Esplora); the browser vault; a relayer; a second independent indexer; the
+Not done: an audit; the figures on a real phone (the page exists and was measured on a laptop browser: 4.5 s on 10 threads,
+25.5 s on one; nobody has run it on a phone yet); the `ct` sealing format; transfers in the vault (it mints and syncs privately
+today); a relayer; a second independent indexer; the
 profile constants (activation height, `D`); the canonical event encoding inside the digest.
 
 ## Next task: the phone figures, then the vault
@@ -167,8 +171,10 @@ SH-20's edge: ticker hidden, unique tickers, private by default from the mint, B
 
 ## Open decisions (ask the maintainer)
 
-Final name and 4-byte magic · value of `D` (genesis burn per DEPLOY) or no burn · ticker length (4 only, or 5–12) ·
-genesis team allocation (zero or small) · several envelopes per transaction · exact event encoding in the digest.
+Final name and 4-byte magic · value of `D` (SH20 burned per DEPLOY) or no burn · ticker length (4 only, or 5–12) ·
+several envelopes per transaction · exact event encoding in the digest.
 
+Decided by the maintainer: the genesis token is **SH20**, fixed in the activation profile (no DEPLOY, no race):
+21,000,000 max, 1,000 per mint, free mint (network fees only), no team allocation.
 Decided (2026-11-18): PLONK-KZG is the proof system (hard requirement 4). Three outputs stay; the third pays a relayer in
 tokens. `proofLen` is left alone in the circuit work: the indexer work removes it afterwards.

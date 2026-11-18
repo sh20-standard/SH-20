@@ -13,23 +13,26 @@ const reasons = (r) => r.rejected.map((x) => x.reason);
 
 function setup(profile = {}) {
   const verifier = mockVerifier();
-  const ix = new Indexer({ profile: { activationHeight: 1, ...profile }, verifier });
+  const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n, ...profile }, verifier });
   const c = chain(ix);
   return { ix, c, verifier };
 }
 
-test('genesis DEPLOY, then paid mints; unpaid, early and duplicate are rejected', () => {
+test('SH20 exists from activation, free to mint; a DEPLOY adds paid mints; unpaid, early and duplicate are rejected', () => {
   const { ix, c } = setup();
-  const b1 = c.block(tx({ env: deployEnv() }), mint('GENE'), tx({ env: deployEnv() }));
-  assert.equal(ix.genesis, 'GENE');
+  const b1 = c.block(tx({ env: deployEnv() }), mint('GENE'), tx({ env: deployEnv() }), mint('SH20', 0n), tx({ env: deployEnv({ ticker: 'SH20' }) }));
+  assert.equal(b1.events[0].type, 'GENESIS');
+  assert.equal(ix.genesis, 'SH20');
+  const g = ix.token('SH20');
+  assert.deepEqual([g.max, g.lim, g.pre, g.price, g.payMode, g.mints, g.deployTxid], [21000000n, 1000n, 0n, 0n, 0, 1n, null]);
   assert.equal(ix.token('GENE').t, 0x47454e45n);
-  assert.deepEqual(reasons(b1), ['mint not open yet', 'ticker already deployed']);
+  assert.deepEqual(reasons(b1), ['mint not open yet', 'ticker already deployed', 'ticker already deployed']);
 
   const o = opening();
   const b2 = c.block(mint('GENE', 1000n, o), mint('GENE', 999n));
   assert.deepEqual(reasons(b2), ['mint not paid']);
   assert.equal(ix.token('GENE').mints, 1n);
-  assert.equal(ix.tree.leaves[0], noteLeaf(G, 1000n, o.npk, o.rho));
+  assert.equal(ix.tree.leaves[1], noteLeaf(G, 1000n, o.npk, o.rho));
   assert.equal(b2.root, ix.tree.root);
 });
 
@@ -73,22 +76,25 @@ test('team allocation enters the tree at the unlock block, not before', () => {
   assert.equal(ix.tree.leaves[0], noteLeaf(G, 1000000n, team.npk, team.rho));
 });
 
-test('non-genesis DEPLOY must burn D genesis units through a proof', () => {
+test('with D > 0 every DEPLOY burns D SH20 through a proof; with D = 0 it carries none', () => {
   const { ix, c, verifier } = setup({ deployBurn: 1000n });
-  c.block(tx({ env: deployEnv() }));
-  c.block(mint('GENE'));
-  const b3 = c.block(
+  c.block(mint('SH20', 0n));
+  const b2 = c.block(
     tx({ env: deployEnv({ ticker: 'NOPE', start: 4, unlock: 4 }) }),
-    tx({ env: deployEnv({ ticker: 'TWO2', start: 4, unlock: 4, spend: spend(2) }), carrier: 'witness' }),
+    tx({ env: deployEnv({ ticker: 'TWO2', start: 4, unlock: 4, spend: spend(1) }), carrier: 'witness' }),
   );
-  assert.deepEqual(reasons(b3), ['DEPLOY must burn genesis units']);
-  assert.equal(ix.genesis, 'GENE');
+  assert.deepEqual(reasons(b2), ['DEPLOY must burn genesis units']);
   assert.equal(ix.token('TWO2').t, tickerT('TWO2'));
-  assert.equal(ix.token('GENE').burned, 1000n);
+  assert.equal(ix.token('SH20').burned, 1000n);
   const call = verifier.calls.at(-1);
   assert.equal(call.vPub, 1000n);
-  assert.equal(call.tPub, G);
-  assert.equal(call.root, ix.roots.get(2));
+  assert.equal(call.tPub, tickerT('SH20'));
+  assert.equal(call.root, ix.roots.get(1));
+
+  const free = setup();
+  free.c.block();
+  const b = free.c.block(tx({ env: deployEnv({ ticker: 'WITH', start: 4, unlock: 4, spend: spend(1) }), carrier: 'witness' }));
+  assert.deepEqual(reasons(b), ['DEPLOY carries no burn when D = 0']);
 });
 
 test('TRANSFER: anchor window, nullifiers, proof', () => {
@@ -179,8 +185,8 @@ test('LIST needs a P2TR lock of at least 330 sats', () => {
 test('the default verifier accepts no proof at all', () => {
   const ix = new Indexer({ profile: { activationHeight: 1 } });
   const c = chain(ix);
-  c.block(tx({ env: deployEnv() }));
-  c.block(mint('GENE'));
+  c.block(mint('SH20', 0n));
+  c.block();
   const b = c.block(tx({ env: { type: 'TRANSFER', spend: spend(2) }, carrier: 'witness' }));
   assert.deepEqual(reasons(b), ['invalid proof']);
 });
@@ -197,7 +203,7 @@ test('a MINT names its ticker: an unknown ticker is rejected, two tokens never m
   const { ix, c } = setup();
   c.block(tx({ env: deployEnv() }));
   c.block(mint('GENE'));
-  c.block(tx({ env: deployEnv({ ticker: 'TWO2', start: 5, unlock: 5, spend: spend(2) }), carrier: 'witness' }));
+  c.block(tx({ env: deployEnv({ ticker: 'TWO2', start: 5, unlock: 5 }) }));
   c.block();
   const o = opening();
   const b = c.block(mint('NONE'), mint('TWO2', 1000n, o));

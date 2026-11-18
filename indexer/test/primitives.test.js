@@ -40,3 +40,12 @@ test('note tree: paths recompute the root', () => {
   assert.equal(t.root, snap.root);
   assert.equal(t.size, 5);
 });
+
+test('sibling index stays right past 2^31 (no 32-bit bitwise ops in the tree)', async () => {
+  const { siblingIndex } = await import('../src/tree.js');
+  assert.equal(siblingIndex(0), 1);
+  assert.equal(siblingIndex(7), 6);
+  assert.equal(siblingIndex(2 ** 31), 2 ** 31 + 1);
+  assert.equal(siblingIndex(2 ** 32 - 1), 2 ** 32 - 2);
+  assert.notEqual(2 ** 31 ^ 1, 2 ** 31 + 1);
+});
