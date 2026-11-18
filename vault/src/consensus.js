@@ -9,7 +9,20 @@
 
 // Fixed at DEPLOY (plus where the indexer says it is): must be identical everywhere.
 // mints and burned change every block, so they are not compared.
-export const TERMS = ['ticker', 't', 'max', 'lim', 'pre', 'start', 'end', 'unlock', 'price', 'payMode', 'payScript', 'deployTxid', 'deployHeight'];
+export const TERMS = ['ticker', 't', 'max', 'lim', 'pre', 'start', 'end', 'unlock', 'price', 'payMode', 'payScript', 'deployTxid', 'deployHeight', 'genesis'];
+// Profile constants from /status: the genesis token's start is the activation height,
+// and every DEPLOY burns deployBurn SH20. Indexers on the same profile report the same.
+export const PROFILE = ['activationHeight', 'deployBurn', 'genesis'];
+
+/** The profile an indexer reports, with deployBurn as a bigint (null when absent). */
+export function profileOf(status) {
+  const n = (x) => (x === undefined || x === null || x === '' ? null : x);
+  return {
+    activationHeight: Number.isInteger(status?.activationHeight) ? status.activationHeight : null,
+    deployBurn: n(status?.deployBurn) === null ? null : BigInt(status.deployBurn),
+    genesis: n(status?.genesis),
+  };
+}
 
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -26,7 +39,7 @@ async function ask(api, ticker) {
 
 /**
  * @param apis    IndexerApi instances, primary first
- * @returns { token, agreed, problems, warnings }: `problems` must refuse the mint;
+ * @returns { token, profile, agreed, problems, warnings }: `problems` must refuse the mint;
  *          `agreed` = how many indexers gave the same answer.
  */
 export async function crossCheck(apis, ticker, { retries = 2, delayMs = 1500, sleep = sleepMs } = {}) {
@@ -41,6 +54,12 @@ export async function crossCheck(apis, ticker, { retries = 2, delayMs = 1500, sl
     for (const r of ok) if (r.status.network && r.status.network !== 'signet') problems.push(`${r.base} follows ${r.status.network}, not signet`);
 
     const ref = ok[0];
+    const profile = profileOf(ref.status);
+    for (const r of ok.slice(1)) {
+      const p = profileOf(r.status);
+      const diff = PROFILE.filter((k) => String(p[k]) !== String(profile[k]));
+      if (diff.length) problems.push(`${r.base} and ${ref.base} follow different profiles: ${diff.map((k) => `${k} ${p[k]} ≠ ${profile[k]}`).join(', ')}`);
+    }
     if (!ref.token && ok.every((r) => !r.token)) throw new Error(`unknown ticker ${ticker}`);
     for (const r of ok.slice(1)) {
       if (!r.token !== !ref.token) {
@@ -65,6 +84,6 @@ export async function crossCheck(apis, ticker, { retries = 2, delayMs = 1500, sl
     if (down.length) warnings.push(`unreachable, not compared: ${down.join(', ')}`);
     if (ok.length === 1) warnings.push('only one indexer answered: which DEPLOY of this ticker came first is not cross-checked. Add independent indexers in Settings.');
 
-    return { token: ref.token, agreed: problems.length ? 0 : ok.length, problems, warnings };
+    return { token: ref.token, profile, agreed: problems.length ? 0 : ok.length, problems, warnings };
   }
 }

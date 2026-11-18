@@ -9,8 +9,12 @@
 // the indexer enters the mint. What it cannot see is which DEPLOY of a ticker
 // came first (a later, rejected one can be named): that needs the whole history,
 // so the vault compares several independent indexers (consensus.js).
+//
+// The genesis token SH20 has no DEPLOY: its terms are profile constants, and the
+// vault checks them against its own copy (profile.js).
 
 import { extractEnvelope, parseEnvelope, tickerT } from './sh20.js';
+import { GENESIS, ACTIVATION_HEIGHT } from './profile.js';
 import { parseTx, txid as txidOf } from './btc.js';
 import { fromHex, toHex } from './bytes.js';
 
@@ -55,6 +59,44 @@ export function deployMismatches(token, rawHex, height) {
     out.push(`deploy height: chain says ${height}, indexer says ${token.deployHeight}`);
   }
   return out;
+}
+
+/**
+ * Compares the indexer's genesis token with the profile constants. `activationHeight`
+ * is what the indexers report (agreed by consensus.js) unless profile.js fixes it.
+ */
+export function genesisMismatches(token, activationHeight) {
+  if (token.ticker !== GENESIS.ticker) return [`only ${GENESIS.ticker} is a genesis token; ${token.ticker} needs a DEPLOY`];
+  if (!Number.isInteger(activationHeight)) return ['the activation height is unknown'];
+  if (ACTIVATION_HEIGHT !== null && activationHeight !== ACTIVATION_HEIGHT) {
+    return [`activation height: the vault has ${ACTIVATION_HEIGHT}, indexer says ${activationHeight}`];
+  }
+  const out = [];
+  if (token.genesis !== true) out.push('the indexer does not mark it as the genesis token');
+  if (token.deployTxid !== null) out.push(`the genesis token has no DEPLOY, indexer names ${token.deployTxid}`);
+  if (token.t !== null && token.t !== undefined && BigInt(token.t) !== tickerT(GENESIS.ticker)) out.push(`t: the ticker gives ${tickerT(GENESIS.ticker)}, indexer says ${token.t}`);
+  const want = { ...GENESIS, start: activationHeight };
+  for (const k of ['max', 'lim', 'pre', 'start', 'end', 'price', 'payMode', 'payScript']) {
+    const a = String(want[k]);
+    const b = String(token[k]);
+    if (a !== b) out.push(`${k}: profile says ${a || '(empty)'}, indexer says ${b || '(empty)'}`);
+  }
+  return out;
+}
+
+/**
+ * Throws unless the token's mint terms are the chain's: the DEPLOY transaction for
+ * a deployed token, the profile constants for SH20. A token the indexer calls
+ * genesis but is not SH20, or SH20 shown with a DEPLOY, is refused.
+ */
+export async function verifyMintTerms(esplora, token, { activationHeight } = {}) {
+  if (token.ticker === GENESIS.ticker || token.genesis) {
+    const bad = genesisMismatches(token, activationHeight);
+    if (bad.length) throw new Error(`refusing to mint ${token.ticker}: the indexer disagrees with the genesis profile (${bad.join('; ')})`);
+    return 'genesis';
+  }
+  await verifyDeploy(esplora, token);
+  return 'deploy';
 }
 
 /** Fetches deployTxid from Esplora and throws if the indexer's terms are not the chain's. */
