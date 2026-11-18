@@ -1,56 +1,51 @@
-//! Proofs of the spend relation end to end. These use the Hermez SRS when it has been extracted
-//! (`sh20-circuit srs <ptau> build/hermez-pot18-2p17.srs`, or SH20_SRS=<file>), and then also check
-//! the pinned verifying-key digest; otherwise a throwaway SRS with a known τ.
+//! Proofs of the spend relation end to end, with the shipped proving key (artifacts/spend.pk).
 
-use ark_bn254::{Fr, G1Projective, G2Affine};
-use ark_ec::{AffineRepr, CurveGroup, PrimeGroup, ScalarMul};
+use ark_bn254::Fr;
 use ark_ff::{One, Zero};
 use rand_core::OsRng;
-use sh20_circuit::{fixture, keygen, plonk, prove, spend, srs_size, verify, ProvingKey, Srs, SpendWitness, PROOF_BYTES, SRS_SHA256, VK_DIGEST};
+use sh20_circuit::{fixture, keygen, load_key, plonk, prove, spend, srs_size, verify, ProvingKey, SpendWitness, PK_SHA256, PROOF_BYTES, VK_DIGEST};
 use std::sync::OnceLock;
 
-fn hermez_srs() -> Option<Srs> {
-    let path = std::env::var("SH20_SRS").unwrap_or_else(|_| format!("{}/build/hermez-pot18-2p17.srs", env!("CARGO_MANIFEST_DIR")));
-    let bytes = std::fs::read(path).ok()?;
-    assert_eq!(hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes)), SRS_SHA256, "not the pinned SRS");
-    Some(Srs::from_bytes(&bytes).expect("SRS file"))
+fn shipped() -> Vec<u8> {
+    std::fs::read(format!("{}/artifacts/spend.pk", env!("CARGO_MANIFEST_DIR"))).expect("artifacts/spend.pk")
 }
 
-fn throwaway_srs(count: usize) -> Srs {
-    let tau = Fr::from(0x5348_3230_7465_7374u64);
-    let mut powers = Vec::with_capacity(count);
-    let mut acc = Fr::one();
-    for _ in 0..count {
-        powers.push(acc);
-        acc *= tau;
-    }
-    Srs { g1: G1Projective::generator().batch_mul(&powers), g2_tau: (G2Affine::generator() * tau).into_affine() }
+fn keys() -> &'static ProvingKey {
+    static K: OnceLock<ProvingKey> = OnceLock::new();
+    K.get_or_init(|| load_key(&shipped()).unwrap())
 }
 
-/// (keys, whether they come from the Hermez SRS)
-fn keys() -> &'static (ProvingKey, bool) {
-    static K: OnceLock<(ProvingKey, bool)> = OnceLock::new();
-    K.get_or_init(|| match hermez_srs() {
-        Some(srs) => (keygen(&srs).unwrap(), true),
-        None => (keygen(&throwaway_srs(srs_size())).unwrap(), false),
-    })
+/// The shipped key is exactly what key generation computes from its SRS, and its SRS is a
+/// consistent sequence of powers. (That the powers are the Hermez ones is checked by rebuilding the
+/// file from the pinned ptau: `sh20-circuit srs`, then `sh20-circuit pk`.)
+#[test]
+fn shipped_key_is_reproducible() {
+    let bytes = shipped();
+    assert_eq!(hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes)), PK_SHA256);
+    let pk = keys();
+    assert_eq!(hex::encode(pk.vk.digest()), VK_DIGEST);
+    assert_eq!(pk.vk.to_bytes(), std::fs::read(format!("{}/artifacts/spend.vk", env!("CARGO_MANIFEST_DIR"))).unwrap());
+
+    let srs = pk.srs();
+    assert_eq!(srs.g1.len(), srs_size());
+    srs.check().unwrap();
+    let fresh = keygen(&srs).unwrap();
+    assert_eq!(fresh.vk, pk.vk);
+    assert_eq!(fresh.to_bytes(), bytes);
 }
 
 #[test]
-fn pinned_verifying_key() {
-    let (pk, hermez) = keys();
-    if !*hermez {
-        eprintln!("skipped: extract the Hermez SRS to check the pinned verifying-key digest");
-        return;
-    }
-    assert_eq!(hex::encode(pk.vk.digest()), VK_DIGEST);
-    // key generation is deterministic
-    assert_eq!(keygen(&hermez_srs().unwrap()).unwrap().vk, pk.vk);
+fn a_key_file_that_is_not_the_pinned_one_is_refused() {
+    let mut bytes = shipped();
+    *bytes.last_mut().unwrap() ^= 1;
+    assert!(load_key(&bytes).is_err());
+    assert!(load_key(&bytes[..bytes.len() - 64]).is_err());
+    assert!(load_key(b"SH20PK01").is_err());
 }
 
 #[test]
 fn transfer_burn_and_dummies_prove_and_verify() {
-    let (pk, _) = keys();
+    let pk = keys();
     let rng = &mut OsRng;
     let cases = [fixture::transfer(rng), fixture::spend(rng, fixture::gene(), [600, 400], [100, 0, 0], 900, fixture::gene(), 2), fixture::spend(rng, fixture::gene(), [1000, 0], [999, 1, 0], 0, 0, 3)];
     for w in &cases {
@@ -82,7 +77,7 @@ fn transfer_burn_and_dummies_prove_and_verify() {
 
 #[test]
 fn rejected_witnesses_have_no_proof() {
-    let (pk, _) = keys();
+    let pk = keys();
     let rng = &mut OsRng;
     let good = fixture::transfer(rng);
     let mut inflated = good.clone();

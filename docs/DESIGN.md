@@ -89,9 +89,10 @@ opens every column, so its proof cannot go below about 800 bytes here. snarkjs' 
 obstacle, not the protocol: `circuit/` implements the same protocol in Rust, and snarkjs' verifier
 accepts its proofs, which gives the standard two independent verifiers.
 
-The price is proving work: 8.6 s on one thread against 2.8 s for Tacit's Halo2 circuit, and 22 s in
-single-thread WebAssembly. Proving time only affects transfers, burns and listings, never the mint.
-It has not been measured on a phone yet.
+The price is proving work: 9.6 s on one thread against 2.8 s for Tacit's Halo2 circuit. In a browser the
+prover takes 25 s on one thread and 7 s on four (WebAssembly threads, measured on a laptop), with a
+proving key that is shipped rather than generated on the device. Proving time only affects transfers, burns
+and listings, never the mint. It has not been measured on a phone yet; `circuit/web/` is the page for that.
 
 The relation follows Tacit's shielded pool (MIT) with the ticker made private, SH-20's note leaf and no
 transparent boundary. Notes per proof: 2 in, 3 out (the recipient, the change, and a relayer's fee in tokens).
