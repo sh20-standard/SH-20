@@ -21,6 +21,16 @@ fn leaf_tag_matches_the_indexer() {
 }
 
 #[test]
+fn ticker_ids_match_the_indexer() {
+    // indexer/src/notes.js tickerT: the 4 ASCII bytes as a big-endian u32
+    assert_eq!(model::ticker_t(b"GENE"), Some(0x4745_4e45));
+    assert_eq!(model::ticker_t(b"0000"), Some(0x3030_3030));
+    for bad in [&b"gene"[..], b"GEN", b"GENES", b"GE E", b"\0\0\0\0"] {
+        assert_eq!(model::ticker_t(bad), None);
+    }
+}
+
+#[test]
 fn signatures() {
     let keys = fixture::random_keys(&mut OsRng);
     let m = Fr::from(123456789u64);
@@ -38,13 +48,13 @@ fn valid_spends_satisfy_the_circuit() {
     let cases = [
         fixture::transfer(rng),
         // one dummy input, one dummy output
-        fixture::spend(rng, 7, [1000, 0], [999, 1, 0], 0, 0, 3),
+        fixture::spend(rng, fixture::gene(), [1000, 0], [999, 1, 0], 0, 0, 3),
         // burn: value leaves under the public ticker
-        fixture::spend(rng, 9, [600, 400], [100, 0, 0], 900, 9, 2),
+        fixture::spend(rng, fixture::gene(), [600, 400], [100, 0, 0], 900, fixture::gene(), 2),
         // both inputs dummies: nothing moves
-        fixture::spend(rng, 3, [0, 0], [0, 0, 0], 0, 0, 1),
+        fixture::spend(rng, model::ticker_t(b"ZZ99").unwrap(), [0, 0], [0, 0, 0], 0, 0, 1),
         // largest amounts
-        fixture::spend(rng, 1, [u64::MAX, 0], [u64::MAX - 5, 5, 0], 0, 0, 1),
+        fixture::spend(rng, model::ticker_t(b"0000").unwrap(), [u64::MAX, 0], [u64::MAX - 5, 5, 0], 0, 0, 1),
     ];
     for (i, w) in cases.iter().enumerate() {
         assert_eq!(rejected(w), None, "case {i}");
@@ -162,10 +172,10 @@ fn adversarial_witnesses_are_rejected() {
     println!("{} adversarial witnesses rejected", cases.len());
 
     // value may only leave under the public ticker
-    let burn = fixture::spend(rng, 9, [600, 400], [100, 0, 0], 900, 9, 2);
+    let burn = fixture::spend(rng, fixture::gene(), [600, 400], [100, 0, 0], 900, fixture::gene(), 2);
     assert_eq!(rejected(&burn), None);
     let mut wrong = burn.clone();
-    wrong.t_pub = Fr::from(8u64);
+    wrong.t_pub = Fr::from(model::ticker_t(b"GENF").unwrap() as u64);
     assert_eq!(rejected(&wrong).as_deref(), Some("public value"));
     let mut unbalanced = burn.clone();
     unbalanced.v_pub = Fr::from(901u64);
@@ -175,7 +185,7 @@ fn adversarial_witnesses_are_rejected() {
     assert!(rejected(&huge).is_some());
 
     // a dummy input skips membership only: it still needs its nullifier and its signature
-    let dummy = fixture::spend(rng, 7, [1000, 0], [999, 1, 0], 0, 0, 3);
+    let dummy = fixture::spend(rng, fixture::gene(), [1000, 0], [999, 1, 0], 0, 0, 3);
     let mut d = dummy.clone();
     d.nf[1] += Fr::one();
     assert_eq!(rejected(&d).as_deref(), Some("in1 nullifier"));

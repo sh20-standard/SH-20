@@ -1,4 +1,4 @@
-# SH-20 design — draft v0.1
+# SH-20 design — draft v0.2
 
 SH-20 is an open standard for fungible shielded tokens on Bitcoin L1: anyone deploys a ticker, the
 mint is public and paid in BTC, and transfers are private. Bitcoin only publishes and orders data;
@@ -50,8 +50,9 @@ audits and public signet tests happen before activation.
 
 ## Lifecycle
 
-- **DEPLOY** reserves a ticker and fixes its rules. The first accepted DEPLOY is the genesis ticker
-  (tokenNum 1). The team allocation, if any, enters the tree automatically at its public unlock block.
+- **DEPLOY** reserves a ticker and fixes its rules. The first accepted DEPLOY is the genesis ticker.
+  A token is named by its ticker everywhere, on the wire and inside notes (`t` = its 4 bytes as a number),
+  so a wallet can check on chain which token a mint or a listing is for. The team allocation, if any, enters the tree automatically at its public unlock block.
 - **Proposed rule:** every later DEPLOY burns `D` units of the genesis ticker, so the whole meta
   consumes genesis supply after its mint-out. The trade-off: deployers must buy genesis first, which
   slows spam but also adoption. The alternative is the plain BRC-20 model with no burn.
@@ -93,7 +94,8 @@ single-thread WebAssembly. Proving time only affects transfers, burns and listin
 It has not been measured on a phone yet.
 
 The relation follows Tacit's shielded pool (MIT) with the ticker made private, SH-20's note leaf and no
-transparent boundary. Notes per proof: 2 in, 3 out.
+transparent boundary. Notes per proof: 2 in, 3 out (the recipient, the change, and a relayer's fee in tokens).
+The verifier stays cross-checked against snarkjs' PLONK verifier.
 
 ## Security, privacy, limits
 
@@ -115,15 +117,23 @@ transparent boundary. Notes per proof: 2 in, 3 out.
 - [zkCoins / Shielded CSV](https://zkcoins-docs.pages.dev/specification) — client-side validation,
   hides the asset; only an asset's creator mints.
 - [Shielded Ordinals](https://github.com/Fl1ntstowned/shielded-ordinals) — private NFTs; the platform signs mints and buys.
-- [Shielded Bitcoin](https://www.allocinit.xyz/uploads/shielded-bitcoin.pdf) (alloc init) and
-  [77ph/shielded-bitcoin](https://github.com/77ph/shielded-bitcoin) — private BTC transfers, no tokens.
+- [Shielded Bitcoin](https://eprint.iacr.org/2026/2749) ([alloc] init, September 2026) and
+  [77ph/shielded-bitcoin](https://github.com/77ph/shielded-bitcoin) — private BTC transfers, no tokens;
+  the paper leaves BTC entry and exit out of scope and nothing is deployed yet.
 - [pERC20](https://github.com/PLabs4/pERC20_) — private tokens on EVM chains, issuer-only mint.
+
+## Reserved for later
+
+- `t = 0` is reserved for native BTC in the shared tree, and envelope types `0x08`–`0x0f` for extensions:
+  aggregated batches (one proof for many transfers, built by anyone) and a BTC entry and exit once Bitcoin
+  can enforce one without a federation. Both arrive as new rules that indexers opt into; existing tokens keep working.
 
 ## Open decisions
 
 1. Final name and 4-byte magic.
 2. Value of `D`, or no genesis burn at all.
-3. Tickers of 4 characters only, or also 5 to 12.
+3. Tickers of 4 characters only, or also 5 to 12 (then `t` = the ticker's bytes as a big-endian number,
+   still unique and below the field size, and ticker fields get a length byte).
 4. Genesis team allocation: zero or small.
 5. Several envelopes per transaction, so relayers can publish in batches.
 6. Exact event encoding inside the digest, frozen before activation.

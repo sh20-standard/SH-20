@@ -3,7 +3,7 @@
 The spend circuit of **SH-20** (`docs/SPEC-WIRE.md` §4): prover, verifier, and the measurements
 behind the choice of proof system.
 
-**Status: draft v0.1. Not audited. Not activated anywhere.**
+**Status: draft v0.2. Not audited. Not activated anywhere.**
 
 | | |
 | --- | --- |
@@ -59,7 +59,7 @@ Tacit publishes 12–15 s for its Halo2 prover in the same setting. The module's
 
 ## How the result is checked
 
-- `cargo test --release`: 15 tests. Model against the indexer's constants; 26 adversarial witnesses
+- `cargo test --release`: 16 tests. Model against the indexer's constants; 26 adversarial witnesses
   (inflation, wrong ticker, double-spend attempts, bad ranges, wrong or swapped signatures, aliased
   keys) rejected by the gates; proofs end to end with every public input and proof byte bound;
   every variable of the assignment pinned by at least one gate; the pinned key digest.
@@ -123,10 +123,11 @@ node bench/tx-vsize.mjs
 2. **Memory and start-up**: 425 MB at peak. Computing the quotient in four cosets of size n, and the
    selector evaluations on the fly, should bring it near 150 MB. Key generation recomputes the eight
    commitments of the verifying key, which a wallet can take from the pinned key instead.
-3. **Half the proving time**: the circuit is 86,232 gates and a 2^16 domain holds 65,536. Sparse
-   Poseidon rounds, windowed fixed-base multiplication and cheaper comparisons should reach about
-   66,600 (an estimate, not yet built); the last thousand gates need a change of rules (for example two outputs instead of three, which
-   the cost budget already lists). Each change moves the verifying-key digest.
+3. **Fewer gates**: the circuit is 86,232 gates and a 2^16 domain, which would halve the proving
+   time, holds 65,536. Sparse Poseidon rounds, windowed fixed-base multiplication and cheaper
+   comparisons should reach about 66,600 (an estimate, not yet built). That is still above the limit,
+   and the three outputs stay (the third pays a relayer in tokens), so the last thousand gates have to
+   be found without changing a rule. Each change moves the verifying-key digest.
 4. An audit, then the freeze of the digest.
 
 ## Licence

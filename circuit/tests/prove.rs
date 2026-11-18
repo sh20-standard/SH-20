@@ -52,7 +52,7 @@ fn pinned_verifying_key() {
 fn transfer_burn_and_dummies_prove_and_verify() {
     let (pk, _) = keys();
     let rng = &mut OsRng;
-    let cases = [fixture::transfer(rng), fixture::spend(rng, 9, [600, 400], [100, 0, 0], 900, 9, 2), fixture::spend(rng, 7, [1000, 0], [999, 1, 0], 0, 0, 3)];
+    let cases = [fixture::transfer(rng), fixture::spend(rng, fixture::gene(), [600, 400], [100, 0, 0], 900, fixture::gene(), 2), fixture::spend(rng, fixture::gene(), [1000, 0], [999, 1, 0], 0, 0, 3)];
     for w in &cases {
         let proof = prove(pk, w, rng).unwrap();
         assert_eq!(proof.len(), PROOF_BYTES);

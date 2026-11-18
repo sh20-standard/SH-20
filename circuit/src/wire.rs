@@ -45,10 +45,10 @@ pub fn transfer_body(anchor_height: u32, nf: &[Fr; N_IN], outs: &[Output; N_OUT]
     out
 }
 
-/// Body of a BURN of `v_pub` units of `token_num`.
-pub fn burn_body(token_num: u32, v_pub: u64, anchor_height: u32, nf: &[Fr; N_IN], outs: &[Output; N_OUT]) -> Vec<u8> {
+/// Body of a BURN of `v_pub` units of `ticker` (4 characters of `[A-Z0-9]`, see `model::ticker_t`).
+pub fn burn_body(ticker: &[u8; 4], v_pub: u64, anchor_height: u32, nf: &[Fr; N_IN], outs: &[Output; N_OUT]) -> Vec<u8> {
     let mut out = header(TYPE_BURN);
-    out.extend_from_slice(&token_num.to_le_bytes());
+    out.extend_from_slice(ticker);
     out.extend_from_slice(&v_pub.to_le_bytes());
     spend_section(&mut out, anchor_height, nf, outs);
     out

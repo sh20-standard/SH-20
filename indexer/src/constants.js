@@ -14,6 +14,8 @@ export const TYPE = Object.freeze({
   LIST: 0x05,
   TAKE: 0x06,
   CLAIM: 0x07,
+  // 0x08-0x0f reserved for extensions (aggregated batches, a BTC entry/exit once
+  // Bitcoin can enforce one). A v0 indexer rejects them like any unknown type.
 });
 export const TYPE_NAME = Object.fromEntries(Object.entries(TYPE).map(([k, v]) => [v, k]));
 
@@ -22,7 +24,7 @@ export const PAY_MODE = Object.freeze({ NONE: 0, BURN: 1, PAY: 2 });
 export const TREE_DEPTH = 32;
 export const N_IN = 2;
 export const N_OUT = 3;
-export const OUT_BYTES = 32 + 33 + 28; // leaf | pk_eph | ct (v u64, t u32, tag 16)
+export const OUT_BYTES = 32 + 33 + 28; // leaf | pk_eph | ct (v u64, ticker 4, tag 16)
 export const PROOF_MAX = 4096;
 /** A spend proof: PLONK over BN254, 9 G1 points and 6 scalars (docs/SPEC-WIRE.md §4). */
 export const PROOF_BYTES = 480;
@@ -49,6 +51,5 @@ export const DEFAULT_PROFILE = Object.freeze({
   activationHeight: 0,
   anchorWindow: 100, // W
   anchorMinDepth: 1, // K_min
-  deployBurn: 1000n, // D: genesis units burned by every non-genesis DEPLOY
-  genesisTokenNum: 1,
+  deployBurn: 1000n, // D: genesis-token units burned by every non-genesis DEPLOY
 });

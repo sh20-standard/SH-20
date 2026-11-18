@@ -4,7 +4,7 @@ Fungible shielded tokens on Bitcoin L1. Anyone deploys a unique 4-character tick
 for a public price in BTC, and transfers hide the amount, the sender, the recipient and the ticker.
 No soft fork, no sidechain, no admin key.
 
-**Status: draft v0.1. Not activated on any network. Not audited.**
+**Status: draft v0.2. Not activated on any network. Not audited.**
 
 | | |
 | --- | --- |

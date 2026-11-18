@@ -28,13 +28,14 @@ function setup() {
   const ix = new Indexer({ profile: { activationHeight: 1 }, verifier: plonkVerifier({ wasm, vk }) });
   const c = chain(ix);
   c.block(tx({ env: deployEnv() }));
-  c.block(...fixture.mints.map((m) => tx({ env: { type: 'MINT', tokenNum: 1, npk: BigInt(m.npk), rho: BigInt(m.rho) }, burnSats: 1000n })));
+  c.block(...fixture.mints.map((m) => tx({ env: { type: 'MINT', ticker: fixture.ticker, npk: BigInt(m.npk), rho: BigInt(m.rho) }, burnSats: 1000n })));
   return { ix, c };
 }
 const spendTx = (env) => tx({ env, carrier: 'witness' });
 
 test('the fixture uses the pinned verifying key and 480-byte proofs', () => {
   assert.equal(fixture.vkDigest, SPEND_VK_DIGEST);
+  assert.equal(fixture.ticker, deployEnv().ticker);
   for (const hex of [fixture.transfer, fixture.burn]) {
     const bytes = Buffer.from(hex, 'hex');
     const env = envelope(hex);
@@ -99,5 +100,5 @@ test('a proof does not carry over to an altered envelope', { skip }, () => {
 test('a TRANSFER proof cannot be replayed as a BURN', { skip }, () => {
   const { c } = setup();
   const t = envelope(fixture.transfer);
-  assert.deepEqual(reasons(c.block(spendTx({ type: 'BURN', tokenNum: 1, vPub: 5n, spend: t.spend }))), ['invalid proof']);
+  assert.deepEqual(reasons(c.block(spendTx({ type: 'BURN', ticker: fixture.ticker, vPub: 5n, spend: t.spend }))), ['invalid proof']);
 });

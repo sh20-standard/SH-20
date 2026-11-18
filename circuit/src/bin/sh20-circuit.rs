@@ -53,7 +53,7 @@ fn circom_input(w: &SpendWitness) -> String {
     )
 }
 
-/// A chain an indexer can replay: block 2 mints two notes of 1,000 units of token 1 (leaves 0 and 1);
+/// A chain an indexer can replay: block 2 mints two notes of 1,000 units of "GENE" (leaves 0 and 1);
 /// block 3 transfers them into 1,500 + 400 + 100 (anchor 2); block 4 burns 900 out of the 1,500 and
 /// the 400 (anchor 3). Field elements are decimal strings, bytes are hex.
 fn scenario(pk: &sh20_circuit::ProvingKey) -> String {
@@ -63,7 +63,8 @@ fn scenario(pk: &sh20_circuit::ProvingKey) -> String {
     use sh20_circuit::wire::{self, Output};
 
     let rng = &mut OsRng;
-    let t = 1u32;
+    let ticker = b"GENE";
+    let t = model::ticker_t(ticker).expect("ticker");
     let tf = Fr::from(t as u64);
     let d = plonk::json::dr;
     let sealed = |leaf: Fr| {
@@ -97,12 +98,12 @@ fn scenario(pk: &sh20_circuit::ProvingKey) -> String {
     let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: owners[i].clone(), v: amounts[i], rho: outputs[i].rho, index: 2 + i as u64, path: tree.path(2 + i) });
     let change: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: fixture::random_keys(rng).npk, v: if k == 0 { 1000 } else { 0 }, rho: Fr::rand(rng) });
     let nf: [Fr; 2] = std::array::from_fn(|i| model::nullifier(&inputs[i].keys.nk, &leaves[2 + i], 2 + i as u64));
-    let body = wire::burn_body(t, 900, 3, &nf, &change.map(|o| sealed(leaf_of(&o))));
+    let body = wire::burn_body(ticker, 900, 3, &nf, &change.map(|o| sealed(leaf_of(&o))));
     let w = model::build_spend(t, tree.root, &inputs, &change, 900, t, model::body_hash(&body));
     let burn = wire::envelope(body, &prove(pk, &w, rng).unwrap_or_else(|e| fail(&e)));
 
     format!(
-        r#"{{"vkDigest":"{}","vk":"{}","mints":[{}],"transfer":"{}","burn":"{}"}}"#,
+        r#"{{"ticker":"GENE","vkDigest":"{}","vk":"{}","mints":[{}],"transfer":"{}","burn":"{}"}}"#,
         hex::encode(pk.vk.digest()),
         hex::encode(pk.vk.to_bytes()),
         minted.iter().map(|(k, rho)| format!(r#"{{"npk":"{}","rho":"{}"}}"#, d(&k.npk), d(rho))).collect::<Vec<_>>().join(","),

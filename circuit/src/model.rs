@@ -145,7 +145,15 @@ fn be32(x: &BigUint) -> [u8; 32] {
 
 // ── notes ──
 
-/// head = H(TAG_LEAF, t): the part of a leaf that depends on the ticker.
+/// The asset id inside notes and proofs: the ticker's 4 ASCII characters `[A-Z0-9]` read as a
+/// big-endian u32 ("GENE" = 0x47454e45), as `tickerT` in indexer/src/notes.js. `None` for anything
+/// that is not a ticker. 0 is reserved for native BTC and no ticker maps to it.
+pub fn ticker_t(ticker: &[u8]) -> Option<u32> {
+    let t: [u8; 4] = ticker.try_into().ok()?;
+    t.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).then(|| u32::from_be_bytes(t))
+}
+
+/// head = H(TAG_LEAF, t): the part of a leaf that depends on the asset id.
 pub fn leaf_head(t: &Fr) -> Fr {
     h2(tag_leaf(), *t)
 }
@@ -395,7 +403,8 @@ pub struct OutputNote {
     pub rho: Fr,
 }
 
-/// Builds the witness of a spend and signs `body_hash` with each input's key.
+/// Builds the witness of a spend of asset `t` (`ticker_t`) and signs `body_hash` with each input's
+/// key. `t_pub` is `t` when value leaves the pool (BURN, LIST, DEPLOY) and 0 for a TRANSFER.
 pub fn build_spend(t: u32, root: Fr, inputs: &[InputNote; N_IN], outputs: &[OutputNote; N_OUT], v_pub: u64, t_pub: u32, body_hash: Fr) -> SpendWitness {
     let tf = Fr::from(t as u64);
     let mut w = SpendWitness { root, body_hash, v_pub: Fr::from(v_pub), t_pub: Fr::from(t_pub as u64), t: tf, ..SpendWitness::default() };

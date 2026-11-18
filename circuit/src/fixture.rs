@@ -16,7 +16,7 @@ pub fn random_keys(rng: &mut impl RngCore) -> NoteKeys {
     model::note_keys(&sk, &nk)
 }
 
-/// A spend of ticker `t`: inputs `in_v` (a 0 is a dummy outside the tree), outputs `out_v`, with
+/// A spend of asset `t` (`model::ticker_t`): inputs `in_v` (a 0 is a dummy outside the tree), outputs `out_v`, with
 /// `filler` unrelated leaves on each side of the real ones.
 pub fn spend(rng: &mut impl RngCore, t: u32, in_v: [u64; N_IN], out_v: [u64; N_OUT], v_pub: u64, t_pub: u32, filler: usize) -> SpendWitness {
     let tf = Fr::from(t as u64);
@@ -49,7 +49,12 @@ pub fn spend(rng: &mut impl RngCore, t: u32, in_v: [u64; N_IN], out_v: [u64; N_O
     model::build_spend(t, tree.root, &inputs, &outputs, v_pub, t_pub, model::body_hash(&body))
 }
 
-/// A private transfer: 600 + 400 → 700 + 250 + 50.
+/// The asset id of the sample ticker "GENE".
+pub fn gene() -> u32 {
+    model::ticker_t(b"GENE").expect("ticker")
+}
+
+/// A private transfer of "GENE": 600 + 400 → 700 + 250 + 50.
 pub fn transfer(rng: &mut impl RngCore) -> SpendWitness {
-    spend(rng, 7, [600, 400], [700, 250, 50], 0, 0, 5)
+    spend(rng, gene(), [600, 400], [700, 250, 50], 0, 0, 5)
 }

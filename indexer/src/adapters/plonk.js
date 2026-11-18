@@ -7,17 +7,21 @@
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { DOMAIN, PROOF_BYTES, SPEND_VK_DIGEST } from '../constants.js';
 import { frToBytes } from '../notes.js';
 
 const N_PUBLIC = 9;
 
+/** The verifying key kept in the repository (its digest is checked on load). */
+export const DEFAULT_VK = fileURLToPath(new URL('../../../circuit/artifacts/spend.vk', import.meta.url));
+
 /**
- * @param {{ wasm: string | Uint8Array, vk: string | Uint8Array, vkDigest?: string }} options
- *   `wasm` and `vk` are file paths or bytes.
+ * @param {{ wasm: string | Uint8Array, vk?: string | Uint8Array, vkDigest?: string }} options
+ *   `wasm` and `vk` are file paths or bytes; `vk` defaults to circuit/artifacts/spend.vk.
  * @returns {{ name: string, verifySpend: (args: object) => boolean }}
  */
-export function plonkVerifier({ wasm, vk, vkDigest = SPEND_VK_DIGEST }) {
+export function plonkVerifier({ wasm, vk = DEFAULT_VK, vkDigest = SPEND_VK_DIGEST }) {
   const vkBytes = Buffer.from(typeof vk === 'string' ? readFileSync(vk) : vk);
   const digest = createHash('sha256').update(DOMAIN.VK, 'utf8').update(vkBytes).digest('hex');
   if (digest !== vkDigest) throw new Error(`verifying key digest ${digest} is not the pinned ${vkDigest}`);
