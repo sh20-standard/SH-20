@@ -90,8 +90,10 @@ Done in `circuit/` (2026-11-18):
 - A wallet reference in dependency-free JavaScript (`circuit/js/`): note keys and `npk`, the nullifier, the body hash, the
   EdDSA-Poseidon signature. Its vectors are written by the Rust model (`circuit/src/vectors.rs`) and a test fails if they drift.
 
-Not done: an audit; the figures on a real phone (the page exists and was measured on a laptop browser: 4.5 s on 10 threads,
-25.5 s on one; nobody has run it on a phone yet); the `ct` sealing format; transfers in the vault (it mints and syncs privately
+Measured on a phone (maintainer, 2026-11-18, iPhone 18 Pro Max, Safari): 14.5 s per proof on 4 threads, 31.9 s on one thread,
+232 MB; in Chrome on the laptop, 4.5 s on 10 threads and 25.5 s on one.
+
+Not done: an audit; a mid-range phone; the `ct` sealing format; transfers in the vault (it mints and syncs privately
 today); a relayer; a second independent indexer; the
 profile constants (activation height, `D`); the canonical event encoding inside the digest.
 
@@ -100,9 +102,9 @@ profile constants (activation height, `D`); the canonical event encoding inside 
 The relation, the proof system, the verifier and a prover that runs in a browser exist. What is still unknown is how long a
 real phone takes.
 
-1. **Get the page run on phones.** `circuit/web/README.md` says how to serve it and what to send back. Record the results in
-   `circuit/README.md` next to the laptop figures: at least a recent phone and a mid-range one, on all cores and on one thread.
-   Laptop figures are not phone figures.
+1. **Phones.** One recent phone is measured (`circuit/README.md`, "On a phone"). Open: four threads are only 2.2 times
+   faster than one there, the key takes 5.5 s to load in single-thread mode against 0.7 s with threads, and no mid-range
+   phone has been tried. `circuit/web/README.md` says how to serve the page and what to send back.
 2. **Act on them.** If memory fails (the prover needs about 230 MB), hold less: the wire evaluations and the key file are
    kept longer than needed. If time is the problem, see 3.
 3. **Fewer gates.** A 2^16 domain (65,536 gates) would halve the proving time. Sparse Poseidon partial rounds, 2-bit windows
