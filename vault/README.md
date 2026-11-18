@@ -19,7 +19,7 @@ TRANSFER, BURN, LIST, TAKE and CLAIM wait for the spend circuit.
 ## Run
 
 ```sh
-npm test                 # 26 tests, Node ≥ 20, zero dependencies
+npm test                 # 29 tests, Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ = the site to publish
 ipfs add -r --cid-version=1 dist
 ```
@@ -32,9 +32,10 @@ node dev/e2e.js          # headless Chrome runs the whole mint flow with a fake 
 E2E_PATH=/vault/dist/vault/ node dev/e2e.js   # the same flow on the IPFS build
 ```
 
-`dev/serve.js` replays a small demo chain with the reference indexer. Its mock Esplora "mines"
-every broadcast transaction into the next block, so the e2e test checks that the indexer
-accepts the vault's MINT and that the vault finds the note in the tree afterwards.
+`dev/serve.js` serves the real indexer API (`indexer/src/api.js`) over a small demo chain of
+serialised transactions. Its mock Esplora serves those transactions and "mines" every broadcast
+one into the next block, so the e2e test checks the DEPLOY terms, that the indexer accepts the
+vault's MINT, and that the vault finds the note in the tree afterwards.
 
 ## Hosting and keys
 
@@ -67,6 +68,13 @@ vout n  change to the payer                                     only if above du
   the change output is dropped when it would be dust.
 - Before anything is signed, the vault checks what the indexers will check (window open at the
   next block, not sold out, payment present), because a rejected mint is not refunded.
+- It does not take the mint terms from the indexer alone: it fetches `deployTxid` from Esplora,
+  checks its txid and confirmation height, decodes the DEPLOY with the indexer's own `carrier.js`
+  and `codec.js`, and refuses the mint if `ticker`, `max`, `lim`, `pre`, `start`, `end`, `price`,
+  `payMode` or `payScript` differ (`src/deploy.js`). This stops an indexer that lies about a real
+  DEPLOY, for example with its own `payScript`. It cannot tell which of two DEPLOYs of a ticker
+  came first: an indexer naming a later, rejected DEPLOY is only caught by comparing the `digest`
+  of several independent indexers.
 - After signing, the vault checks that the wallet did not change the transaction, records the
   note, then broadcasts through Esplora. Xverse and Leather return partial signatures and UniSat
   finalizes; `btc.finalizePsbt` handles both.
@@ -94,8 +102,7 @@ minted with `provisional-0` are for signet testing and may not be spendable by t
 
 ## Indexer API
 
-The vault reads the API of `indexer/bin/follow.js` (`docs/API.md` on the `indexer-api` branch,
-default port 8020); `src/api.js` is the only file that knows its shape:
+The vault reads the API of `indexer/bin/follow.js` ([`docs/API.md`](../docs/API.md), default port 8020); `src/api.js` is the only file that knows its shape:
 
 - `GET /status` → `network` (must be `signet`), `height`, `digest`, `verifier`
 - `GET /tokens`, `GET /token/:ticker` → the reference indexer's token records
@@ -106,9 +113,6 @@ note and matches its own locally by `npk`, so the indexer does not learn which n
 It does not take the API's word for a note: it recomputes the leaf from `(t, v, npk, rho)` and
 requires it to equal the `leaf` the API reports. `OUT` notes (spend outputs) are skipped until
 the `ct` format exists.
-
-Checked against the real handler of the `indexer-api` branch: `dev/serve.js` uses it
-automatically when `indexer/src/api.js` is present, and the e2e run passes with it.
 
 ## Reusing the indexer code in the browser
 
@@ -128,13 +132,14 @@ repository layout (`dist/vault/` and `dist/indexer/src/`) so the relative import
 | `src/keys.js` | seed, encrypted storage, backup, note openings |
 | `src/npk.js` | **provisional** `npk` derivation, isolated |
 | `src/mint.js` | MINT pre-flight checks, coin selection, transaction and PSBT |
+| `src/deploy.js` | checks the indexer's mint terms against the DEPLOY transaction |
 | `src/btc.js` | addresses, transactions, PSBT v0, finalization, size estimates |
 | `src/wallets.js` | Xverse, UniSat, Leather adapters (injected providers, no SDK) |
 | `src/api.js` | indexer API and Esplora clients |
 | `src/hash.js`, `src/bytes.js`, `src/fr.js` | SHA-256, RIPEMD-160, bytes, field elements |
 | `src/sh20.js`, `src/shim/` | the reused indexer modules and their browser shims |
 | `build.js` | builds `dist/` for IPFS |
-| `dev/` | mock servers and the headless-Chrome end-to-end run |
+| `dev/` | dev server (real indexer API, mock Esplora) and the headless-Chrome end-to-end run |
 
 ## Not tested yet
 

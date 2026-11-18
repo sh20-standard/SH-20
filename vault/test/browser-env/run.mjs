@@ -25,4 +25,9 @@ out.npk7 = frHex(deriveNpk(new Uint8Array(32).fill(7), 3).npk);
 let threw = false;
 try { sh20.parseEnvelope(Buffer.from(vectors.envelopes.mint.hex + '00', 'hex')); } catch (e) { threw = e instanceof sh20.CodecError; }
 out.rejectsTrailing = threw;
+// carrier.js under the shim: finds the DEPLOY in an OP_RETURN, as the deploy check does
+const dep = Buffer.from(vectors.envelopes.deployGenesis.hex, 'hex');
+const script = Buffer.concat([Buffer.from([0x6a, 0x4c, dep.length]), dep]);
+const found = sh20.extractEnvelope({ vin: [{ txid: '00'.repeat(32), vout: 0, witness: [] }], vout: [{ value: 0n, script }] });
+out.carrier = found.bytes?.toString('hex') === vectors.envelopes.deployGenesis.hex;
 console.log(JSON.stringify(out));

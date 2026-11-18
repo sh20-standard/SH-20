@@ -5,6 +5,7 @@ import { Vault } from './keys.js';
 import { WALLETS } from './wallets.js';
 import { IndexerApi, Esplora } from './api.js';
 import { buildMint, mintProblems, mintsLeft } from './mint.js';
+import { verifyDeploy } from './deploy.js';
 import { finalizePsbt, sameUnsignedTx, scriptType, addressToScript } from './btc.js';
 import { frHex } from './fr.js';
 import { NPK_SCHEME } from './npk.js';
@@ -290,6 +291,7 @@ function renderMint(token, defaultFee) {
 }
 
 async function prepareMint(token, feeRate, out) {
+  await verifyDeploy(esplora, token); // the mint terms come from the chain, not from the indexer alone
   const tip = await esplora.tipHeight();
   const w = st.wallet;
   let utxos = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
@@ -308,6 +310,7 @@ async function prepareMint(token, feeRate, out) {
       h('dt', {}, 'Network fee'), h('dd', {}, sats(m.fee)),
       h('dt', {}, 'Mint price'), h('dd', {}, sats(m.price)),
       h('dt', {}, 'Total'), h('dd', {}, h('strong', {}, sats(m.fee + m.price))),
+      h('dt', {}, 'Terms'), h('dd', {}, 'checked against the DEPLOY transaction on chain'),
       h('dt', {}, 'Envelope'), h('dd', {}, h('code', {}, toHex(m.envelope)))),
     h('p', { class: 'muted' }, 'A mint rejected by the indexers (for example sold out by a mint in the same block) is not refunded.'),
     sign);

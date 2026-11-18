@@ -112,7 +112,7 @@ async function main() {
   await send('Page.navigate', { url: PAGE });
 
   const step = (s) => console.log('·', s);
-  await waitFor(`document.querySelector('#warnings').innerText.includes('servers from the link')`, 'URL servers warning');
+  await waitFor(`document.querySelector('#warnings')?.innerText.includes('servers from the link')`, 'URL servers warning');
   if (!dialogs.some((d) => d.includes('127.0.0.1:8020'))) throw new Error('URL servers applied without confirmation');
   step('URL servers confirmed by a dialog and flagged on the page');
   await waitFor(`document.querySelector('#tokens-body td strong')?.textContent === 'GENE'`, 'ticker table');
@@ -134,6 +134,7 @@ async function main() {
   await waitFor(`[...document.querySelectorAll('#mint-body button')].some((b) => b.textContent.includes('Prepare'))`, 'mint panel');
   await click('#mint-body button', 'Prepare');
   await waitFor(`[...document.querySelectorAll('#mint-body button')].some((b) => b.textContent.includes('Sign with'))`, 'prepared tx');
+  if (!(await evaluate(`document.querySelector('#mint-body').innerText.includes('checked against the DEPLOY')`))) throw new Error('deploy check not shown');
   step('prepared: ' + (await evaluate(`document.querySelector('#mint-body div dl').innerText.replace(/\\n/g, ' | ')`)));
   await click('#mint-body button', 'Sign with');
   await waitFor(`document.querySelector('#mint-body').innerText.includes('Broadcast:')`, 'broadcast');

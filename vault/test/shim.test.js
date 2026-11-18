@@ -37,5 +37,6 @@ test('indexer codec runs unchanged in a browser-like environment', () => {
   assert.equal(out.noteLeaf, true);
   assert.equal(out.domainLeaf, true);
   assert.equal(out.rejectsTrailing, true);
+  assert.equal(out.carrier, true, 'carrier.js finds the DEPLOY envelope');
   assert.equal(out.npk7, frHex(deriveNpk(new Uint8Array(32).fill(7), 3).npk), 'same npk in Node and browser');
 });

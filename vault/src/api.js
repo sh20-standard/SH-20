@@ -1,6 +1,5 @@
-// Read-only clients: the SH-20 indexer API (docs/API.md on the indexer-api
-// branch) and an Esplora server. Both URLs are settings; any honest indexer
-// and any Esplora work.
+// Read-only clients: the SH-20 indexer API (docs/API.md) and an Esplora server.
+// Both URLs are settings; any honest indexer and any Esplora work.
 // Everything they return is untrusted input: it is normalised here and only
 // ever rendered as text.
 
@@ -131,6 +130,12 @@ export class Esplora {
     const text = await r.text();
     if (!r.ok) throw new Error(`broadcast refused: ${text}`);
     return text.trim();
+  }
+  async txHex(id) {
+    if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('bad txid');
+    const r = await fetch(`${this.base}/tx/${id}/hex`);
+    if (!r.ok) throw new Error(`tx ${id}: HTTP ${r.status}`);
+    return (await r.text()).trim();
   }
   async txStatus(id) {
     return getJson(`${this.base}/tx/${id}/status`);

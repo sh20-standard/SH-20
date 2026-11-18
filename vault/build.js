@@ -18,7 +18,7 @@ const root = join(here, '..');
 const dist = join(here, 'dist');
 
 // The indexer modules reachable from vault/src/sh20.js.
-const INDEXER = ['codec.js', 'constants.js', 'notes.js', 'poseidon.js'];
+const INDEXER = ['carrier.js', 'codec.js', 'constants.js', 'notes.js', 'poseidon.js'];
 
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(join(dist, 'vault'), { recursive: true });
