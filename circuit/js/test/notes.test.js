@@ -163,8 +163,11 @@ test('public notes: a viewing key finds them, the spend keys open them', () => {
     const { keys } = wallets[x.wallet];
     assert.equal(selfSecret(keys.ivk, x.i).toString('hex'), x.s);
     const o = publicOpening(keys.ivk, keys.address, x.i);
-    assert.deepEqual([o.secrets.tauA, o.secrets.tauN, o.rho, o.npk].map(String), [x.tauA, x.tauN, x.rho, x.npk]);
+    assert.deepEqual([o.secrets.tauA, o.secrets.tauN, o.npk].map(String), [x.tauA, x.tauN, x.npk]);
     assert.equal(spendKeys(keys, o.secrets).npk.toString(), x.npk);
+    // a public note has rho = 0: its leaf is what the indexer computes from the opening alone
+    assert.equal(o.rho, 0n);
+    assert.equal(noteLeaf(tickerT('GENE'), 1000n, o.npk, 0n).toString(), x.leafOf1000Gene);
   }
   const { keys } = wallets.payer;
   assert.notEqual(publicOpening(keys.ivk, keys.address, 0).npk, publicOpening(keys.ivk, keys.address, 1).npk);
@@ -180,6 +183,7 @@ test('the whole transfer, wallet by wallet', () => {
     const o = publicOpening(payer.ivk, payer.address, input.publicNote);
     const keys = spendKeys(payer, o.secrets);
     assert.deepEqual([keys.sk, keys.nk, o.rho].map(String), [input.sk, input.nk, input.rho]);
+    assert.equal(input.rho, '0');
     const leaf = noteLeaf(t, n(input.v), o.npk, o.rho);
     assert.equal(s.treeLeaves[Number(input.index)], leaf.toString());
     assert.equal(nullifier(keys.nk, leaf, n(input.index)).toString(), s.nf[i]);

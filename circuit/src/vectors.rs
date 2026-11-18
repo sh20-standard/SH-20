@@ -213,8 +213,10 @@ pub fn reference_vectors() -> String {
             .iter()
             .map(|i| {
                 let s_i = notes::self_secret(&wallets[0].ivk, *i);
-                let (npk, rho, sec) = notes::public_opening(&wallets[0].ivk, &wallets[0].address, *i).expect("opening");
-                format!(r#"{{"wallet":"payer","i":{i},"s":"{}","tauA":"{}","tauN":"{}","rho":"{}","npk":"{}"}}"#, hex::encode(s_i), sec.tau_a, sec.tau_n, dr(&rho), dr(&npk))
+                let (npk, sec) = notes::public_opening(&wallets[0].ivk, &wallets[0].address, *i).expect("opening");
+                assert!(sec.rho.is_zero(), "public notes have rho = 0");
+                let leaf = model::note_leaf(&gene, &Fr::from(1000u64), &npk, &sec.rho);
+                format!(r#"{{"wallet":"payer","i":{i},"s":"{}","tauA":"{}","tauN":"{}","npk":"{}","leafOf1000Gene":"{}"}}"#, hex::encode(s_i), sec.tau_a, sec.tau_n, dr(&npk), dr(&leaf))
             })
             .collect(),
     );
@@ -225,16 +227,16 @@ pub fn reference_vectors() -> String {
     let payer = &wallets[0];
     let in_v = [600u64, 400];
     let opened: Vec<_> = (0..2).map(|i| notes::public_opening(&payer.ivk, &payer.address, i).expect("opening")).collect();
-    let owners: Vec<NoteKeys> = opened.iter().map(|o| notes::spend_keys(payer, &o.2).expect("keys")).collect();
+    let owners: Vec<NoteKeys> = opened.iter().map(|o| notes::spend_keys(payer, &o.1).expect("keys")).collect();
     let mut tree_leaves: Vec<Fr> = (0..3).map(|i| field(&format!("spend/filler/{i}"))).collect();
     let mut index = [0u64; 2];
     for i in 0..2 {
         index[i] = tree_leaves.len() as u64;
-        tree_leaves.push(model::note_leaf(&gene, &Fr::from(in_v[i]), &opened[i].0, &opened[i].1));
+        tree_leaves.push(model::note_leaf(&gene, &Fr::from(in_v[i]), &opened[i].0, &opened[i].1.rho));
         tree_leaves.push(field(&format!("spend/filler/after{i}")));
     }
     let tree = Tree::new(&tree_leaves);
-    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: owners[i].clone(), v: in_v[i], rho: opened[i].1, index: index[i], path: tree.path(index[i] as usize) });
+    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: owners[i].clone(), v: in_v[i], rho: opened[i].1.rho, index: index[i], path: tree.path(index[i] as usize) });
     let pay: [(usize, u64); 3] = [(1, 700), (0, 250), (2, 50)];
     let es: Vec<[u8; 32]> = (0..3).map(|k| bytes(&format!("spend/out{k}/e"), 32).try_into().unwrap()).collect();
     let sealed: Vec<_> = (0..3).map(|k| notes::seal(&wallets[pay[k].0].address, ticker, pay[k].1, &es[k]).expect("seal")).collect();
@@ -264,7 +266,7 @@ pub fn reference_vectors() -> String {
     "publics":[{}]
   }}"#,
         tree_leaves.iter().map(|x| q(&dr(x))).collect::<Vec<_>>().join(","),
-        (0..2).map(|i| format!(r#"{{"wallet":"payer","publicNote":{i},"sk":"{}","nk":"{}","v":"{}","rho":"{}","index":"{}"}}"#, owners[i].sk, owners[i].nk, in_v[i], dr(&opened[i].1), index[i])).collect::<Vec<_>>().join(","),
+        (0..2).map(|i| format!(r#"{{"wallet":"payer","publicNote":{i},"sk":"{}","nk":"{}","v":"{}","rho":"{}","index":"{}"}}"#, owners[i].sk, owners[i].nk, in_v[i], dr(&opened[i].1.rho), index[i])).collect::<Vec<_>>().join(","),
         (0..3)
             .map(|k| format!(r#"{{"to":"{}","v":"{}","e":"{}","npk":"{}","rho":"{}","pkEph":"{}","ct":"{}"}}"#, names[pay[k].0], pay[k].1, hex::encode(es[k]), dr(&outputs[k].npk), dr(&outputs[k].rho), hex::encode(sealed[k].0.pk_eph), hex::encode(sealed[k].0.ct)))
             .collect::<Vec<_>>()

@@ -33,14 +33,14 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | --- | --- |
 | `docs/DESIGN.md` | why SH-20 is built this way, competitors, open decisions |
 | `docs/SPEC-WIRE.md` | wire format and acceptance rules, draft v0.3 (normative for the indexer) |
-| `docs/SPEC-NOTES.md` | wallet keys, addresses, note sealing (`pk_eph`, `ct`) and scanning, draft v0.3 (normative for wallets, unreviewed) |
+| `docs/SPEC-NOTES.md` | wallet keys, addresses, note sealing (`pk_eph`, `ct`) and scanning, draft v0.3 (normative for wallets; reviewed once by the circuit session, §8 lists the changes; not audited) |
 | `indexer/` | reference indexer, Node ≥ 20, zero dependencies |
 | `indexer/vectors/v0.3.json` | deterministic vectors for a second implementation |
 | `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` (for the vault and relayers) |
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
 | `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
 | `circuit/` | the spend circuit: PLONK prover and verifier in Rust, WebAssembly build, measurements ([`circuit/README.md`](circuit/README.md)) |
-| `circuit/js/` | what a wallet computes for a spend, in dependency-free JavaScript, checked against vectors written by the circuit's model (`cd circuit/js && npm test`) |
+| `circuit/js/` | what a wallet computes, in dependency-free JavaScript: the witness of a spend, and the addresses, sealing and scanning of `SPEC-NOTES.md`; checked against vectors written by the Rust models (`cd circuit/js && npm test`, 25 tests) |
 | `circuit/circom/` | the same relation in circom, used only to cross-check the Rust circuit |
 | `circuit/web/` | the phone test page, and the host side of the threaded WebAssembly prover |
 
@@ -51,7 +51,7 @@ npm run vectors     # regenerate the vectors (must be byte-identical across runs
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
 cd circuit
-cargo test --release    # 21 tests, with the shipped proving key (artifacts/spend.pk)
+cargo test --release    # 28 tests, with the shipped proving key (artifacts/spend.pk)
 ./build-wasm.sh         # two WebAssembly builds: one thread with no imports, and a thread pool over Web Workers
 bench/cross-check.sh    # snarkjs against our verifier, both ways (hard requirement 4)
 web/build.sh            # the phone test page, in web/dist/ (see circuit/web/README.md)
@@ -65,7 +65,8 @@ Done in `indexer/`:
   types `0x08`–`0x0f` for extensions.
 - Two carriers: OP_RETURN (small proof-less envelopes, one transaction) and a tapscript witness on input 0 (proof-carrying envelopes, 830 bytes for a TRANSFER).
 - Wire v0.3: `pk_eph` is a 32-byte X25519 key and the spend section has no `proofLen` (the proof is always 480 bytes).
-  `docs/SPEC-NOTES.md` (draft, unreviewed) specifies keys, addresses, sealing and scanning for wallets.
+  `docs/SPEC-NOTES.md` (draft, reviewed once, not audited) specifies keys, addresses, sealing and scanning for wallets;
+  `circuit/src/notes.rs` is its model and `circuit/js` its reference, with shared vectors.
 - State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest.
 - Poseidon over BN254 written from scratch for 2 to 5 inputs (constants generated with the Grain LFSR, checked against circomlibjs for every width; `poseidon2` is unchanged), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
 - Live chain follower (Bitcoin Core RPC or Esplora, reorgs with 288 blocks of undo) and a read-only HTTP API with a per-leaf note log for wallets (`docs/API.md`).
@@ -158,7 +159,7 @@ Levers, biggest first. Measure each one and keep every hard requirement above:
 2. **Batching.** Allow several envelopes in one witness transaction so relayers share the commit/reveal overhead.
 3. **Arity.** Decided: three outputs stay. The third pays a relayer in tokens.
 4. **Mint bytes.** Done in v0.3: public openings are `npk` alone, public notes use `rho = 0` (74 → 42 bytes, about 32 vB less
-   per mint); to confirm in the review of `docs/SPEC-NOTES.md`. Still open: a batch mint (k mints in one envelope, paying
+   per mint); the review of `docs/SPEC-NOTES.md` (§6) found nothing else that relied on a random `rho` there. Still open: a batch mint (k mints in one envelope, paying
    k × price), a fairness question for the maintainer, since it makes bulk minting cheaper too.
 5. **Small fields.** Done in v0.3: 32-byte X25519 `pk_eph`, no `proofLen`. `ct` stays 28 bytes (amount, ticker, 16-byte tag).
 6. **Never** put proof-carrying envelopes in OP_RETURN (four times the witness rate).

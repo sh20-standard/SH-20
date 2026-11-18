@@ -146,9 +146,14 @@ export function selfSecret(ivk, i) {
   return hkdf(TAG.self, bytes32('ivk', ivk), info, 32);
 }
 
-/** The opening { npk, rho } a wallet publishes for its i-th public note, with the note's secrets. */
+/**
+ * The opening `npk` a wallet publishes for its i-th public note, with the note's secrets.
+ * A public note has rho = 0 (docs/SPEC-WIRE.md §2): { npk, rho: 0n, secrets: { tauA, tauN, rho: 0n } }.
+ */
 export function publicOpening(ivk, address, i) {
-  const secrets = noteSecrets(selfSecret(ivk, i));
-  if (!secrets) return null;
-  return { npk: noteNpk(address, secrets), rho: secrets.rho, secrets };
+  const s = selfSecret(ivk, i);
+  const [tauA, tauN] = [hs(TAG.tweakA, s), hs(TAG.tweakN, s)];
+  if (tauA === null || tauN === null) return null;
+  const secrets = { tauA, tauN, rho: 0n };
+  return { npk: noteNpk(address, secrets), rho: 0n, secrets };
 }

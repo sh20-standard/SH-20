@@ -346,8 +346,10 @@ pub fn self_secret(ivk: &[u8; 32], i: u32) -> [u8; 32] {
     s
 }
 
-/// The opening (npk, rho) a wallet publishes for its i-th public note, with the note's secrets.
-pub fn public_opening(ivk: &[u8; 32], address: &Address, i: u32) -> Option<(Fr, Fr, NoteSecrets)> {
-    let secrets = note_secrets(&self_secret(ivk, i))?;
-    Some((note_npk(address, &secrets), secrets.rho, secrets))
+/// The opening `npk` a wallet publishes for its i-th public note, with the note's secrets. A public
+/// note has rho = 0 (docs/SPEC-WIRE.md §2), so the returned secrets carry rho = 0, not hr(s_i).
+pub fn public_opening(ivk: &[u8; 32], address: &Address, i: u32) -> Option<(Fr, NoteSecrets)> {
+    let s = self_secret(ivk, i);
+    let secrets = NoteSecrets { tau_a: hs(TAG_TWEAK_A, &s)?, tau_n: hs(TAG_TWEAK_N, &s)?, rho: Fr::zero() };
+    Some((note_npk(address, &secrets), secrets))
 }

@@ -61,7 +61,7 @@ fn circom_input(w: &SpendWitness) -> String {
 }
 
 /// A chain an indexer can replay, made the way wallets make it (docs/SPEC-NOTES.md): in block 2 a
-/// payer mints two public notes of 1,000 "GENE" (leaves 0 and 1); in block 3 it transfers them as
+/// payer mints two public notes of 1,000 "GENE" (leaves 0 and 1, opening npk alone, rho = 0); in block 3 it transfers them as
 /// 1,500 and 400 to a recipient and 100 back to itself (anchor 2); in block 4 the recipient, having
 /// found its two notes by scanning, burns 900 of them and keeps 1,000 (anchor 3). Field elements
 /// are decimal strings, bytes are hex.
@@ -86,11 +86,11 @@ fn scenario(pk: &sh20_circuit::ProvingKey) -> String {
 
     // block 2: the payer's public notes 0 and 1, of 1,000 units each
     let minted: Vec<_> = (0..2).map(|i| notes::public_opening(&payer.ivk, &payer.address, i).expect("opening")).collect();
-    let mut leaves: Vec<Fr> = minted.iter().map(|(npk, rho, _)| model::note_leaf(&tf, &Fr::from(1000u64), npk, rho)).collect();
+    let mut leaves: Vec<Fr> = minted.iter().map(|(npk, sec)| model::note_leaf(&tf, &Fr::from(1000u64), npk, &sec.rho)).collect();
 
     // block 3: TRANSFER 1,000 + 1,000 → 1,500 and 400 to the recipient, 100 of change, anchored at block 2
     let tree = Tree::new(&leaves);
-    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: notes::spend_keys(&payer, &minted[i].2).expect("keys"), v: 1000, rho: minted[i].1, index: i as u64, path: tree.path(i) });
+    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: notes::spend_keys(&payer, &minted[i].1).expect("keys"), v: 1000, rho: minted[i].1.rho, index: i as u64, path: tree.path(i) });
     let pay = [(&recipient.address, 1500u64), (&recipient.address, 400), (&payer.address, 100)];
     let sealed: Vec<(Sealed, notes::NoteSecrets, Fr)> = pay.iter().map(|(to, v)| notes::seal(to, ticker, *v, &fresh()).unwrap_or_else(|e| fail(&e))).collect();
     let outputs: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: sealed[k].2, v: pay[k].1, rho: sealed[k].1.rho });
@@ -122,7 +122,7 @@ fn scenario(pk: &sh20_circuit::ProvingKey) -> String {
         r#"{{"ticker":"GENE","vkDigest":"{}","vk":"{}","mints":[{}],"transfer":"{}","burn":"{}"}}"#,
         hex::encode(pk.vk.digest()),
         hex::encode(pk.vk.to_bytes()),
-        minted.iter().map(|(npk, rho, _)| format!(r#"{{"npk":"{}","rho":"{}"}}"#, d(npk), d(rho))).collect::<Vec<_>>().join(","),
+        minted.iter().map(|(npk, _)| format!(r#"{{"npk":"{}"}}"#, d(npk))).collect::<Vec<_>>().join(","),
         hex::encode(transfer),
         hex::encode(burn),
     )
