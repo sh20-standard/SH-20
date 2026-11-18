@@ -146,6 +146,8 @@ await get('/listings');
 const recent = await get('/blocks?limit=200');
 for (const b of recent) for (const e of [...b.events, ...b.rejected]) if (e.txid) await get(`/tx/${e.txid}`);
 await get(`/digest/${ix.height}`);
+const spent = await get('/nullifiers');
+for (const x of spent.nullifiers) await get(`/nullifier/${x.nullifier}`);
 server.close();
 
 const data = JSON.stringify({ generated: 'build-demo.mjs', activationHeight: A, routes });
