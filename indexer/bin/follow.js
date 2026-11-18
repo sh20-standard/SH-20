@@ -6,11 +6,13 @@
 //
 // Your own node (--rpc) is the trust-minimised choice: an Esplora server is
 // trusted to name the best chain, even though every envelope is re-checked here.
-// No proof verifier is pinned yet, so spends are rejected (see CLAUDE.md).
+// Spends (TRANSFER, BURN, LIST, later DEPLOYs) are rejected unless --verifier names the
+// WebAssembly build of circuit/ (cd circuit && ./build-wasm.sh). That verifier is not audited yet.
 
 import { Indexer } from '../src/indexer.js';
 import { BitcoindSource, EsploraSource, Follower } from '../src/follower.js';
 import { listen } from '../src/api.js';
+import { plonkVerifier } from '../src/adapters/plonk.js';
 
 const args = process.argv.slice(2);
 const opt = (name, def) => {
@@ -20,7 +22,7 @@ const opt = (name, def) => {
 
 const activationHeight = Number(opt('activation', NaN));
 if (!Number.isInteger(activationHeight)) {
-  console.error('usage: node bin/follow.js (--rpc URL [--rpcuser U --rpcpass P] | --esplora URL) --activation HEIGHT [--port 8020] [--host 127.0.0.1] [--network signet] [--confirmations 0] [--interval 15]');
+  console.error('usage: node bin/follow.js (--rpc URL [--rpcuser U --rpcpass P] | --esplora URL) --activation HEIGHT [--port 8020] [--host 127.0.0.1] [--network signet] [--confirmations 0] [--interval 15] [--verifier sh20_circuit.wasm [--vk spend.vk]]');
   process.exit(1);
 }
 
@@ -33,7 +35,8 @@ else {
 }
 
 const network = opt('network', 'signet');
-const indexer = new Indexer({ profile: { activationHeight, network } });
+const verifier = opt('verifier') ? plonkVerifier({ wasm: opt('verifier'), vk: opt('vk') }) : undefined;
+const indexer = new Indexer({ profile: { activationHeight, network }, verifier });
 const follower = new Follower({
   indexer,
   source,

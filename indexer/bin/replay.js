@@ -2,21 +2,22 @@
 // Replays a folder of Bitcoin Core `getblock <hash> 2` JSON files (one block per
 // file, any names) and prints the SH-20 root and digest after each block.
 //
-//   node bin/replay.js <folder> [--activation <height>]
+//   node bin/replay.js <folder> [--activation <height>] [--verifier sh20_circuit.wasm [--vk spend.vk]]
 //
-// No proof verifier is pinned yet, so every envelope that needs a proof is
-// rejected and listed. Proof-less envelopes (DEPLOY genesis, MINT, TAKE, CLAIM)
-// are fully checked.
+// Proof-less envelopes (DEPLOY genesis, MINT, TAKE, CLAIM) are fully checked. Every
+// envelope that needs a proof is rejected and listed unless --verifier names the
+// WebAssembly build of circuit/ (cd circuit && ./build-wasm.sh; not audited yet).
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Indexer } from '../src/indexer.js';
 import { fromBitcoindBlock } from '../src/adapters/bitcoind.js';
+import { plonkVerifier } from '../src/adapters/plonk.js';
 
 const args = process.argv.slice(2);
 const dir = args[0];
 if (!dir) {
-  console.error('usage: node bin/replay.js <folder of getblock-2 JSON files> [--activation <height>]');
+  console.error('usage: node bin/replay.js <folder of getblock-2 JSON files> [--activation <height>] [--verifier sh20_circuit.wasm [--vk spend.vk]]');
   process.exit(1);
 }
 const ai = args.indexOf('--activation');
@@ -27,7 +28,9 @@ const blocks = readdirSync(dir)
   .map((f) => fromBitcoindBlock(JSON.parse(readFileSync(join(dir, f), 'utf8'))))
   .sort((a, b) => a.height - b.height);
 
-const ix = new Indexer({ profile: { activationHeight } });
+const flag = (name) => (args.indexOf(name) >= 0 ? args[args.indexOf(name) + 1] : undefined);
+const verifier = flag('--verifier') ? plonkVerifier({ wasm: flag('--verifier'), vk: flag('--vk') }) : undefined;
+const ix = new Indexer({ profile: { activationHeight }, verifier });
 for (const b of blocks) {
   const r = ix.applyBlock(b);
   console.log(`${r.height} root=${r.root.toString(16).padStart(64, '0')} digest=${r.digest} accepted=${r.events.length} rejected=${r.rejected.length}`);

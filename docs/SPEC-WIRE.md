@@ -41,7 +41,7 @@ A transaction carries **at most one** envelope. Two envelopes of any kind reject
   `OP_0 OP_IF <push "SH20"> <push>... OP_ENDIF`; each push is minimal and at most 520 bytes;
   the envelope is `"SH20" ‖ concat(pushes)`.
 
-Proof-carrying envelopes (~2.4 KB with the pinned Halo2 proof) use the witness carrier.
+Proof-carrying envelopes (835 bytes for a TRANSFER, with the pinned 480-byte proof) use the witness carrier.
 
 ## 4. Envelopes
 
@@ -51,11 +51,11 @@ After parsing, re-serialising must give the same bytes; trailing bytes are rejec
 
 | Type | Code | Body after the header | Bytes |
 | --- | --- | --- | --- |
-| DEPLOY | 0x01 | `ticker(4) max(8) lim(8) pre(8) start(4) end(4) unlock(4) price(8) payMode(1) psLen(1) payScript(psLen) [team opening(64) if pre > 0] [spend if bytes remain]` | 120 genesis with team; + spend |
+| DEPLOY | 0x01 | `ticker(4) max(8) lim(8) pre(8) start(4) end(4) unlock(4) price(8) payMode(1) psLen(1) payScript(psLen) [team opening(64) if pre > 0] [spend if bytes remain]` | 120 genesis with team; + 829 with a spend |
 | MINT | 0x02 | `ticker(4) opening(64)` | 74 |
-| TRANSFER | 0x03 | `spend` | 2,435 with a 2,080-byte proof |
-| BURN | 0x04 | `ticker(4) vPub(8) spend` | 2,447 |
-| LIST | 0x05 | `ticker(4) amount(8) price(8) lockVout(1) psLen(1) payScript(psLen) spend` | 2,457 + payScript |
+| TRANSFER | 0x03 | `spend` | 835 |
+| BURN | 0x04 | `ticker(4) vPub(8) spend` | 847 |
+| LIST | 0x05 | `ticker(4) amount(8) price(8) lockVout(1) psLen(1) payScript(psLen) spend` | 857 + payScript |
 | TAKE | 0x06 | `opening(64)` | 70 |
 | CLAIM | 0x07 | `listTxid(32) opening(64) sig(64)` | 166 |
 
@@ -69,15 +69,46 @@ anchorHeight(4) ‖ nf0(32) ‖ nf1(32) ‖ 3 × [ leaf(32) ‖ pk_eph(33) ‖ c
 ```
 
 - `pk_eph`: compressed secp256k1 point (prefix 02/03). `ct`: amount u64 ‖ ticker (4) ‖ 16-byte tag, sealed to the recipient.
-- `1 ≤ proofLen ≤ 4096`.
+- `1 ≤ proofLen ≤ 4096`. The pinned verifier accepts only `proofLen = 480` (below), so a spend section is 829 bytes.
 - `body` = every envelope byte before `proofLen`; `bodyHash = SHA256("sh20/v0/body" ‖ body) mod r`.
 
-**Verifier inputs** (public inputs of the spend circuit): `R[anchorHeight], nf0, nf1, leaf0, leaf1, leaf2, bodyHash, vPub, tPub`.
+**Verifier inputs** (public inputs of the spend circuit, in this order): `R[anchorHeight], nf0, nf1, leaf0, leaf1, leaf2, bodyHash, vPub, tPub`.
 
-The circuit must prove: both inputs are notes in the tree under the root (an input with `v = 0` is a dummy and skips
-membership); the nullifiers are derived from the owner's secret key, the leaf and its position; all five notes share one
-private `t`; every `v` and `vPub` fits in 64 bits; `v_in0 + v_in1 = v_out0 + v_out1 + v_out2 + vPub`;
-`vPub × (t − tPub) = 0`; each output leaf follows §2; the inputs are authorised by the owner over `bodyHash`.
+**The relation.** A proof shows knowledge of an asset id `t` (§2) and, for each of the two inputs, of `v, rho, nk, Ak, index`, a sibling
+path and a signature, and for each of the three outputs of `v, npk, rho`, such that:
+
+- input note: `npk = Poseidon(Ak.x, Ak.y, NK.x, NK.y)` with `NK = nk·B8` and `0 ≤ nk < l`; `leaf = H(H(H(TAG_LEAF, t), v), H(npk, rho))`;
+- membership: unless `v = 0`, `leaf` is at position `index < 2^32` of the tree with root `R[anchorHeight]`. An input with `v = 0`
+  is a dummy: it skips membership only, and still has a nullifier and a signature;
+- nullifier: `nf = Poseidon(nk, leaf, index)`;
+- authorisation: an EdDSA-Poseidon signature `(R8, S)` under `Ak` over `bodyHash`: `S·B8 = R8 + h·8·Ak`,
+  `h = Poseidon(R8.x, R8.y, Ak.x, Ak.y, bodyHash)` as its integer below `r`, `0 ≤ S < l`, and `4·Ak` has a non-zero x;
+- output note: `leaf = H(H(H(TAG_LEAF, t), v), H(npk, rho))` with the same `t`;
+- every `v` and `vPub` is below `2^64`, and `v_in0 + v_in1 = v_out0 + v_out1 + v_out2 + vPub`;
+- `vPub × (t − tPub) = 0`.
+
+`Poseidon(n inputs)` is circomlib's (width n + 1, R_F = 8, R_P = 57, 56, 60, 60 for n = 2, 3, 4, 5). BabyJubJub is
+`168700·x² + y² = 1 + 168696·x²·y²` over `Fr`; `l = 2736030358979909402780800718157159386076813972158567259200215660948447373041`
+is the order of its prime subgroup and `B8 = (5299619240641551281634865583518297030282874472190772894086521144482721001553,
+16950150798460657717958625567821834550301663161624707787222815936182638968203)` its generator.
+
+**The proof.** PLONK (ePrint 2019/953, section 8: three wires, selectors `qM qL qR qO qC`, coset shifts `k1 = 2`, `k2 = 3`) over
+BN254 with KZG commitments, on a domain of 2^17 rows. The reference circuit and verifier are in `circuit/`.
+
+- SRS: the first 131,078 G1 powers and `τ·G2` of Hermez `powersOfTau28_hez_final_18.ptau`
+  (BLAKE2b-512
+  `7e6a9c2e5f05179ddfc923f38f917c9e6831d16922a902b0b4758b8e79c2ab8a81bb5f29952e16ee6c5067ed044d7857b5de120a90704c1d3b637fd94b95b13e`,
+  as listed by snarkjs). No other setup exists: the keys are a deterministic function of the
+  circuit and this SRS.
+- Verifying key: 712 bytes, `power(4) nPublic(4) k1(32) k2(32) Qm Ql Qr Qo Qc S1 S2 S3 (64 each: x ‖ y) X2(128)`.
+  Its digest `SHA256("sh20/v0/vk" ‖ key)` is pinned:
+  `da847145dbc5aa847af92ce5696fbd60bd57e6fbdf0e077cc1b62a0ba302492d` (draft: it changes with any change to the circuit until frozen).
+- Proof, 480 bytes: `A B C Z T1 T2 T3 Wxi Wxiw` (G1, 32 bytes each) then `a b c s1 s2 zω` (scalars, 32 bytes each).
+  A G1 point is its x coordinate, little-endian, with bit 255 set when `y > q − y`; x must be below the base-field modulus `q`
+  and on the curve, and the point at infinity has no encoding. A scalar is little-endian and below `r`. Anything else is invalid.
+- Challenges: Keccak-256 over big-endian encodings (a point is `x ‖ y`, 32 bytes each), read as a big-endian integer mod `r`:
+  `β = K(Qm Ql Qr Qo Qc S1 S2 S3 ‖ public inputs ‖ A B C)`, `γ = K(β)`, `α = K(β γ Z)`, `ξ = K(α T1 T2 T3)`,
+  `v = K(ξ a b c s1 s2 zω)`, `u = K(Wxi Wxiw)`. This is the transcript of snarkjs' PLONK, whose verifier accepts these proofs.
 
 ## 5. Acceptance rules
 
@@ -114,5 +145,5 @@ Reorgs: roll back to the fork point (per-block undo log) and replay.
 
 ## 7. Not final
 
-The spend circuit and its pinned verifying key; the `ct` sealing; the profile constants (`A`, `D`, network);
-the canonical event encoding inside the digest.
+The verifying-key digest of §4 until the circuit is audited and frozen; the `ct` sealing; the profile constants
+(`A`, `D`, network); the canonical event encoding inside the digest.

@@ -26,6 +26,10 @@ export const N_IN = 2;
 export const N_OUT = 3;
 export const OUT_BYTES = 32 + 33 + 28; // leaf | pk_eph | ct (v u64, ticker 4, tag 16)
 export const PROOF_MAX = 4096;
+/** A spend proof: PLONK over BN254, 9 G1 points and 6 scalars (docs/SPEC-WIRE.md §4). */
+export const PROOF_BYTES = 480;
+/** SHA-256("sh20/v0/vk" ‖ verifying key) of the spend circuit on the Hermez setup (draft v0.1). */
+export const SPEND_VK_DIGEST = 'da847145dbc5aa847af92ce5696fbd60bd57e6fbdf0e077cc1b62a0ba302492d';
 export const PAYSCRIPT_MAX = 34;
 export const MIN_LOCK_SATS = 330n;
 export const MAX_PUSH = 520;
@@ -37,6 +41,7 @@ export const DOMAIN = Object.freeze({
   LEAF: toFr(sha('sh20/v0/leaf')),
   BODY: 'sh20/v0/body',
   CLAIM: 'sh20/v0/claim',
+  VK: 'sh20/v0/vk',
   DIGEST: 'sh20-v0',
 });
 
