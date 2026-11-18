@@ -73,6 +73,8 @@ test('indexers on different profiles (activation height, D) refuse the mint', as
   r = await crossCheck([ix('a', status), ix('b', { ...status, deployBurn: '0' })], 'SH20');
   assert.match(r.problems.join(), /deployBurn 0 ≠ 1000/);
   assert.equal(profileOf({}).deployBurn, null);
+  for (const bad of ['abc', '1.5', -1, '1e3', {}, true]) assert.equal(profileOf({ deployBurn: bad }).deployBurn, null, `deployBurn ${JSON.stringify(bad)}`);
+  assert.equal(profileOf({ deployBurn: 1000 }).deployBurn, 1000n);
 });
 
 test('MINT of SH20 accepted by the indexer: free, 1,000 units, terms from the profile', async () => {

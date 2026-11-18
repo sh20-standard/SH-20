@@ -19,7 +19,8 @@ export function profileOf(status) {
   const n = (x) => (x === undefined || x === null || x === '' ? null : x);
   return {
     activationHeight: Number.isInteger(status?.activationHeight) ? status.activationHeight : null,
-    deployBurn: n(status?.deployBurn) === null ? null : BigInt(status.deployBurn),
+    // anything but a whole number is unknown (never thrown: an indexer must not break the page)
+    deployBurn: /^[0-9]{1,20}$/.test(String(n(status?.deployBurn))) ? BigInt(status.deployBurn) : null,
     genesis: n(status?.genesis),
   };
 }
