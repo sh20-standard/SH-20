@@ -3,6 +3,7 @@
 // can be served:
 //
 //   node check.mjs [--runs 1] [--threads 4]
+//   node check.mjs --url https://host/path/      the page as served somewhere else (a tunnel, a static host)
 //
 //   headers           the server sends COOP/COEP                      → threaded prover
 //   service worker    no headers, secure context: sw.js adds them     → threaded prover
@@ -83,21 +84,29 @@ async function chrome() {
   };
 }
 
+const given = flag('--url');
 const lan = Object.values(networkInterfaces()).flat().find((i) => i && i.family === 'IPv4' && !i.internal)?.address;
-const cases = [
-  ['headers', 8471, true, 'localhost', 'threads', 'threads'],
-  ['service worker', 8472, false, 'localhost', 'threads', 'threads'],
-  ['one thread', 8471, true, 'localhost', 'single', 'single'],
-  ...(lan ? [['plain http', 8472, false, lan, 'threads', 'single']] : []),
-];
+// name, port, isolated, host, what the page is asked for, what it should end up running
+const cases = given
+  ? [
+      ['all cores', null, null, null, 'threads', 'threads'],
+      ['one thread', null, null, null, 'single', 'single'],
+    ]
+  : [
+      ['headers', 8471, true, 'localhost', 'threads', 'threads'],
+      ['service worker', 8472, false, 'localhost', 'threads', 'threads'],
+      ['one thread', 8471, true, 'localhost', 'single', 'single'],
+      ...(lan ? [['plain http', 8472, false, lan, 'threads', 'single']] : []),
+    ];
 
-const stops = [serve(8471, true), serve(8472, false)];
+const stops = given ? [] : [serve(8471, true), serve(8472, false)];
 const browser = await chrome();
 let failed = false;
 try {
   await sleep(400);
   for (const [name, port, , host, auto, expected] of cases) {
-    const r = await browser.open(`http://${host}:${port}/?auto=${auto}&runs=${runs}&threads=${threads}`);
+    const base = given ? given.replace(/\/?$/, '/') : `http://${host}:${port}/`;
+    const r = await browser.open(`${base}?auto=${auto}&runs=${runs}&threads=${threads}`);
     const ok = !r.error && r.mode === expected && r.proof_bytes === 480;
     failed ||= !ok;
     console.log(

@@ -13,6 +13,7 @@ rustup target add wasm32-unknown-unknown wasm32-wasip1-threads   # once
 ./build.sh              # web/dist/: the page, both WebAssembly builds, the proving key (10 MB)
 node serve.mjs          # http://localhost:8080, with the isolation headers
 node check.mjs          # the page in headless Chrome, for each way it can be served
+node check.mjs --url https://…   # the same check against the page as served somewhere else
 ```
 
 ## Put it in front of a phone
