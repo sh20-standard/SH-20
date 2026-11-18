@@ -125,6 +125,9 @@ The verifier stays cross-checked against snarkjs' PLONK verifier.
   [77ph/shielded-bitcoin](https://github.com/77ph/shielded-bitcoin) — private BTC transfers, no tokens;
   the paper leaves BTC entry and exit out of scope and nothing is deployed yet.
 - [pERC20](https://github.com/PLabs4/pERC20_) — private tokens on EVM chains, issuer-only mint.
+- [SBRC-20](https://www.sbrc20.com/) — the same idea as SH-20 (fair mints, one shielded pool for every ticker), announced in
+  September 2026. Public BRC-20-style balances first, then a shield step that reveals the ticker and the amount going in. As of
+  November 2026 its spec is a draft, its published indexer handles only the public side, and no proof system is chosen.
 
 ## Reserved for later
 

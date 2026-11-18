@@ -90,8 +90,11 @@ Done in `circuit/` (2026-11-18):
 - Checks: 26 adversarial witnesses, every variable pinned by a gate, circomlib's statement of the relation accepts the
   witnesses, and snarkjs both ways: its verifier accepts our proofs, our verifier accepts its proofs (`bench/cross-check.sh`).
 
-Not done: an audit; the figures on a real phone (the page exists and was measured on a laptop browser: 4.5 s on 10 threads,
-25.5 s on one; nobody has run it on a phone yet); a review of the `ct` sealing format (`docs/SPEC-NOTES.md`) and its reference code with vectors; transfers in the vault (it mints and syncs privately
+Measured on a phone (2026-11-18, iPhone 18 Pro Max, Safari, through the test page): 14.5 s per proof on 4 threads,
+31.9 s on one, 232 MB; key load 0.7 s. On the M1 Pro in Chrome: 4.5 s on 10 threads, 25.5 s on one. Four threads are only
+2.2 times faster than one on the iPhone (Safari reports 4 of its 6 cores): worth a look before the 2^16 domain.
+
+Not done: an audit; a mid-range phone; a review of the `ct` sealing format (`docs/SPEC-NOTES.md`) and its reference code with vectors; transfers in the vault (it mints and syncs privately
 today); a relayer; a second independent indexer; the
 profile constants (activation height, `D`); the canonical event encoding inside the digest.
 
@@ -169,8 +172,15 @@ Use Fable 5.2 for the circuit and anything security-critical; Opus 5.5 is fine f
 - **Shielded Ordinals** (Ord Dropz): private NFTs; the platform signs mints and buys; "shielded runes" listed as not yet built.
 - **Shielded Bitcoin** ([alloc] init, paper September 2026, ePrint 2026/2749): Zcash-style private BTC transfers as a metaprotocol;
   BTC only, no tokens, BTC entry and exit left to a later paper, nothing deployed yet.
+- **SBRC-20** (sbrc20.com, announced 2026-09-28): the closest one, "BRC-20, but shielded": fair mints like BRC-20, then a shielded
+  pool shared by every ticker, so private transfers hide the ticker too. Their token $SHLD (21M, 1,000 per mint, a paid mint
+  whose fee doubles over time) is deployed on mainnet at block 970,040. As checked on 2026-11-18, the spec is a "draft v0.1"
+  with no proof system chosen, and their downloadable indexer handles only public deploy, mint and transfer: no shield, no
+  private transfer, no proof verification, despite an announcement that shielding is live. No team named, no code for the
+  private part. SH-20's answer: be the first whose private part anyone can run and verify (open code, a public signet).
 
-SH-20's edge: ticker hidden, unique tickers, private by default from the mint, Bitcoin only.
+SH-20's edge: ticker hidden, unique tickers, private by default from the mint (no public balance stage), Bitcoin only, and a
+private part that already proves and verifies, in open code.
 
 ## Open decisions (ask the maintainer)
 
