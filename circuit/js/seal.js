@@ -9,7 +9,8 @@ import { x25519, x25519Public } from './address.js';
 import { L, add, mulBase8 } from './babyjub.js';
 import { noteKeys, npkOf } from './notes.js';
 
-const TAG = Object.freeze({
+/** The domain-separation tags of docs/SPEC-NOTES.md (shared with webcrypto.js). */
+export const TAG = Object.freeze({
   seed: 'sh20/v0/seed',
   ask: 'sh20/v0/key/ask',
   nsk: 'sh20/v0/key/nsk',
@@ -21,7 +22,7 @@ const TAG = Object.freeze({
   aead: 'sh20/v0/note/aead',
   self: 'sh20/v0/self',
 });
-const TICKER = /^[A-Z0-9]{4}$/;
+export const TICKER = /^[A-Z0-9]{4}$/;
 
 const bytes32 = (name, b) => {
   if (!(b instanceof Uint8Array) || b.length !== 32) throw new RangeError(`${name} must be 32 bytes`);

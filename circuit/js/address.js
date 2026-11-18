@@ -177,10 +177,11 @@ export function encodeAddress(hrp, { ivkPub, a, n }) {
 }
 
 /**
- * Decodes and validates an address for the network `hrp`. Throws unless: version 0, 97 bytes, A and
- * N key points, and an IVK that is not a low-order point (for which every shared secret is zero).
+ * Decodes an address for the network `hrp` and makes every check that needs no key agreement:
+ * version 0, 97 bytes, A and N key points. Not for payers: `decodeAddress` adds the check on IVK.
+ * (Apart so that the WebCrypto version, webcrypto.js, runs the same code up to that check.)
  */
-export function decodeAddress(hrp, s) {
+export function parseAddress(hrp, s) {
   const decoded = bech32mDecode(s);
   if (decoded.hrp !== hrp) throw new Error('address: for another network');
   const d = decoded.data;
@@ -190,6 +191,15 @@ export function decodeAddress(hrp, s) {
   const n = unpackPoint(d.subarray(65, 97));
   if (!a || !isKeyPoint(a)) throw new Error('address: A is not a key');
   if (!n || !isKeyPoint(n)) throw new Error('address: N is not a key');
-  if (x25519(Buffer.alloc(32, 0x42), ivkPub).every((byte) => byte === 0)) throw new Error('address: IVK is a low-order point');
   return { ivkPub, a, n };
+}
+
+/**
+ * Decodes and validates an address for the network `hrp`. Throws unless: version 0, 97 bytes, A and
+ * N key points, and an IVK that is not a low-order point (for which every shared secret is zero).
+ */
+export function decodeAddress(hrp, s) {
+  const address = parseAddress(hrp, s);
+  if (x25519(Buffer.alloc(32, 0x42), address.ivkPub).every((byte) => byte === 0)) throw new Error('address: IVK is a low-order point');
+  return address;
 }

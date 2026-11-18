@@ -27,14 +27,29 @@ export function hashToScalar(tag, ...parts) {
 
 const challenge = (r8, ak, m) => poseidon([r8[0], r8[1], ak[0], ak[1], m]);
 
-/** Signs the field element `m` (a bodyHash) with the note's spend scalar `sk` in [1, l). */
-export function sign(sk, m) {
+/** Checks the inputs of a signature; returns what the nonce is hashed from: sk and m, 32 bytes each, big-endian. */
+export function signInputs(sk, m) {
   if (typeof sk !== 'bigint' || sk <= 0n || sk >= L) throw new RangeError('sk must be a BigInt in [1, l)');
   if (typeof m !== 'bigint' || m < 0n || m >= FR) throw new RangeError('the message must be a field element');
+  return [be32(sk), be32(m)];
+}
+
+/**
+ * The signature of `m` under `sk` with the nonce `r` in [1, l). Two signatures made with one nonce
+ * for two messages reveal `sk`: `r` comes from `hashToScalar(NONCE_TAG, ...signInputs(sk, m))` and
+ * from nowhere else. (Apart so that webcrypto.js hashes the nonce with the platform's SHA-256.)
+ */
+export function signWithNonce(sk, m, r) {
+  signInputs(sk, m);
+  if (typeof r !== 'bigint' || r <= 0n || r >= L) throw new RangeError('the nonce must be a BigInt in [1, l)');
   const ak = mulBase8(sk);
-  const r = hashToScalar(NONCE_TAG, be32(sk), be32(m));
   const r8 = mulBase8(r);
   return { r8, s: (r + 8n * challenge(r8, ak, m) * sk) % L };
+}
+
+/** Signs the field element `m` (a bodyHash) with the note's spend scalar `sk` in [1, l). */
+export function sign(sk, m) {
+  return signWithNonce(sk, m, hashToScalar(NONCE_TAG, ...signInputs(sk, m)));
 }
 
 /** True iff the circuit accepts (r8, s) as a signature of `m` under `ak`. */

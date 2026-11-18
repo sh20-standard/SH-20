@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SH-20: WebCrypto primitives</title>
+<style>
+  body { margin: 0; padding: 1rem; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: #fbfaf7; color: #17181c; }
+  @media (prefers-color-scheme: dark) { body { background: #121316; color: #ecebe6; } }
+  h1 { font-size: 1.2rem; margin: 0 0 0.25rem; }
+  p { margin: 0.25rem 0 0.75rem; }
+  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body>
+<h1>SH-20: WebCrypto primitives</h1>
+<p id="summary">Running the known answers of subtle.js in this browser…</p>
+<pre id="out"></pre>
+<script type="module">
+  // Known answers for ../subtle.js in this browser (test/subtle-kat.js). `node test/browser.mjs` opens
+  // this page in headless Chrome; it can also be opened by hand, over https or from localhost.
+  const root = document.documentElement;
+  const say = (text) => (document.getElementById('summary').textContent = text);
+  try {
+    const [subtle, { knownAnswers }] = await Promise.all([import('../subtle.js'), import('./subtle-kat.js')]);
+    const results = await knownAnswers(subtle);
+    const failed = results.filter((r) => !r.ok);
+    document.getElementById('out').textContent = results.map((r) => `${r.ok ? 'ok  ' : 'FAIL'} ${r.name}${r.ok ? '' : `\n     got  ${r.got}\n     want ${r.want}`}`).join('\n');
+    root.dataset.checks = String(results.length);
+    root.dataset.failed = String(failed.length);
+    root.dataset.result = failed.length ? 'fail' : 'pass';
+    say(failed.length ? `${failed.length} of ${results.length} checks failed in ${navigator.userAgent}` : `All ${results.length} checks pass in ${navigator.userAgent}`);
+  } catch (e) {
+    root.dataset.result = 'error';
+    say(`Could not run: ${e?.message ?? e}`);
+  }
+</script>
+</body>
+</html>
