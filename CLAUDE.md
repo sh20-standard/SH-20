@@ -20,7 +20,8 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
    signature, required server or upgrade switch. A fix is a new version byte that indexers opt into.
 3. **Honest supply.** Max supply, team allocation and its unlock block are public at DEPLOY. Never add
    anything that hides insider supply or insider selling schedules from buyers.
-4. **No project-run trusted setup.** Proofs use Halo2-KZG over the public Hermez `pot18` SRS.
+4. **No project-run trusted setup.** Proofs use a universal public setup (the Hermez `pot18` SRS):
+   Halo2-KZG today; PLONK or fflonk on the same SRS if it gives smaller proofs (see the cost budget).
 5. **Contributor anonymity.** Commit as `SH-20 contributors <contributors@sh20.invalid>`. Never commit
    personal names, emails, IP addresses, wallet addresses or machine paths.
 6. **Determinism.** Any change to bytes or rules updates `docs/SPEC-WIRE.md`, the tests and
