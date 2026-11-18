@@ -59,6 +59,7 @@ const envs = {
   deployNoTeam: { ...gene, ticker: 'SEC2', pre: 0n, team: null, start: 7, unlock: 7, spend: spend('deploy2', 4) },
   burn: { type: 'BURN', ticker: 'SH20', vPub: 10n, spend: spend('burn', 5) },
   mintPaid: { type: 'MINT', ticker: 'GENE', ...op('mint2') },
+  mintBatch: { type: 'MINT', ticker: 'GENE', ...op('mint3'), k: 3 },
 };
 const ser = Object.fromEntries(Object.entries(envs).map(([k, v]) => [k, serializeEnvelope(v)]));
 
@@ -74,7 +75,10 @@ const txs = [
   [{ txid: txid('deploy-gene-tx'), vin: [{ txid: txid('f5'), vout: 0, witness: witness(ser.deployWithTeam) }], vout: [] }],
   [{ txid: txid('deploy2-tx'), vin: [{ txid: txid('f6'), vout: 0, witness: witness(ser.deployNoTeam) }], vout: [] }],
   [{ txid: txid('burn-tx'), vin: [{ txid: txid('f7'), vout: 0, witness: witness(ser.burn) }], vout: [] }],
-  [{ txid: txid('mint2'), vin: [input('f8')], vout: [{ value: 1000n, script: opReturn(ser.mintPaid) }] }],
+  [
+    { txid: txid('mint2'), vin: [input('f8')], vout: [{ value: 1000n, script: opReturn(ser.mintPaid) }] },
+    { txid: txid('mint3'), vin: [input('f9')], vout: [{ value: 3000n, script: opReturn(ser.mintBatch) }] },
+  ],
 ];
 const blocks = txs.map((t, i) => ({ height: i + 1, hash: `b${i + 1}`, txs: t }));
 

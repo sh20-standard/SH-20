@@ -46,6 +46,27 @@ test('payMode 2 pays the deployer script; sold out after (max - pre) / lim mints
   assert.equal(ix.token('GENE').mints, 3n);
 });
 
+test('batch MINT: one note of k × lim for k × price, and the last batch gets what is left', () => {
+  const { ix, c } = setup();
+  const pay = p2wpkh();
+  c.block(tx({ env: deployEnv({ max: 12000n, payMode: 2, payScript: pay }) }));
+  const batch = (k, sats, o = opening()) => tx({ env: { type: 'MINT', ticker: 'GENE', ...o, k }, vout: [{ value: sats, script: pay }] });
+  const o = opening();
+  const b2 = c.block(batch(10, 9999n), batch(10, 10000n, o), batch(5, 2000n), batch(3, 2000n), batch(2, 2000n));
+  // 10 underpaid; 10 paid; 5 when 2 are left pays 2 and gets 2; then sold out.
+  assert.deepEqual(reasons(b2), ['mint not paid', 'sold out', 'sold out']);
+  assert.deepEqual(b2.events.map((e) => [e.type, e.v]), [['MINT', 10000n], ['MINT', 2000n]]);
+  assert.equal(ix.token('GENE').mints, 12n);
+  const note = ix.notes.find((x) => x.kind === 'MINT' && x.v === 10000n);
+  assert.equal(note.npk, o.npk.toString(16).padStart(64, '0'));
+  assert.equal(BigInt('0x' + note.leaf), noteLeaf(G, 10000n, o.npk, 0n));
+  assert.equal(ix.notes.filter((x) => x.kind === 'MINT').length, 2); // one leaf per envelope, whatever k
+
+  // The genesis token is free: a batch costs network fees only.
+  const g = c.block(tx({ env: { type: 'MINT', ticker: 'SH20', ...opening(), k: 10 } }));
+  assert.deepEqual([g.events[0].v, ix.token('SH20').mints], [10000n, 10n]);
+});
+
 test('DEPLOY rules: public mint required, multiples, windows, prices', () => {
   const { c } = setup();
   const b1 = c.block(

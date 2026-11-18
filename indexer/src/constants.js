@@ -31,6 +31,8 @@ export const PROOF_BYTES = 480;
 export const SPEND_VK_DIGEST = 'da847145dbc5aa847af92ce5696fbd60bd57e6fbdf0e077cc1b62a0ba302492d';
 export const PAYSCRIPT_MAX = 34;
 export const MIN_LOCK_SATS = 330n;
+/** At most this many mints in one MINT envelope (one note of k × lim, paid k × price). */
+export const MINT_BATCH_MAX = 10;
 export const MAX_PUSH = 520;
 
 const sha = (s) => createHash('sha256').update(s, 'utf8').digest();

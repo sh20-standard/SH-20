@@ -72,6 +72,10 @@
     "mintPaid": {
       "bytes": 42,
       "hex": "53483230000247454e453dfc2abfbef66a625d9081ea5ac2eeeaa2257e22463338849a45c94f90278121"
+    },
+    "mintBatch": {
+      "bytes": 43,
+      "hex": "53483230000247454e45e550bdc98cc5f5ed1fc2790d67774c79b89a67492121641eac5a2fb23b92221b03"
     }
   },
   "scenario": {
@@ -251,6 +255,22 @@
                 "script": "6a2a53483230000247454e453dfc2abfbef66a625d9081ea5ac2eeeaa2257e22463338849a45c94f90278121"
               }
             ]
+          },
+          {
+            "txid": "0dc13cbb24a48421373b50cc1f597af2aa822dc1650cb639c792c52df309122b",
+            "vin": [
+              {
+                "txid": "d998872309c26228b0655866ade55d8864c2dc50b99450f2dac6714adfda0914",
+                "vout": 0,
+                "witness": []
+              }
+            ],
+            "vout": [
+              {
+                "value": "3000",
+                "script": "6a2b53483230000247454e45e550bdc98cc5f5ed1fc2790d67774c79b89a67492121641eac5a2fb23b92221b03"
+              }
+            ]
           }
         ]
       }
@@ -315,22 +335,23 @@
       },
       {
         "height": 7,
-        "root": "078430d52cf5ae548fa59207815a31c282f179cbf419d2161a90bad6e379a1ed",
+        "root": "27d1b3a070c779893259c74ea6e8e8450f0a50de088bb34a6c5ea55f7b1f16cd",
         "events": [
+          "MINT",
           "MINT"
         ],
-        "eventsH": "022651c41d676e89859b957a14a6ff2a4fd9c57db3f01bc05e44bef0572ad503c047454e45e80300000000000012000000",
-        "digest": "ac78cf1d091e17d04984b5d317bf324dddf3c053ef11112e27665511dd896b3d"
+        "eventsH": "022651c41d676e89859b957a14a6ff2a4fd9c57db3f01bc05e44bef0572ad503c047454e45e80300000000000012000000020dc13cbb24a48421373b50cc1f597af2aa822dc1650cb639c792c52df309122b47454e45b80b00000000000013000000",
+        "digest": "9fdca6c8427d2a1ecba7b572ada26b273e314ce232622755cbd85c5df5a003df"
       }
     ],
     "final": {
-      "treeSize": 19,
+      "treeSize": 20,
       "sh20": {
         "mints": "1",
         "burned": "2010"
       },
       "gene": {
-        "mints": "1",
+        "mints": "4",
         "teamUnlocked": true
       },
       "listing": "SOLD"

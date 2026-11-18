@@ -64,19 +64,21 @@ const blocks = new Map(); // height -> txs
 const at = (height, ...txs) => blocks.set(height, [...(blocks.get(height) || []), ...txs]);
 
 const deploy = (seed, env) => ({ txid: txid(seed), env, carrier: env.spend ? 'witness' : 'opreturn' });
-const mintTx = (seed, ticker, payOut) => ({ txid: txid(seed), env: { type: 'MINT', ticker, ...op(seed) }, ...payOut });
+const mintTx = (seed, ticker, payOut, k = 1) => ({ txid: txid(seed), env: { type: 'MINT', ticker, ...op(seed), k }, ...payOut });
 const spendTx = (seed, env) => ({ txid: txid(seed), env, carrier: 'witness' });
 
 // SH20, the genesis token, exists from block A (activation profile): free mints, network fees only.
 for (let i = 0; i < 6; i++) at(A + 1, mintTx(`sh20-mint-${i}`, 'SH20', { burnSats: 0n }));
 for (let i = 6; i < 11; i++) at(A + 3, mintTx(`sh20-mint-${i}`, 'SH20', { burnSats: 0n }));
 for (let i = 11; i < 14; i++) at(A + 4, mintTx(`sh20-mint-${i}`, 'SH20', { burnSats: 0n }));
+at(A + 4, mintTx('sh20-batch', 'SH20', { burnSats: 0n }, 10)); // ten mints in one transaction
 at(A + 6, spendTx('transfer-1', { type: 'TRANSFER', spend: spend('transfer-1', A + 4) }), spendTx('transfer-2', { type: 'TRANSFER', spend: spend('transfer-2', A + 5) }));
 at(A + 7, deploy('deploy-nova', {
   type: 'DEPLOY', ticker: 'NOVA', max: 10000000n, lim: 500n, pre: 500000n, start: A + 10, end: 0, unlock: A + 4320,
   price: 2500n, payMode: 2, payScript: novaPay, team: op('nova-team'), spend: spend('deploy-nova', A + 6),
 }));
 for (let i = 0; i < 8; i++) at(A + 10, mintTx(`nova-mint-${i}`, 'NOVA', { vout: [{ value: 2500n, script: novaPay }] }));
+at(A + 10, mintTx('nova-batch', 'NOVA', { vout: [{ value: 7500n, script: novaPay }] }, 3));
 at(A + 10, mintTx('nova-mint-unpaid', 'NOVA', { vout: [{ value: 1000n, script: novaPay }] }));
 at(A + 10, mintTx('kiln-mint-too-early', 'KILN', { burnSats: 0n }));
 const listGene = spendTx('list-sh20', {

@@ -46,7 +46,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 51 tests (4 need the verifier module below and are skipped without it)
+npm test            # 52 tests (4 need the verifier module below and are skipped without it)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
@@ -144,7 +144,7 @@ Keep only what the protocol needs; add nothing that costs bytes without a clear 
 
 | Action | Today (v0.3) | Target |
 | --- | --- | --- |
-| MINT (proof-less, OP_RETURN) | 42-byte envelope (v0.3), about 164 vB with one input and one change output | ~165 vB |
+| MINT (proof-less, OP_RETURN) | 42-byte envelope (v0.3), about 164 vB with one input and one change output; up to 10 mints in 43 bytes, about 165 vB | ~165 vB |
 | TRANSFER, alone | 830-byte envelope (480-byte PLONK proof), about 339 vB + commit | ≤ ~350 vB |
 | TRANSFER, in a relayer batch | not supported yet | ≤ ~150 vB per transfer |
 
@@ -159,8 +159,8 @@ Levers, biggest first. Measure each one and keep every hard requirement above:
 2. **Batching.** Allow several envelopes in one witness transaction so relayers share the commit/reveal overhead.
 3. **Arity.** Decided: three outputs stay. The third pays a relayer in tokens.
 4. **Mint bytes.** Done in v0.3: public openings are `npk` alone, public notes use `rho = 0` (74 → 42 bytes, about 32 vB less
-   per mint); the review of `docs/SPEC-NOTES.md` (§6) found nothing else that relied on a random `rho` there. Still open: a batch mint (k mints in one envelope, paying
-   k × price), a fairness question for the maintainer, since it makes bulk minting cheaper too.
+   per mint); the review of `docs/SPEC-NOTES.md` (§6) found nothing else that relied on a random `rho` there. Batch mint (maintainer, 2026-11-19): a MINT may end
+   with `k` (2 to 10), one note of `k × lim` for `k × price`, about 16.5 vB per mint at `k = 10`.
 5. **Small fields.** Done in v0.3: 32-byte X25519 `pk_eph`, no `proofLen`. `ct` stays 28 bytes (amount, ticker, 16-byte tag).
 6. **Never** put proof-carrying envelopes in OP_RETURN (four times the witness rate).
 
@@ -198,3 +198,4 @@ Decided by the maintainer: the genesis token is **SH20**, fixed in the activatio
 Decided (2026-11-18): PLONK-KZG is the proof system (hard requirement 4). Three outputs stay; the third pays a relayer in
 tokens. `proofLen` is removed in wire v0.3, together with the 32-byte X25519 `pk_eph`.
 Decided (technical, v0.3): the events inside the digest have a fixed byte encoding (`src/events.js`, `SPEC-WIRE.md` §6).
+Decided (2026-11-19): batch mint, at most 10 mints per MINT (`MINT_BATCH_MAX`); a last batch gets what is left and pays for that.
