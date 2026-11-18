@@ -10,6 +10,19 @@
 // worker that receives the call cannot create the new Worker itself while it is running WebAssembly,
 // so it posts the request to the page (or the Node main thread), which creates it.
 
+/**
+ * How many threads to prove on, for a page or a wallet that has no better figure: the cores the
+ * browser reports, except on an iPhone, where it is at least 6.
+ *
+ * Safari on an iPhone reports fewer cores than the phone has. Measured on an iPhone 18 Pro Max
+ * (2026-11-19): `navigator.hardwareConcurrency` is 4, and a proof takes 7.4 s on 4 threads against
+ * 5.7 s on 6. iPhones have had six cores since the iPhone 8.
+ */
+export function defaultThreads(nav = globalThis.navigator) {
+  const reported = Math.max(1, Math.floor(nav?.hardwareConcurrency || 1));
+  return /\biPhone\b/.test(nav?.userAgent || '') ? Math.max(reported, 6) : reported;
+}
+
 /** Limits of the memory a module imports: { initial, maximum, shared } in 64 KiB pages, or null. */
 export function importedMemory(wasmBytes) {
   const b = wasmBytes instanceof Uint8Array ? wasmBytes : new Uint8Array(wasmBytes);
@@ -140,6 +153,9 @@ export function threadedImports({ memory, nextTid, spawn, log = () => {}, random
 }
 
 /** Typed access to the exports of either build. */
+/** What the prover holds at its peak, with some room: one proof needs 224 MB. For `reserve`. */
+export const PROVER_HEAP_BYTES = 240 * 2 ** 20;
+
 export function proverApi(exports, memory = exports.memory) {
   const x = exports;
   const mem = () => new Uint8Array(memory.buffer);
@@ -164,8 +180,21 @@ export function proverApi(exports, memory = exports.memory) {
     }
   };
   return {
+    /**
+     * Grows the heap to its working size in one step (see sh20_reserve); returns the bytes reserved, 0 if
+     * the device refused. For measurements only: nothing calls it by default, because growing a memory
+     * step by step cost nothing on the engines measured (Chrome, and Safari on an iPhone).
+     */
+    reserve: (bytes = PROVER_HEAP_BYTES) => (x.sh20_reserve ? x.sh20_reserve(bytes) : 0),
     /** Starts the thread pool (threaded build); returns the threads in use. */
     threads: (n) => x.sh20_threads(n),
+    /** Runs what follows on a pool of n threads of its own, replacing the previous one; returns its size. */
+    pool: (n) => x.sh20_pool(n),
+    /** Frees the loaded key (before loading it again on another pool). */
+    freeKey() {
+      if (key) x.sh20_key_free(key);
+      key = 0;
+    },
     /** Loads the shipped proving key; throws if it is not the pinned file. */
     loadKey(pkBytes) {
       const ptr = put(pkBytes);
@@ -200,6 +229,15 @@ export function proverApi(exports, memory = exports.memory) {
       mem().set(publics, scratch.publics);
       mem().set(proof, scratch.proof);
       return x.sh20_verify(scratch.vk, VK, scratch.publics, scratch.proof, PROOF) === 1;
+    },
+    /** Seconds the last proof spent in commitments (msm), transforms (fft), the quotient and the rest; zeros without a clock. */
+    timings() {
+      const ptr = x.sh20_alloc(32);
+      x.sh20_timings(ptr);
+      const view = new DataView(memory.buffer, ptr, 32);
+      const [msm, fft, quotient, other] = [0, 8, 16, 24].map((o) => view.getFloat64(o, true));
+      x.sh20_free(ptr, 32);
+      return { msm, fft, quotient, other };
     },
     memoryBytes: () => memory.buffer.byteLength,
   };

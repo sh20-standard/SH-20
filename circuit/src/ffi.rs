@@ -10,13 +10,60 @@
 //!   sh20_prove(handle, witness[3232], seed[32], out[480]) → 1 proved | 0 witness rejected
 //!   sh20_sample_witness(seed[32], out[3232])                    (benchmarks)
 //!   sh20_threads(n) → threads in use                            starts the thread pool (threaded build only)
+//!   sh20_reserve(bytes) → bytes reserved                        grows the heap once, up front (see below)
+//!   sh20_pool(n) → threads                                     the calls that follow (load_key, prove) run on a
+//!                                                               pool of n threads of their own, replacing the last
+//!   sh20_timings(out[4 × f64])                                  seconds spent by the last proof in commitments,
+//!                                                               transforms, the quotient and the rest (zeros
+//!                                                               where the build has no clock)
 //!
 //! `publics` is nine 32-byte little-endian field elements in verifier order; the witness layout is
 //! `SpendWitness::to_bytes`.
 
 use crate::model::{SpendWitness, WITNESS_BYTES};
 use crate::plonk::{self, keys::VK_BYTES, ProvingKey, Srs, VerifyingKey, PROOF_BYTES};
-use crate::{fixture, keygen, load_key, prove, verify, Fr, N_PUBLIC};
+use crate::{fixture, keygen, load_key, prove_timed, verify, Fr, N_PUBLIC};
+use std::sync::Mutex;
+
+/// Timings of the last proof made through this interface.
+static LAST: Mutex<[f64; 4]> = Mutex::new([0.0; 4]);
+
+/// A thread pool that replaces the global one for the calls that follow (`sh20_pool`).
+#[cfg(feature = "parallel")]
+static POOL: Mutex<Option<std::sync::Arc<rayon::ThreadPool>>> = Mutex::new(None);
+
+/// Runs `f` on the pool set by `sh20_pool`, or where it is called if there is none.
+fn on_pool<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    #[cfg(feature = "parallel")]
+    {
+        let pool = POOL.lock().ok().and_then(|p| p.clone());
+        if let Some(pool) = pool {
+            return pool.install(f);
+        }
+    }
+    f()
+}
+
+/// Makes the calls that follow run on a pool of `n` threads of their own, in place of the previous
+/// such pool (whose threads end). Lets one instance be measured with several thread counts.
+/// Returns the size of the pool; 1, and nothing happens, without the `parallel` feature.
+#[no_mangle]
+pub extern "C" fn sh20_pool(n: usize) -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        let Ok(pool) = rayon::ThreadPoolBuilder::new().num_threads(n.max(1)).build() else { return 0 };
+        let size = pool.current_num_threads();
+        if let Ok(mut slot) = POOL.lock() {
+            *slot = Some(std::sync::Arc::new(pool));
+        }
+        size
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let _ = n;
+        1
+    }
+}
 use ark_std::rand::{rngs::StdRng, SeedableRng};
 
 /// Starts the prover's thread pool with `n` threads and returns the number of threads in use.
@@ -33,6 +80,27 @@ pub extern "C" fn sh20_threads(n: usize) -> usize {
     {
         let _ = n;
         1
+    }
+}
+
+/// Grows the heap by `bytes` in one step and gives the block back to the allocator, so that the
+/// allocations that follow fit without growing the memory again. Returns the bytes reserved, 0 if the
+/// memory could not grow that far.
+///
+/// A measuring tool: nothing calls it by default. An engine that has not reserved address space
+/// behind a WebAssembly memory grows it by allocating a larger block and copying the whole memory,
+/// and the prover reaches its 224 MB in many steps. In JavaScriptCore's shell with
+/// `--useWasmFastMemory=false` (`bench/jsc-bench.js`) that costs 0.5–1.2 s at key loading and
+/// 2.4–3.1 s in the first proof, and one reservation of 240 MiB removes both. Browsers do not run
+/// that way: on an iPhone (Safari, 2026-11-19) growing a memory to 224 MB in 223 steps takes 62 ms,
+/// and the key loads and the first proof runs as fast without the reservation as with it (the test
+/// page's `?auto=keyload`); the same in Chrome.
+#[no_mangle]
+pub extern "C" fn sh20_reserve(bytes: usize) -> usize {
+    let mut block: Vec<u8> = Vec::new();
+    match block.try_reserve_exact(bytes) {
+        Ok(()) => block.capacity(),
+        Err(_) => 0,
     }
 }
 
@@ -74,7 +142,8 @@ pub unsafe extern "C" fn sh20_verify(vk: *const u8, vk_len: usize, publics: *con
 /// `pk` is valid for `pk_len` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn sh20_load_key(pk: *const u8, pk_len: usize) -> *mut ProvingKey {
-    match load_key(bytes(pk, pk_len)) {
+    let data = bytes(pk, pk_len);
+    match on_pool(|| load_key(data)) {
         Ok(pk) => Box::into_raw(Box::new(pk)),
         Err(_) => std::ptr::null_mut(),
     }
@@ -121,12 +190,26 @@ pub unsafe extern "C" fn sh20_vk_digest(pk: *const ProvingKey, out: *mut u8) {
 pub unsafe extern "C" fn sh20_prove(pk: *const ProvingKey, witness: *const u8, seed: *const u8, out: *mut u8) -> i32 {
     let Some(w) = SpendWitness::from_bytes(bytes(witness, WITNESS_BYTES)) else { return 0 };
     let mut rng = StdRng::from_seed(bytes(seed, 32).try_into().unwrap());
-    match prove(&*pk, &w, &mut rng) {
-        Ok(proof) => {
+    let key: &ProvingKey = &*pk;
+    match on_pool(|| prove_timed(key, &w, &mut rng)) {
+        Ok((proof, t)) => {
             std::ptr::copy_nonoverlapping(proof.as_ptr(), out, PROOF_BYTES);
+            if let Ok(mut last) = LAST.lock() {
+                *last = [t.msm, t.fft, t.quotient, t.other];
+            }
             1
         }
         Err(_) => 0,
+    }
+}
+
+/// # Safety
+/// `out` has room for four f64 (32 bytes), not necessarily aligned.
+#[no_mangle]
+pub unsafe extern "C" fn sh20_timings(out: *mut u8) {
+    let last = LAST.lock().map(|l| *l).unwrap_or([0.0; 4]);
+    for (i, v) in last.iter().enumerate() {
+        std::ptr::copy_nonoverlapping(v.to_le_bytes().as_ptr(), out.add(i * 8), 8);
     }
 }
 

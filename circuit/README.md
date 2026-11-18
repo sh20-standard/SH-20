@@ -15,8 +15,8 @@ behind the choice of proof system.
 | Proving key | `artifacts/spend.pk`, 8.4 MB (the verifying key and the SRS powers), SHA-256 `a376301be345cdeab66a0155714fa81976102d570ee6a3223edaf64a4d9e430a`; loads in 0.2 s, 1.4 s in WebAssembly |
 | Proving time, native | 1.8 s on a laptop (10 threads); 9.6 s on one thread |
 | Proving time, WebAssembly | 25 s on one thread; 13 s on 2 threads, 7.2 s on 4, 5.6 s on 6, 4.4 s on 10 |
-| Proving time, on a phone | iPhone 18 Pro Max, Safari: 14.5 s on 4 threads, 31.9 s on one |
-| Prover memory | 224 MB in WebAssembly (242 MB with 10 threads) |
+| Proving time, on a phone | iPhone 18 Pro Max, Safari: 5.7 s on 6 threads, 7.4 s on 4, 15.5 s on one |
+| Prover memory | 224 MB in WebAssembly (242 MB with 10 threads); 240 MB on the phone |
 | Verification | 1.5 ms native, 13 ms in WebAssembly |
 
 Keys are derived from the gates and the SRS and from nothing else, so anyone recomputes the same
@@ -61,20 +61,65 @@ What the numbers say:
 
 ## On a phone
 
-Measured by the maintainer on 2026-11-18 with the page of `web/`, served over https with the
-isolation headers. Proving times are the median of three proofs, with the three in brackets.
+Measured by the maintainer on 2026-11-19 with the page of `web/`, served over https with the
+isolation headers. The phone was on its charger, with Low Power Mode off. The iPhone figures come
+from the page's thread sweep: one proof per thread count, in a shuffled order, twice over.
 
-| Device | Browser | Threads | Proving time | Key loading | Prover memory | Verification |
-| --- | --- | --- | --- | --- | --- | --- |
-| iPhone 18 Pro Max, iOS 18.7 | Safari | 4 | 14.5 s (14.3 / 14.5 / 14.8) | 0.7 s | 232 MB | 15 ms |
-| iPhone 18 Pro Max, iOS 18.7 | Safari | 1 | 31.9 s (36.6 / 31.9 / 30.7) | 5.5 s | 224 MB | |
-| MacBook Pro M1 Pro | Chrome | 10 | 4.5 s | | | |
-| MacBook Pro M1 Pro | Chrome | 1 | 25.5 s | | | |
+| Device | Browser | Threads | Proving time | Key loading | Prover memory |
+| --- | --- | --- | --- | --- | --- |
+| iPhone 18 Pro Max, iOS 18.7 | Safari | 6 | 5.7 s | under 1 s | 240 MB |
+| iPhone 18 Pro Max, iOS 18.7 | Safari | 4 | 7.4 s | | |
+| iPhone 18 Pro Max, iOS 18.7 | Safari | 1 | 15.5 s | | |
+| MacBook Pro M1 Pro | Chrome | 10 | 4.5 s | | |
+| MacBook Pro M1 Pro | Chrome | 1 | 25.5 s | | |
 
-So a recent phone proves a transfer in about 15 s, and the prover fits in its memory. Two things in
-these figures are not explained yet: four threads are only 2.2 times faster than one on the phone,
-and in single-thread mode the key takes 5.5 s to load there against 0.7 s with threads. A mid-range
-phone has not been measured.
+So a recent phone proves a transfer in under 6 s, and the prover fits in its memory. What these
+sessions settled:
+
+- **Safari reports fewer cores than the phone has.** `navigator.hardwareConcurrency` is 4 on this
+  phone, and 6 threads prove faster than 4. `defaultThreads()` in `web/host.js` therefore takes at
+  least 6 on an iPhone and the reported count everywhere else; the page and a wallet should ask it
+  rather than the browser.
+- **The single-thread build is as fast as the threaded build on one thread.** The page's key-loading
+  diagnosis starts each of them cold: the key loads in 0.6 to 1.4 s and a proof takes 15.3 to 17.4 s,
+  whichever build runs.
+- **Growing the memory costs nothing there.** Taking a memory to 224 MB in 223 steps takes 62 ms on
+  the phone, so reserving the prover's heap in one step gains nothing. `sh20_reserve` exists for that
+  measurement and nothing calls it by default.
+- **A phone can run twice as slow.** A first session the day before, on the same phone, gave 14.5 s
+  on 4 threads and 31.9 s on one, with 5.5 s to load the key on one thread. None of it reproduced.
+  The files served that day run as fast as today's on the laptop (7.9 s against 7.6 s on 4 threads,
+  26.4 s against 26.0 s on one, in Chrome), so the code is not the cause. The state of the phone that
+  day was not recorded; Low Power Mode or heat are the likely causes. Note the conditions with every
+  phone figure.
+
+Not measured yet: a mid-range phone, an Android phone, and the phases of a proof on the phone. Six
+threads are 2.7 times faster than one there and four are 2.1 times, well short of the thread count.
+
+### Where the time goes
+
+The threaded build on the laptop, in Node (`bench/wasm-threads-bench.mjs`), best of two proofs, in
+seconds. Commitments are multi-scalar multiplications, transforms are FFTs.
+
+| Threads | Proof | Commitments | Transforms | Quotient | Rest |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 25.3 | 17.7 | 6.2 | 0.9 | 0.3 |
+| 2 | 13.5 | 9.1 | 3.3 | 0.5 | 0.3 |
+| 4 | 7.3 | 4.8 | 1.8 | 0.3 | 0.3 |
+| 6 | 5.7 | 3.7 | 1.4 | 0.2 | 0.3 |
+| 8 | 4.9 | 3.0 | 1.3 | 0.2 | 0.3 |
+| 10 | 5.3 | 3.0 | 1.6 | 0.3 | 0.4 |
+
+Commitments are 70% of a proof on one thread and keep gaining up to the eight fast cores. The
+transforms get slower when the two slow cores join: ten threads lose to eight. `examples/slow_cores.rs` shows
+the same thing natively by mixing fast threads with background ones, which run on the slow cores at
+a low clock: two fast threads prove in 5.4 to 6.4 s, two fast and one slow in 7.4 to 8.0 s, and
+the transforms go from 1.4 s to between 2.4 and 2.7 s. That mix is far more unequal than a phone's (a background
+thread alone takes over 100 s), so it shows the direction of the effect and not its size.
+
+The tools: the page's sweep and key-loading diagnosis (`web/README.md`), `sh20_timings` for the
+phases of the last proof, `sh20_pool` for a pool of a given size, `bench/jsc-bench.js` for the
+single-thread build in Safari's engine outside a browser.
 
 What was done to get there, measured in Node and in headless Chrome on the laptop:
 
@@ -87,7 +132,7 @@ What was done to get there, measured in Node and in headless Chrome on the lapto
   about 13% more proving time.
 - **All cores.** A second WebAssembly build runs a thread pool over Web Workers on a shared memory:
   13 s on 2 threads, 7.2 s on 4, 5.6 s on 6, 4.4 s on 10, against 25 s on one. It builds on stable
-  Rust (`wasm32-wasip1-threads`); the host side is `web/host.js`, about 200 lines with no dependency.
+  Rust (`wasm32-wasip1-threads`); the host side is `web/host.js`, about 250 lines with no dependency.
 - **A fallback.** Browsers only give shared memory to cross-origin isolated pages (COOP and COEP
   headers). Where the host cannot send them, a service worker adds them; where that is impossible
   too (plain http), the page proves on one thread with the first build.
@@ -175,15 +220,17 @@ node bench/tx-vsize.mjs
 
 ## Next
 
-1. **Phone figures**: one recent phone is measured (above). Still missing: a mid-range phone, and why
-   four threads only give 2.2 times one on the iPhone.
+1. **Phone figures**: one recent phone is measured (above). Still missing: a mid-range phone, an
+   Android phone, and the phases of a proof on a phone, to see whether the commitments or the
+   transforms hold back its slow cores.
 2. **Memory**: 224 MB at peak. The wire evaluations and the key file are still held longer than
    needed; there is room below 200 MB.
 3. **Fewer gates**: the circuit is 86,232 gates and a 2^16 domain, which would halve the proving
    time, holds 65,536. Sparse Poseidon rounds, windowed fixed-base multiplication and cheaper
    comparisons should reach about 66,600 (an estimate, not yet built). That is still above the limit,
    and the three outputs stay (the third pays a relayer in tokens), so the last thousand gates have to
-   be found without changing a rule. Each change moves the verifying-key digest.
+   be found without changing a rule. Each change moves the verifying-key digest. On hold (maintainer,
+   2026-11-19).
 4. An audit, then the freeze of the digest.
 
 ## Licence

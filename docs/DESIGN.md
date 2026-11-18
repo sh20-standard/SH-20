@@ -98,8 +98,8 @@ accepts its proofs, which gives the standard two independent verifiers.
 The price is proving work: 9.6 s on one thread against 2.8 s for Tacit's Halo2 circuit. In a browser the
 prover takes 25 s on one thread and 7 s on four (WebAssembly threads, measured on a laptop), with a
 proving key that is shipped rather than generated on the device. Proving time only affects transfers, burns
-and listings, never the mint. On a recent phone (iPhone 18 Pro Max, Safari) a proof takes 14.5 s on four threads
-and 32 s on one; a mid-range phone has not been measured.
+and listings, never the mint. On a recent phone (iPhone 18 Pro Max, Safari, on its charger, Low Power Mode off) a
+proof takes 5.7 s on six threads and 15.5 s on one; a mid-range phone has not been measured.
 
 The relation follows Tacit's shielded pool (MIT) with the ticker made private, SH-20's note leaf and no
 transparent boundary. Notes per proof: 2 in, 3 out (the recipient, the change, and a relayer's fee in tokens).

@@ -14,6 +14,38 @@ use ark_std::rand::RngCore;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+/// Where the time of one proof went, in seconds: commitments (multi-scalar multiplications), Fourier
+/// transforms, the evaluation of the quotient, and the rest (permutation product, openings, …).
+/// All zero where the platform has no clock (the single-thread WebAssembly build).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Timings {
+    pub msm: f64,
+    pub fft: f64,
+    pub quotient: f64,
+    pub other: f64,
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn now() -> Option<std::time::Instant> {
+    Some(std::time::Instant::now())
+}
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn now() -> Option<()> {
+    None
+}
+
+/// Runs `f` and adds its duration to `slot`.
+fn timed<T>(slot: &mut f64, f: impl FnOnce() -> T) -> T {
+    let start = now();
+    let out = f();
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    if let Some(t) = start {
+        *slot += t.elapsed().as_secs_f64();
+    }
+    let _ = (start, slot); // no clock in the build without imports: nothing is recorded
+    out
+}
+
 /// p(X) += r(X)·(X^n − 1), r given from its constant coefficient up.
 fn blind(p: &mut Vec<Fr>, r: &[Fr], n: usize) {
     p.resize(n + r.len(), Fr::zero());
@@ -50,6 +82,12 @@ fn add_scaled(dst: &mut [Fr], src: &[Fr], k: Fr) {
 
 /// Proves that `values` (one field element per variable of the circuit) satisfies the gates of `pk`.
 pub fn prove(pk: &ProvingKey, values: &[Fr], rng: &mut impl RngCore) -> Result<Proof, String> {
+    prove_timed(pk, values, rng).map(|(proof, _)| proof)
+}
+
+/// `prove`, also reporting where the time went.
+pub fn prove_timed(pk: &ProvingKey, values: &[Fr], rng: &mut impl RngCore) -> Result<(Proof, Timings), String> {
+    let mut tm = Timings::default();
     let n = pk.n;
     if values.len() != pk.n_vars {
         return Err(format!("the assignment has {} values, the circuit has {} variables", values.len(), pk.n_vars));
@@ -65,14 +103,15 @@ pub fn prove(pk: &ProvingKey, values: &[Fr], rng: &mut impl RngCore) -> Result<P
 
     // ── round 1: wire polynomials ──
     let b: [Fr; 11] = std::array::from_fn(|_| Fr::rand(rng));
-    let mut pw: [Vec<Fr>; 3] = std::array::from_fn(|j| dom.ifft(&w[j]));
+    let mut pw: [Vec<Fr>; 3] = timed(&mut tm.fft, || std::array::from_fn(|j| dom.ifft(&w[j])));
     for (j, p) in pw.iter_mut().enumerate() {
         blind(p, &[b[2 * j + 1], b[2 * j]], n);
     }
-    let cm: [_; 3] = std::array::from_fn(|j| commit(srs, &pw[j]));
+    let cm: [_; 3] = timed(&mut tm.msm, || std::array::from_fn(|j| commit(srs, &pw[j])));
 
     // ── round 2: permutation polynomial ──
     let (beta, gamma) = transcript::beta_gamma(vk, &publics, &cm[0], &cm[1], &cm[2]);
+    let other_start = now();
     let omegas: Vec<Fr> = dom.elements().collect();
     let mut num = vec![Fr::zero(); n];
     let mut den = vec![Fr::zero(); n];
@@ -90,9 +129,14 @@ pub fn prove(pk: &ProvingKey, values: &[Fr], rng: &mut impl RngCore) -> Result<P
         return Err("the permutation product does not close".into());
     }
     drop((num, den));
-    let mut pz = dom.ifft(&z);
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    if let Some(t) = other_start {
+        tm.other += t.elapsed().as_secs_f64();
+    }
+    let _ = other_start;
+    let mut pz = timed(&mut tm.fft, || dom.ifft(&z));
     blind(&mut pz, &[b[8], b[7], b[6]], n);
-    let cm_z = commit(srs, &pz);
+    let cm_z = timed(&mut tm.msm, || commit(srs, &pz));
 
     // ── round 3: quotient polynomial ──
     let alpha = transcript::alpha(&beta, &gamma, &cm_z);
@@ -101,7 +145,7 @@ pub fn prove(pk: &ProvingKey, values: &[Fr], rng: &mut impl RngCore) -> Result<P
     for (i, x) in publics.iter().enumerate() {
         pi_h[i] = -*x;
     }
-    let p_pi = dom.ifft(&pi_h);
+    let p_pi = timed(&mut tm.fft, || dom.ifft(&pi_h));
     drop(pi_h);
     let n_fr = Fr::from(n as u64);
     let [ql, qr, qo, qm, qc] = &pk.q;
@@ -122,10 +166,17 @@ pub fn prove(pk: &ProvingKey, values: &[Fr], rng: &mut impl RngCore) -> Result<P
             }
             coset.fft(&folded)
         };
+        let fft_start = now();
         let (a, b_, c, z) = (on_coset(&pw[0]), on_coset(&pw[1]), on_coset(&pw[2]), on_coset(&pz));
         let (e_ql, e_qr, e_qo, e_qm, e_qc) = (on_coset(ql), on_coset(qr), on_coset(qo), on_coset(qm), on_coset(qc));
         let (s1, s2, s3) = (on_coset(&pk.sigma[0]), on_coset(&pk.sigma[1]), on_coset(&pk.sigma[2]));
         let pi = on_coset(&p_pi);
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        if let Some(t) = fft_start {
+            tm.fft += t.elapsed().as_secs_f64();
+        }
+        let _ = fft_start;
+        let quotient_start = now();
         let xs: Vec<Fr> = coset.elements().collect();
         let zh = shift_n - Fr::one();
         let zh_inv = zh.inverse().expect("coset outside the domain");
@@ -148,9 +199,14 @@ pub fn prove(pk: &ProvingKey, values: &[Fr], rng: &mut impl RngCore) -> Result<P
         for (i, v) in part.into_iter().enumerate() {
             t4[4 * i + j] = v;
         }
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        if let Some(t) = quotient_start {
+            tm.quotient += t.elapsed().as_secs_f64();
+        }
+        let _ = quotient_start;
     }
     drop(p_pi);
-    let pt = coset4(n).ifft(&t4);
+    let pt = timed(&mut tm.fft, || coset4(n).ifft(&t4));
     drop(t4);
     if pt[3 * n + 6..].iter().any(|c| !c.is_zero()) {
         return Err("the assignment does not satisfy the circuit".into());
@@ -163,7 +219,8 @@ pub fn prove(pk: &ProvingKey, values: &[Fr], rng: &mut impl RngCore) -> Result<P
     let mut t3 = pt[2 * n..3 * n + 6].to_vec();
     t3[0] -= b[10];
     drop(pt);
-    let (cm_t1, cm_t2, cm_t3) = (commit(srs, &t1), commit(srs, &t2), commit(srs, &t3));
+    let (cm_t1, cm_t2, cm_t3) = timed(&mut tm.msm, || (commit(srs, &t1), commit(srs, &t2), commit(srs, &t3)));
+    let other_start = now();
 
     // ── round 4: evaluations ──
     let xi = transcript::xi(&alpha, &cm_t1, &cm_t2, &cm_t3);
@@ -207,8 +264,14 @@ pub fn prove(pk: &ProvingKey, values: &[Fr], rng: &mut impl RngCore) -> Result<P
     let mut pz_shift = pz;
     pz_shift[0] -= eval_zw;
     let wxiw = divide(&pz_shift, xi * omega)?;
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    if let Some(t) = other_start {
+        tm.other += t.elapsed().as_secs_f64();
+    }
+    let _ = other_start;
+    let (cm_wxi, cm_wxiw) = timed(&mut tm.msm, || (commit(srs, &wxi), commit(srs, &wxiw)));
 
-    Ok(Proof {
+    let proof = Proof {
         a: cm[0],
         b: cm[1],
         c: cm[2],
@@ -216,13 +279,14 @@ pub fn prove(pk: &ProvingKey, values: &[Fr], rng: &mut impl RngCore) -> Result<P
         t1: cm_t1,
         t2: cm_t2,
         t3: cm_t3,
-        wxi: commit(srs, &wxi),
-        wxiw: commit(srs, &wxiw),
+        wxi: cm_wxi,
+        wxiw: cm_wxiw,
         eval_a,
         eval_b,
         eval_c,
         eval_s1,
         eval_s2,
         eval_zw,
-    })
+    };
+    Ok((proof, tm))
 }

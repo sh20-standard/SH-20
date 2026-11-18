@@ -20,7 +20,7 @@ use ark_bn254::{Fq, Fr, G1Affine};
 use ark_ff::{BigInteger, Field, PrimeField, Zero};
 
 pub use keys::{setup, setup_with_vk, ProvingKey, VerifyingKey};
-pub use prover::prove;
+pub use prover::{prove, prove_timed, Timings};
 pub use srs::Srs;
 pub use verifier::verify;
 

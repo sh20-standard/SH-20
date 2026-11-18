@@ -36,13 +36,32 @@ every file, and `application/wasm` for `.wasm`.
 1. Open the page and read "This device": it says whether shared memory is available.
 2. Tap **Measure on all cores**, then **Measure on one thread**. Keep the screen on and the tab in
    front; a phone slows or stops a tab in the background.
-3. Tap **Copy the result** after each run and send both back, with the model of the phone.
+3. Tap **Copy the result** after each run and send both back, with the model of the phone and its
+   state: on its charger or not, Low Power Mode on or off, hot or cool. A phone that saves power can
+   take twice as long, and a figure without its conditions cannot be compared with another.
 
 Adding `?auto=threads&runs=3` to the address starts a run by itself (`auto=single` for one thread,
 `threads=4` to fix the pool size).
 
+"All cores" means `defaultThreads()` of `host.js`: the cores the browser reports, and at least 6 on
+an iPhone, where Safari reports 4 of the phone's 6 and six threads prove faster than four.
+
 If a run fails, the page says so. The likely cause on a phone is memory: the prover needs about
 230 MB.
+
+Two longer measurements say where the time goes. Each ends with a table and a JSON report to copy.
+
+- **Sweep** (`?auto=sweep`, a few minutes): one proof per thread count, in the order 1, 6, 2, 5, 3, 4
+  so that a phone warming up does not favour one end, twice over. For each proof: key loading, then
+  inside the proof the commitments (MSM), the transforms (FFT) and the rest. `order=` and `passes=`
+  change the plan. It needs shared memory.
+- **Key loading on one thread** (`?auto=keyload`, a few minutes): cold starts of the single-thread
+  build as shipped, of the same build after one reservation of its whole heap (`sh20_reserve`), and of
+  the threaded build on a shared memory with one thread. Each loads the key twice and proves once.
+  Before them, the page times growing a 224 MB memory in 223 steps and in one. `variants=` and
+  `proofs=` change the plan (`proofs=0` takes half a minute).
+
+`node check.mjs --url … --sweep` and `--keyload` run them in headless Chrome.
 
 ## Files
 
