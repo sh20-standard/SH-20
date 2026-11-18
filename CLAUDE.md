@@ -25,29 +25,31 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 5. **Contributor anonymity.** Commit as `SH-20 contributors <contributors@sh20.invalid>`. Never commit
    personal names, emails, IP addresses, wallet addresses or machine paths.
 6. **Determinism.** Any change to bytes or rules updates `docs/SPEC-WIRE.md`, the tests and
-   `indexer/vectors/v0.1.json` (regenerate with `npm run vectors`; bump the draft version if the format changes).
+   `indexer/vectors/v0.2.json` (regenerate with `npm run vectors`; bump the draft version if the format changes).
 
 ## Repository map
 
 | Path | What |
 | --- | --- |
 | `docs/DESIGN.md` | why SH-20 is built this way, competitors, open decisions |
-| `docs/SPEC-WIRE.md` | wire format and acceptance rules, draft v0.1 (normative for the indexer) |
+| `docs/SPEC-WIRE.md` | wire format and acceptance rules, draft v0.2 (normative for the indexer) |
 | `indexer/` | reference indexer, Node ≥ 20, zero dependencies |
-| `indexer/vectors/v0.1.json` | deterministic vectors for a second implementation |
+| `indexer/vectors/v0.2.json` | deterministic vectors for a second implementation |
 | `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` (for the vault and relayers) |
 
 ```sh
 cd indexer
-npm test            # 37 tests
+npm test            # 39 tests
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 ```
 
-## Status (draft v0.1)
+## Status (draft v0.2)
 
 Done in `indexer/`:
-- Strict codec for the 7 envelope types (DEPLOY, MINT, TRANSFER, BURN, LIST, TAKE, CLAIM).
+- Strict codec for the 7 envelope types (DEPLOY, MINT, TRANSFER, BURN, LIST, TAKE, CLAIM). Tokens are named by their ticker
+  everywhere (v0.2): the asset id is `t = tickerT(ticker)`, the 4 ASCII bytes as a big-endian u32; `t = 0` is reserved for BTC,
+  types `0x08`–`0x0f` for extensions.
 - Two carriers: OP_RETURN (small proof-less envelopes, one transaction) and a tapscript witness on input 0 (proof-carrying envelopes, ~2.4 KB).
 - State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest.
 - Poseidon over BN254 written from scratch (constants generated with the Grain LFSR, matches circomlib's `poseidon([1,2])`), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
@@ -68,6 +70,7 @@ Keep Tacit's MIT copyright notice in any file derived from it.
 **What must change** (target statement: `docs/SPEC-WIRE.md` §4):
 1. **Private ticker.** Tacit makes `asset_f` a public input. SH-20 has one private `t` shared by all
    five notes (2 inputs, 3 outputs), a public `tPub`, and the constraint `vPub × (t − tPub) = 0`.
+   `t = tickerT(ticker)` (`indexer/src/notes.js`), e.g. `"GENE"` = `0x47454e45`.
 2. **Leaf formula** must equal `indexer/src/notes.js`:
    `leaf = H(H(H(TAG_LEAF, t), v), H(npk, rho))`, `H` = circomlib Poseidon with 2 inputs,
    `TAG_LEAF = SHA256("sh20/v0/leaf") mod r`. Tacit's leaf is `Poseidon(asset_f, v, npk, rho)`: different.
@@ -94,7 +97,7 @@ Goal from the maintainer: an SH-20 transaction should cost about what a normal B
 and the mint must stay cheap. Reference: a P2TR payment with 1 input and 2 outputs is about 154 vB.
 Keep only what the protocol needs; add nothing that costs bytes without a clear use.
 
-| Action | Today (v0.1) | Target |
+| Action | Today (v0.2) | Target |
 | --- | --- | --- |
 | MINT (proof-less, OP_RETURN) | 74-byte envelope, ~200–240 vB transaction | ~165 vB |
 | TRANSFER, alone | 2,435-byte envelope (2,080-byte Halo2 proof), ~800 vB + commit | ≤ ~350 vB |
@@ -123,6 +126,8 @@ Use Fable 5.2 for the circuit and anything security-critical; Opus 5.5 is fine f
 - **Tacit** (live on mainnet since May 2026): confidential amounts, fair mint, a Bitcoin shielded pool, but the asset id is public in every spend; hiding it is on their roadmap.
 - **zkCoins / Shielded CSV**: hides amount, asset and parties, but only an asset's creator can mint, and the receiver must be online.
 - **Shielded Ordinals** (Ord Dropz): private NFTs; the platform signs mints and buys; "shielded runes" listed as not yet built.
+- **Shielded Bitcoin** ([alloc] init, paper September 2026, ePrint 2026/2749): Zcash-style private BTC transfers as a metaprotocol;
+  BTC only, no tokens, BTC entry and exit left to a later paper, nothing deployed yet.
 
 SH-20's edge: ticker hidden, unique tickers, private by default from the mint, Bitcoin only.
 

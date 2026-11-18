@@ -8,17 +8,17 @@ import { deployEnv, mockVerifier, opening, p2tr, p2wpkh, spend, tx } from './hel
 function scenario() {
   const pay = p2wpkh();
   const list = tx({
-    env: { type: 'LIST', tokenNum: 1, amount: 1000n, price: 5000n, lockVout: 0, payScript: pay, spend: spend(2) },
+    env: { type: 'LIST', ticker: 'GENE', amount: 1000n, price: 5000n, lockVout: 0, payScript: pay, spend: spend(2) },
     carrier: 'witness',
     vout: [{ value: 330n, script: p2tr(publicKey(randomBytes(32))) }],
   });
   const blocks = [
     [tx({ env: deployEnv({ pre: 1000000n, team: opening(), unlock: 4 }) })],
-    [tx({ env: { type: 'MINT', tokenNum: 1, ...opening() }, burnSats: 1000n }), tx({ env: { type: 'MINT', tokenNum: 1, ...opening() }, burnSats: 1000n })],
+    [tx({ env: { type: 'MINT', ticker: 'GENE', ...opening() }, burnSats: 1000n }), tx({ env: { type: 'MINT', ticker: 'GENE', ...opening() }, burnSats: 1000n })],
     [list, tx({ env: { type: 'TRANSFER', spend: spend(2) }, carrier: 'witness' })],
     [tx({ env: { type: 'TAKE', ...opening() }, vin: [{ txid: list.txid, vout: 0, witness: [] }], vout: [{ value: 5000n, script: pay }] })],
     [tx({ env: deployEnv({ ticker: 'SEC2', start: 7, unlock: 7, spend: spend(4) }), carrier: 'witness' })],
-    [tx({ env: { type: 'BURN', tokenNum: 1, vPub: 10n, spend: spend(5) }, carrier: 'witness' })],
+    [tx({ env: { type: 'BURN', ticker: 'GENE', vPub: 10n, spend: spend(5) }, carrier: 'witness' })],
   ];
   return blocks.map((txs, i) => ({ height: i + 1, hash: `b${i + 1}`, txs }));
 }

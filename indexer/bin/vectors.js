@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Writes vectors/v0.1.json: deterministic test vectors for a second, independent
+// Writes vectors/v0.2.json: deterministic test vectors for a second, independent
 // SH-20 implementation (hashes, leaves, envelopes, and a full block scenario
 // with the digest after every block). Run: npm run vectors
 
@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { poseidon2 } from '../src/poseidon.js';
 import { FR, DOMAIN } from '../src/constants.js';
 import { NoteTree } from '../src/tree.js';
-import { noteLeaf } from '../src/notes.js';
+import { noteLeaf, tickerT } from '../src/notes.js';
 import { serializeEnvelope } from '../src/codec.js';
 import { Indexer } from '../src/indexer.js';
 import { publicKey } from '../src/schnorr.js';
@@ -50,12 +50,12 @@ const lockKey = publicKey(h('lock-secret'));
 const lockScript = Buffer.concat([Buffer.from([0x51, 0x20]), lockKey]);
 const envs = {
   deployGenesis: genesis,
-  mint: { type: 'MINT', tokenNum: 1, ...op('mint1') },
+  mint: { type: 'MINT', ticker: 'GENE', ...op('mint1') },
   transfer: { type: 'TRANSFER', spend: spend('transfer', 2) },
-  list: { type: 'LIST', tokenNum: 1, amount: 1000n, price: 5000n, lockVout: 0, payScript: pay, spend: spend('list', 2) },
+  list: { type: 'LIST', ticker: 'GENE', amount: 1000n, price: 5000n, lockVout: 0, payScript: pay, spend: spend('list', 2) },
   take: { type: 'TAKE', ...op('buyer') },
   deploySecond: { ...genesis, ticker: 'SEC2', pre: 0n, team: null, start: 7, unlock: 7, spend: spend('deploy2', 4) },
-  burn: { type: 'BURN', tokenNum: 1, vPub: 10n, spend: spend('burn', 5) },
+  burn: { type: 'BURN', ticker: 'GENE', vPub: 10n, spend: spend('burn', 5) },
 };
 const ser = Object.fromEntries(Object.entries(envs).map(([k, v]) => [k, serializeEnvelope(v)]));
 
@@ -87,7 +87,7 @@ const txJson = (t) => ({
 });
 
 const out = {
-  version: 'SH-20 draft v0.1',
+  version: 'SH-20 draft v0.2',
   notes: 'Field elements are hex, big-endian here for readability; on the wire they are 32-byte little-endian. The scenario uses a test verifier that accepts exactly the proof bytes "valid-proof".',
   poseidon2: [
     { in: ['1', '2'], out: poseidon2(1n, 2n).toString() },
@@ -95,7 +95,8 @@ const out = {
   ],
   domainLeaf: hexFr(DOMAIN.LEAF),
   emptyRootDepth32: hexFr(new NoteTree().root),
-  noteLeaf: { t: 1, v: '1000', npk: hexFr(envs.mint.npk), rho: hexFr(envs.mint.rho), leaf: hexFr(noteLeaf(1, 1000n, envs.mint.npk, envs.mint.rho)) },
+  tickerT: { ticker: 'GENE', t: tickerT('GENE').toString() },
+  noteLeaf: { ticker: 'GENE', t: tickerT('GENE').toString(), v: '1000', npk: hexFr(envs.mint.npk), rho: hexFr(envs.mint.rho), leaf: hexFr(noteLeaf(tickerT('GENE'), 1000n, envs.mint.npk, envs.mint.rho)) },
   envelopes: Object.fromEntries(Object.entries(ser).map(([k, v]) => [k, { bytes: v.length, hex: v.toString('hex') }])),
   scenario: {
     profile: { activationHeight: 1, deployBurn: '1000', anchorWindow: 100, anchorMinDepth: 1 },
@@ -109,5 +110,5 @@ const out = {
   },
 };
 mkdirSync(new URL('../vectors/', import.meta.url), { recursive: true });
-writeFileSync(new URL('../vectors/v0.1.json', import.meta.url), JSON.stringify(out, null, 2) + '\n');
-console.log(`wrote vectors/v0.1.json: ${Object.keys(ser).length} envelopes, ${blocks.length} blocks, final digest ${results.at(-1).digest}`);
+writeFileSync(new URL('../vectors/v0.2.json', import.meta.url), JSON.stringify(out, null, 2) + '\n');
+console.log(`wrote vectors/v0.2.json: ${Object.keys(ser).length} envelopes, ${blocks.length} blocks, final digest ${results.at(-1).digest}`);
