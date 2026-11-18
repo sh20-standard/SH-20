@@ -44,6 +44,7 @@ export function normToken(t) {
     burned: big(t.burned),
     deployTxid: t.deployTxid ?? null,
     deployHeight: t.deployHeight ?? null,
+    genesis: t.genesis === true, // SH20, from the profile: no DEPLOY (checked against profile.js)
   };
 }
 

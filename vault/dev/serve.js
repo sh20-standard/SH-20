@@ -3,12 +3,16 @@
 // agreeing indexers), over the reference indexer fed with a small demo chain.
 // :8031 is a lying indexer: same answers, except its own payScript for every token.
 //
+// The profile is the reference one (D = 1000: a DEPLOY burns SH20 with a proof), so
+// the demo chain has only the genesis token SH20 and two mints of it. With
+// --deploy-burn 0 it also deploys GENE (a proof-less DEPLOY, 1000 sats burned per mint).
+//
 // It also mocks an Esplora server under :8020/esplora: one UTXO for any address,
 // raw transactions and their status, and POST /tx mines the transaction in the
 // next block of the demo chain, so the whole mint flow runs without a real
 // wallet or signet coins (see e2e.js).
 //
-//   node vault/dev/serve.js [--port 8000] [--api-port 8020] [--api-port2 8030] [--liar-port 8031]
+//   node vault/dev/serve.js [--port 8000] [--api-port 8020] [--api-port2 8030] [--liar-port 8031] [--deploy-burn 1000]
 
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -28,7 +32,9 @@ const API_PORT = Number(arg('--api-port', 8020));
 const API_PORT2 = Number(arg('--api-port2', 8030)); // a second, agreeing indexer
 const LIAR_PORT = Number(arg('--liar-port', 8031)); // a lying indexer
 
-const idx = new Indexer({ profile: { activationHeight: 1 } });
+const DEPLOY_BURN = BigInt(arg('--deploy-burn', '1000'));
+
+const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: DEPLOY_BURN } });
 const api = apiHandler(idx, { network: 'signet' });
 const chainTxs = new Map(); // txid -> { hex, height }
 
@@ -54,9 +60,14 @@ const envTx = (env, value = 0n) => ({
   vout: [{ value, script: opReturnScript(serializeEnvelope(env)) }],
 });
 
-// Demo chain: genesis GENE (burn 1000 sats per mint), mint open from block 2, two mints.
-mine([envTx(deployEnv({ ticker: 'GENE', start: 2, unlock: 2, price: 1000n, payMode: 1 }))]);
-mine([0, 1].map(() => envTx({ type: 'MINT', ticker: 'GENE', ...opening() }, 1000n)));
+// Demo chain: SH20 from block 1 (free mint), two mints of it; with D = 0, GENE too
+// (burn 1000 sats per mint, open from block 2) and two mints of it.
+const D0 = DEPLOY_BURN === 0n;
+mine(D0 ? [envTx(deployEnv({ ticker: 'GENE', start: 2, unlock: 2, price: 1000n, payMode: 1 }))] : []);
+mine([
+  ...[0, 1].map(() => envTx({ type: 'MINT', ticker: 'SH20', ...opening() })),
+  ...(D0 ? [0, 1].map(() => envTx({ type: 'MINT', ticker: 'GENE', ...opening() }, 1000n)) : []),
+]);
 
 const json = (v) => JSON.stringify(v, (_, x) => (typeof x === 'bigint' ? x.toString() : x));
 
@@ -125,4 +136,4 @@ createServer(async (req, res) => {
 }).listen(STATIC_PORT, '127.0.0.1');
 
 console.log(`vault http://localhost:${STATIC_PORT}/vault/`);
-console.log(`indexer API http://127.0.0.1:${API_PORT} and :${API_PORT2}, lying indexer :${LIAR_PORT}, mock Esplora at /esplora (demo chain, height ${idx.height})`);
+console.log(`indexer API http://127.0.0.1:${API_PORT} and :${API_PORT2}, lying indexer :${LIAR_PORT}, mock Esplora at /esplora (demo chain, height ${idx.height}, D = ${DEPLOY_BURN})`);
