@@ -108,9 +108,14 @@ The verifier stays cross-checked against snarkjs' PLONK verifier.
 ## Security, privacy, limits
 
 - **Main risk:** a bug in the circuit or in the verifier that accepts a bad proof would allow counterfeiting.
-  Counterfeits are invisible in transfers and would only show if a ticker's public outflows exceeded its
-  minted supply. The circuit and its PLONK verifier are new code: hence an audit, a public signet run and a
-  bug bounty before activation.
+  Counterfeits are invisible in transfers. The circuit and its PLONK verifier are new code: hence an audit, a
+  public signet run and a bug bounty before activation.
+- **Turnstile (v0.3):** the indexer keeps, per ticker, what entered the pool in public (mints, team unlocks,
+  purchases, claims) minus what left it in public (burns, listings, DEPLOY burns), and rejects any exit beyond
+  it. Every term is public already, so it reveals nothing and costs no byte. A counterfeiter could still move
+  forged notes inside the pool, and take out honest holders' share before they do, but the units in the open
+  can never exceed the issued supply: honest supply holds even with a broken circuit. Zcash records the same
+  counter for each of its pools since its 2018 counterfeiting bug; SH-20 enforces it.
 - **Still visible:** mints, listings, burns and purchases; the BTC inputs paying fees (mitigated by
   relayers, fresh addresses, delayed publication); timing.
 - **Anonymity at launch** is small and grows with every mint, purchase and ticker.

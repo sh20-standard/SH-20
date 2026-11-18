@@ -46,7 +46,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 52 tests (4 need the verifier module below and are skipped without it)
+npm test            # 54 tests (4 need the verifier module below and are skipped without it)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
@@ -67,7 +67,7 @@ Done in `indexer/`:
 - Wire v0.3: `pk_eph` is a 32-byte X25519 key and the spend section has no `proofLen` (the proof is always 480 bytes).
   `docs/SPEC-NOTES.md` (draft, reviewed once, not audited) specifies keys, addresses, sealing and scanning for wallets;
   `circuit/src/notes.rs` is its model and `circuit/js` its reference, with shared vectors.
-- State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest over a byte encoding of the events (v0.3, `SPEC-WIRE.md` §6; the GENESIS record commits to the profile's rules).
+- State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest over a byte encoding of the events (v0.3, `SPEC-WIRE.md` §6; the GENESIS record commits to the profile's rules), and a turnstile per ticker: no BURN, LIST or DEPLOY burn takes out more than entered the pool in public (`SPEC-WIRE.md` §5), so a circuit bug cannot inflate the supply in the open.
 - Poseidon over BN254 written from scratch for 2 to 5 inputs (constants generated with the Grain LFSR, checked against circomlibjs for every width; `poseidon2` is unchanged), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
 - Live chain follower (Bitcoin Core RPC or Esplora, reorgs with 288 blocks of undo) and a read-only HTTP API with a per-leaf note log for wallets (`docs/API.md`).
 - Explorer (`explorer/index.html`): a block explorer in one static page with no dependency; reads any indexer; demo data built from real indexer output.
@@ -205,3 +205,4 @@ Decided (2026-11-18): PLONK-KZG is the proof system (hard requirement 4). Three 
 tokens. `proofLen` is removed in wire v0.3, together with the 32-byte X25519 `pk_eph`.
 Decided (technical, v0.3): the events inside the digest have a fixed byte encoding (`src/events.js`, `SPEC-WIRE.md` §6).
 Decided (2026-11-19): batch mint, at most 10 mints per MINT (`MINT_BATCH_MAX`); a last batch gets what is left and pays for that.
+Decided (2026-11-19): a turnstile per ticker (`pool` in each token record), enforced by the indexer.

@@ -52,6 +52,7 @@ const lockKey = publicKey(h('lock-secret'));
 const lockScript = Buffer.concat([Buffer.from([0x51, 0x20]), lockKey]);
 const envs = {
   mintGenesis: { type: 'MINT', ticker: 'SH20', ...op('mint1') },
+  mintGenesisBatch: { type: 'MINT', ticker: 'SH20', ...op('mint0'), k: 2 },
   transfer: { type: 'TRANSFER', spend: spend('transfer', 1) },
   list: { type: 'LIST', ticker: 'SH20', amount: 1000n, price: 5000n, lockVout: 0, payScript: pay, spend: spend('list', 1) },
   take: { type: 'TAKE', ...op('buyer') },
@@ -60,13 +61,18 @@ const envs = {
   burn: { type: 'BURN', ticker: 'SH20', vPub: 10n, spend: spend('burn', 5) },
   mintPaid: { type: 'MINT', ticker: 'GENE', ...op('mint2') },
   mintBatch: { type: 'MINT', ticker: 'GENE', ...op('mint3'), k: 3 },
+  // SH20 in the pool by then: 3,000 minted − 1,000 listed + 1,000 taken − 2 × 1,000 deploy burns − 10 burned = 990.
+  overBurn: { type: 'BURN', ticker: 'SH20', vPub: 991n, spend: spend('overburn', 7) },
 };
 const ser = Object.fromEntries(Object.entries(envs).map(([k, v]) => [k, serializeEnvelope(v)]));
 
 const input = (seed) => ({ txid: txid(seed), vout: 0, witness: [] });
 const listTxid = txid('list-tx');
 const txs = [
-  [{ txid: txid('mint1'), vin: [input('f1')], vout: [{ value: 0n, script: opReturn(ser.mintGenesis) }] }],
+  [
+    { txid: txid('mint1'), vin: [input('f1')], vout: [{ value: 0n, script: opReturn(ser.mintGenesis) }] },
+    { txid: txid('mint0'), vin: [input('f0')], vout: [{ value: 0n, script: opReturn(ser.mintGenesisBatch) }] },
+  ],
   [
     { txid: listTxid, vin: [{ txid: txid('f2'), vout: 0, witness: witness(ser.list) }], vout: [{ value: 330n, script: lockScript }] },
     { txid: txid('transfer-tx'), vin: [{ txid: txid('f3'), vout: 0, witness: witness(ser.transfer) }], vout: [] },
@@ -79,13 +85,17 @@ const txs = [
     { txid: txid('mint2'), vin: [input('f8')], vout: [{ value: 1000n, script: opReturn(ser.mintPaid) }] },
     { txid: txid('mint3'), vin: [input('f9')], vout: [{ value: 3000n, script: opReturn(ser.mintBatch) }] },
   ],
+  [{ txid: txid('overburn-tx'), vin: [{ txid: txid('fa'), vout: 0, witness: witness(ser.overBurn) }], vout: [] }],
 ];
 const blocks = txs.map((t, i) => ({ height: i + 1, hash: `b${i + 1}`, txs: t }));
 
 const verifier = { name: 'test', verifySpend: (a) => Buffer.from(a.proof).equals(PROOF) };
 const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 1000n }, verifier });
 const results = blocks.map((b) => ix.applyBlock(b));
-for (const r of results) if (r.rejected.length) throw new Error(`unexpected rejection at ${r.height}: ${JSON.stringify(r.rejected)}`);
+// The one expected rejection: the turnstile refuses to take out more SH20 than the pool holds.
+const expected = [{ height: 8, txid: txid('overburn-tx'), reason: 'more than the pool holds of this ticker' }];
+const rejected = results.flatMap((r) => r.rejected.map((x) => ({ height: r.height, txid: x.txid, reason: x.reason })));
+if (JSON.stringify(rejected) !== JSON.stringify(expected)) throw new Error(`unexpected rejections: ${JSON.stringify(rejected)}`);
 
 const hexFr = (x) => x.toString(16).padStart(64, '0');
 const txJson = (t) => ({
@@ -96,7 +106,7 @@ const txJson = (t) => ({
 
 const out = {
   version: 'SH-20 draft v0.3',
-  notes: 'Field elements are hex, big-endian here for readability; on the wire they are 32-byte little-endian. The scenario uses a test verifier that accepts exactly one 480-byte proof: \"valid-proof\" padded with zeros. eventsH is the byte string of SPEC-WIRE §6 whose SHA-256 enters the digest.',
+  notes: 'Field elements are hex, big-endian here for readability; on the wire they are 32-byte little-endian. The scenario uses a test verifier that accepts exactly one 480-byte proof: \"valid-proof\" padded with zeros. eventsH is the byte string of SPEC-WIRE §6 whose SHA-256 enters the digest. rejected lists the envelopes an indexer must refuse; the reason is informative, only the refusal is normative.',
   poseidon2: [
     { in: ['1', '2'], out: poseidon2(1n, 2n).toString() },
     { in: ['0', '0'], out: poseidon2(0n, 0n).toString() },
@@ -110,11 +120,12 @@ const out = {
   scenario: {
     profile: { activationHeight: 1, deployBurn: '1000', anchorWindow: 100, anchorMinDepth: 1 },
     blocks: blocks.map((b) => ({ height: b.height, txs: b.txs.map(txJson) })),
+    rejected,
     after: results.map((r) => ({ height: r.height, root: hexFr(r.root), events: r.events.map((e) => e.type), eventsH: encodeEvents(r.events).toString('hex'), digest: r.digest })),
     final: {
       treeSize: ix.tree.size,
-      sh20: { mints: ix.token('SH20').mints.toString(), burned: ix.token('SH20').burned.toString() },
-      gene: { mints: ix.token('GENE').mints.toString(), teamUnlocked: ix.notes.some((x) => x.kind === 'TEAM' && x.ticker === 'GENE') },
+      sh20: { mints: ix.token('SH20').mints.toString(), burned: ix.token('SH20').burned.toString(), pool: ix.token('SH20').pool.toString() },
+      gene: { mints: ix.token('GENE').mints.toString(), pool: ix.token('GENE').pool.toString(), teamUnlocked: ix.notes.some((x) => x.kind === 'TEAM' && x.ticker === 'GENE') },
       listing: ix.listings.get(listTxid).state,
     },
   },
