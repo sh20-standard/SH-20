@@ -12,14 +12,18 @@ What works today, without proofs:
 - **MINT** end to end: the 74-byte OP_RETURN envelope of `docs/SPEC-WIRE.md`, serialised by
   `indexer/src/codec.js` itself, in one transaction;
 - tickers, mint windows and mints from `GET /status`, `/tokens`, `/token/:ticker`, `/notes`;
-  your own notes are matched locally, and the seed alone recovers them after a restore.
+  your own notes are matched locally, and the seed alone recovers them after a restore;
+- the genesis token **SH20**, checked against profile constants in the vault (it has no DEPLOY);
+- a **deploy screen** that checks a new ticker's terms with the indexer's rules and shows its cost,
+  including the burn of `D` SH20 with a proof.
 
-TRANSFER, BURN, LIST, TAKE and CLAIM wait for the spend circuit.
+Sending a DEPLOY, and TRANSFER, BURN, LIST, TAKE and CLAIM, are spends: they wait for the
+circuit's reference keys in JavaScript and the `ct` sealing format.
 
 ## Run
 
 ```sh
-npm test                 # 43 tests (+1 skipped until /nullifiers exists), Node ≥ 20, zero dependencies
+npm test                 # 53 tests, Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development)
 npm run release          # a verifiable release from the current commit (below)
 ```
@@ -28,15 +32,20 @@ Development (serves the repository root, a mock indexer API and a mock Esplora):
 
 ```sh
 node dev/serve.js        # http://localhost:8000/vault/, API on :8020
-node dev/e2e.js          # headless Chrome runs the whole mint flow with a fake UniSat
+node dev/e2e.js          # headless Chrome runs the whole SH20 mint flow with a fake UniSat
 E2E_PATH=/vault/dist/vault/ node dev/e2e.js   # the same flow on the IPFS build
 E2E_LIAR=1 node dev/e2e.js                    # a lying indexer in the list: the mint is refused
+
+node dev/serve.js --deploy-burn 0             # profile with D = 0: GENE is deployed too
+E2E_D0=1 node dev/e2e.js                      # mints GENE, terms checked against its DEPLOY
 ```
 
 `dev/serve.js` serves the real indexer API (`indexer/src/api.js`) over a small demo chain of
-serialised transactions. Its mock Esplora serves those transactions and "mines" every broadcast
-one into the next block, so the e2e test checks the DEPLOY terms, that the indexer accepts the
-vault's MINT, and that the vault finds the note in the tree afterwards.
+serialised transactions, with the reference profile (D = 1000): a DEPLOY needs a proof there, so
+the demo chain holds SH20 and two mints of it. Its mock Esplora serves those transactions and
+"mines" every broadcast one into the next block, so the e2e test checks the mint terms, that the
+indexer accepts the vault's MINT, that the vault finds the note in the tree afterwards, and that
+the deploy screen shows the burn.
 
 ## Releases and IPFS hosting
 
@@ -98,7 +107,14 @@ vout n  change to the payer                                     only if above du
   the change output is dropped when it would be dust.
 - Before anything is signed, the vault checks what the indexers will check (window open at the
   next block, not sold out, payment present), because a rejected mint is not refunded.
-- It does not take the mint terms from the indexer alone: it fetches `deployTxid` from Esplora,
+- **The genesis token SH20** is part of the profile, not a DEPLOY (`/tokens` lists it first, with
+  `genesis: true` and `deployTxid: null`). Its terms are checked against constants in the vault
+  (`src/profile.js`: `SH20`, max 21,000,000, 1,000 per mint, no team, price 0, payMode 0, no end,
+  start = the activation height), which a test compares with `indexer/src/constants.js` and the
+  vectors. Only `SH20` takes this path: another ticker that an indexer calls genesis, or SH20
+  named with a DEPLOY, is refused. The activation height is not fixed yet; until it is, the vault
+  takes the indexers' `activationHeight` and requires them to agree on it.
+- For every other token the vault does not take the mint terms from the indexer alone: it fetches `deployTxid` from Esplora,
   checks its txid and confirmation height, decodes the DEPLOY with the indexer's own `carrier.js`
   and `codec.js`, and refuses the mint if `ticker`, `max`, `lim`, `pre`, `start`, `end`, `price`,
   `payMode` or `payScript` differ (`src/deploy.js`). This stops an indexer that lies about a real
@@ -109,7 +125,8 @@ vout n  change to the payer                                     only if above du
 - **Several indexers** (optional, Settings, one URL per line; the first lists tickers and notes).
   Before a mint the vault asks all of them (`src/consensus.js`) and refuses the mint if they
   disagree on the token's fixed terms (`ticker`, `t`, `max`, `lim`, `pre`, `start`, `end`,
-  `unlock`, `price`, `payMode`, `payScript`, `deployTxid`, `deployHeight`), if one does not know the
+  `unlock`, `price`, `payMode`, `payScript`, `deployTxid`, `deployHeight`, `genesis`) or on the
+  profile (`activationHeight`, `deployBurn`, the genesis ticker), if one does not know the
   ticker, or if two at the same height report different `digest`s. Indexers a block apart are
   retried, then compared on terms only, with a warning. An unreachable indexer, or a single one,
   only warns.
@@ -130,6 +147,25 @@ are the envelope) + 43 (change). The wallet side has nothing left to trim: getti
 target needs a smaller envelope, for example dropping `rho` from public openings (−32 vB → ~164 vB),
 which is a protocol decision (CLAUDE.md, cost lever 4). With no change output: −43 vB.
 
+## Deploy screen
+
+`src/deploy-plan.js` checks a new ticker's terms with the same rules as the indexer (free 4-character
+ticker, `pre < max`, `(max − pre)` a multiple of `lim`, `start` after the DEPLOY block, `end` and
+`unlock` not before `start`, payMode 0 ⇔ price 0; `test/deploy-plan.test.js` runs each case through
+the reference indexer and requires the same verdict). It then shows what the DEPLOY costs:
+
+- **`D > 0`** (the reference profile, `D = 1000`; the vault reads `deployBurn` from `/status` and
+  requires every configured indexer to report the same): the DEPLOY burns `D` SH20 with a proof. It
+  carries a spend (`vPub = D`, `tPub = t("SH20")`) over at most two of your SH20 notes, and the
+  change comes back as a shielded note; the screen shows which unspent SH20 notes would pay it, and
+  the envelope size in the witness carrier (56 bytes + `psLen`, + 64 with a team allocation, + 829
+  for the spend).
+- **`D = 0`**: no proof, one OP_RETURN transaction (56 bytes + `psLen`, + 64 with a team).
+
+The button stays disabled: a DEPLOY with a burn is a spend, so it waits for the circuit's reference
+keys and the `ct` sealing format, like transfers. Notes minted today use provisional keys the
+circuit cannot spend.
+
 ## Private sync: tree, paths and spends on the device
 
 Asking an indexer `/path/:pos` or `/nullifier/:hex` for your own notes tells it which notes are
@@ -141,8 +177,8 @@ checks every request the page sends). Instead `src/sync.js`:
   hashes and a Merkle path costs none). The local root must equal the indexer's `root` at the same
   height, or the sync fails: an indexer whose leaves do not hash to its own root is refused;
 - downloads **every spent nullifier** (`/nullifiers?from=H`, docs/API.md) and checks the vault's
-  notes against that set on the device. Until an indexer serves the route (PR #5) spends show as
-  "unknown"; the vault never falls back to per-note questions;
+  notes against that set on the device. An indexer without the route shows spends as "unknown";
+  the vault never falls back to per-note questions;
 - computes each owned note's Merkle path from the local tree and checks it against the local root
   (`Sync.witness`, what a spend will need); nullifiers are computed inside the vault (`Vault.nullifier`),
   so the nullifier key never leaves it;
@@ -165,8 +201,9 @@ minted with `provisional-0` are for signet testing and may not be spendable by t
 
 The vault reads the API of `indexer/bin/follow.js` ([`docs/API.md`](../docs/API.md), default port 8020); `src/api.js` is the only file that knows its shape:
 
-- `GET /status` → `network` (must be `signet`), `height`, `digest`, `verifier`
-- `GET /tokens`, `GET /token/:ticker` → the reference indexer's token records
+- `GET /status` → `network` (must be `signet`), `height`, `digest`, `verifier`, `activationHeight`,
+  `deployBurn`, `genesis`
+- `GET /tokens`, `GET /token/:ticker` → the reference indexer's token records (SH20 first, `genesis: true`)
 - `GET /notes?from&limit` → `{ from, total, notes }`, read page by page (5,000 per page)
 - `GET /nullifiers?from=H` → every nullifier spent from block `H` on
 - never `/path/:pos` nor `/nullifier/:hex` (see Private sync)
@@ -191,12 +228,14 @@ repository layout (`dist/vault/` and `dist/indexer/src/`) so the relative import
 | Path | What |
 | --- | --- |
 | `index.html`, `style.css` | the page |
-| `src/app.js` | UI: vault, wallet, tickers, mint, notes, settings |
+| `src/app.js` | UI: vault, wallet, tickers, mint, deploy, notes, settings |
 | `src/keys.js` | seed, encrypted storage, backup, note openings |
 | `src/npk.js` | **provisional** `npk` and nullifier derivations, isolated |
 | `src/sync.js`, `src/tree.js`, `src/cache.js` | private sync: local tree, paths, spends, IndexedDB cache |
 | `src/mint.js` | MINT pre-flight checks, coin selection, transaction and PSBT |
-| `src/deploy.js` | checks the indexer's mint terms against the DEPLOY transaction |
+| `src/deploy.js` | checks the indexer's mint terms against the DEPLOY transaction, or SH20's against the profile |
+| `src/profile.js` | profile constants the vault knows itself: the genesis token, the activation height |
+| `src/deploy-plan.js` | the deploy screen: DEPLOY rules, envelope size, the burn of `D` SH20 |
 | `src/consensus.js` | cross-checks several indexers before a mint |
 | `src/btc.js` | addresses, transactions, PSBT v0, finalization, size estimates |
 | `src/wallets.js` | Xverse, UniSat, Leather adapters (injected providers, no SDK) |

@@ -5,6 +5,7 @@
 //
 //   node vault/dev/serve.js &   then   node vault/dev/e2e.js [path to Chrome]
 //   (after `npm run build`, E2E_PATH=/vault/dist/vault/ tests the IPFS build)
+//   With `serve.js --deploy-burn 0`, run E2E_D0=1: mints GENE, whose terms come from its DEPLOY.
 
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -15,6 +16,10 @@ const CHROME = process.argv[2] || '/Applications/Google Chrome.app/Contents/MacO
 // E2E_PATH=/vault/dist/vault/ runs the same flow on the IPFS build.
 // E2E_LIAR=1 adds the lying indexer (:8031) and expects the mint to be refused.
 const LIAR = !!process.env.E2E_LIAR;
+// Default profile (D = 1000): mint the genesis token SH20, checked against the profile.
+// E2E_D0=1 (serve.js --deploy-burn 0): mint GENE, checked against its DEPLOY transaction.
+const D0 = !!process.env.E2E_D0;
+const TICKER = D0 ? 'GENE' : 'SH20';
 const INDEXERS = ['http://127.0.0.1:8020', 'http://127.0.0.1:8030', ...(LIAR ? ['http://127.0.0.1:8031'] : [])].join(',');
 const PAGE = `http://localhost:8000${process.env.E2E_PATH || '/vault/'}?indexer=${INDEXERS}&esplora=http://127.0.0.1:8020/esplora`;
 const PORT = 9333;
@@ -122,8 +127,10 @@ async function main() {
   await waitFor(`document.querySelector('#warnings')?.innerText.includes('servers from the link')`, 'URL servers warning');
   if (!dialogs.some((d) => d.includes('127.0.0.1:8020'))) throw new Error('URL servers applied without confirmation');
   step('URL servers confirmed by a dialog and flagged on the page');
-  await waitFor(`document.querySelector('#tokens-body td strong')?.textContent === 'GENE'`, 'ticker table');
-  step('tickers loaded from /tokens: ' + (await evaluate(`document.querySelector('#tokens-body tbody tr').innerText.replace(/\\s+/g, ' ')`)));
+  const row = `[...document.querySelectorAll('#tokens-body tbody tr')].find((r) => r.querySelector('strong')?.textContent === '${TICKER}')`;
+  await waitFor(`!!${row}`, 'ticker table');
+  if (!(await evaluate(`document.querySelector('#tokens-body tbody tr').innerText.includes('SH20 genesis')`))) throw new Error('SH20 is not first, or not marked genesis');
+  step('tickers loaded from /tokens: ' + (await evaluate(`[...document.querySelectorAll('#tokens-body tbody tr')].map((r) => r.innerText.replace(/\\s+/g, ' ')).join(' / ')`)));
 
   await evaluate(`document.querySelector('#vault-body input[type=password]').value = 'e2e passphrase'`);
   await click('#vault-body button', 'Create vault');
@@ -137,7 +144,7 @@ async function main() {
   await waitFor(`document.querySelector('#wallet-body').innerText.includes('connected')`, 'wallet');
   step('wallet: ' + (await evaluate(`document.querySelector('#wallet-body p').innerText`)));
 
-  await click('#tokens-body button', 'Mint');
+  await evaluate(`${row}.querySelector('button').click()`);
   await waitFor(`[...document.querySelectorAll('#mint-body button')].some((b) => b.textContent.includes('Prepare'))`, 'mint panel');
   if (LIAR) {
     await waitFor(`document.querySelector('#mint-body').innerText.includes('Mint refused')`, 'refusal');
@@ -151,7 +158,8 @@ async function main() {
   }
   await click('#mint-body button', 'Prepare');
   await waitFor(`[...document.querySelectorAll('#mint-body button')].some((b) => b.textContent.includes('Sign with'))`, 'prepared tx');
-  if (!(await evaluate(`document.querySelector('#mint-body').innerText.includes('checked against the DEPLOY')`))) throw new Error('deploy check not shown');
+  const source = D0 ? 'checked against the DEPLOY' : 'checked against the profile constants';
+  if (!(await evaluate(`document.querySelector('#mint-body').innerText.includes(${JSON.stringify(source)})`))) throw new Error(`"${source}" not shown`);
   if (!(await evaluate(`document.querySelector('#mint-body').innerText.includes('2 agree on these terms')`))) throw new Error('cross-check not shown');
   step('prepared: ' + (await evaluate(`document.querySelector('#mint-body div dl').innerText.replace(/\\n/g, ' | ')`)));
   await click('#mint-body button', 'Sign with');
@@ -165,6 +173,15 @@ async function main() {
   const leaks = urls.filter((u) => /\/path\/|\/nullifier\//.test(u));
   if (leaks.length) throw new Error('per-note requests sent: ' + leaks.join(', '));
   step(`${urls.filter((u) => u.includes(':80')).length} requests to the indexers and Esplora, none per note`);
+
+  // the deploy screen shows the burn of D SH20 (with a proof), or no burn when D = 0
+  await evaluate(`(() => { const i = document.querySelector('#deploy-body input'); i.value = 'NEWT'; i.dispatchEvent(new Event('change')); })()`);
+  await waitFor(`document.querySelector('#deploy-body').innerText.includes('Envelope')`, 'deploy plan');
+  const plan = await evaluate(`document.querySelector('#deploy-body dl').innerText.replace(/\\n/g, ' | ')`);
+  const want = D0 ? ['D = 0', '56 bytes in one OP_RETURN'] : ['1,000 SH20 burned with a proof', '2 indexers agree on D', 'one note would pay the burn', '885 bytes in a tapscript witness'];
+  for (const w of want) if (!plan.includes(w)) throw new Error(`deploy screen lacks "${w}": ${plan}`);
+  if (!(await evaluate(`[...document.querySelectorAll('#deploy-body button')].find((b) => b.textContent.includes('Sign')).disabled`))) throw new Error('deploy can be sent');
+  step('deploy screen: ' + plan);
 
   ws.close();
   // a 404 on /nullifiers is expected from an indexer without the route (before PR #5): spends shown as unknown
