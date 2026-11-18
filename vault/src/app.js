@@ -21,17 +21,31 @@ if (window.top !== window.self) {
 const SETTINGS_KEY = 'sh20.vault.settings';
 const DEFAULTS = { indexer: 'http://127.0.0.1:8020', esplora: 'https://mempool.space/signet/api' }; // 8020: indexer/bin/follow.js
 
+// Servers given in the URL (?indexer=…&esplora=…) are never applied silently: a
+// link could point the vault at a lying indexer (wrong payScript or price) or
+// Esplora. They need a confirmation naming them, last for this tab only, and
+// keep a warning on screen.
+let urlServers = null;
+
 function loadSettings() {
   let s = { ...DEFAULTS };
   try {
     s = { ...s, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
   } catch {}
   const q = new URLSearchParams(location.search);
-  for (const k of ['indexer', 'esplora']) if (q.get(k)) s[k] = q.get(k);
+  const asked = Object.fromEntries(['indexer', 'esplora'].filter((k) => q.get(k) && q.get(k) !== s[k]).map((k) => [k, q.get(k)]));
+  if (Object.keys(asked).length) {
+    const list = Object.entries(asked).map(([k, v]) => `${k}: ${v}`).join('\n');
+    if (confirm(`This link asks the vault to use other servers for this tab:\n\n${list}\n\nA dishonest server can show a wrong price or payment address. Use them?`)) {
+      s = { ...s, ...asked };
+      urlServers = asked;
+    }
+  }
   return s;
 }
 
 let settings = loadSettings();
+const MAX_FEE_SATS = 20000n; // above this, ask before signing
 let indexer = new IndexerApi(settings.indexer);
 let esplora = new Esplora(settings.esplora);
 const explorerTx = (id) => settings.esplora.replace(/\/api\/?$/, '') + '/tx/' + id;
@@ -87,6 +101,9 @@ function staticWarnings() {
   const w = [];
   if (/\/ip[fn]s\//.test(location.pathname)) {
     w.push('This page is served from a path gateway (…/ipfs/<cid>/). Every site on this gateway shares one origin and could read the vault. Open it from a subdomain gateway (<cid>.ipfs.dweb.link), a local IPFS node or a local copy.');
+  }
+  if (urlServers) {
+    w.push(`Using servers from the link, not your saved settings: ${Object.entries(urlServers).map(([k, v]) => `${k} ${v}`).join(', ')}. Check the price and outputs before signing.`);
   }
   if (!window.isSecureContext) w.push('Not a secure context: passphrase encryption is unavailable. Use https or localhost.');
   w.push(`Note keys use the provisional derivation "${NPK_SCHEME}" until the spend circuit is fixed. Notes minted now are for signet testing and may not be spendable by the final circuit.`);
@@ -298,6 +315,7 @@ async function prepareMint(token, feeRate, out) {
 
 async function signAndSend(token, m, opening, out) {
   const w = st.wallet;
+  if (m.fee > MAX_FEE_SATS && !confirm(`The network fee is ${sats(m.fee)}, which is unusually high. Sign anyway?`)) return;
   const signed = await w.adapter.signPsbt(m.psbt, m.inputIndexes, w.address);
   const done = finalizePsbt(signed);
   if (!sameUnsignedTx(done.tx, m.tx)) throw new Error('the wallet changed the transaction; nothing was sent');
@@ -389,6 +407,8 @@ function initSettings() {
   f.addEventListener('submit', (ev) => {
     ev.preventDefault();
     settings = { indexer: f.indexer.value.trim(), esplora: f.esplora.value.trim() };
+    urlServers = null;
+    staticWarnings();
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
     indexer = new IndexerApi(settings.indexer);
     esplora = new Esplora(settings.esplora);

@@ -19,7 +19,7 @@ TRANSFER, BURN, LIST, TAKE and CLAIM wait for the spend circuit.
 ## Run
 
 ```sh
-npm test                 # 24 tests, Node ≥ 20, zero dependencies
+npm test                 # 26 tests, Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ = the site to publish
 ipfs add -r --cid-version=1 dist
 ```
@@ -49,6 +49,10 @@ accepts the vault's MINT and that the vault finds the note in the tree afterward
   the folder over http(s), even locally.
 - A strict CSP allows only same-origin scripts plus the import map (by hash); no data from the
   network is ever turned into HTML. The page refuses to run inside a frame.
+- Servers given in a link (`?indexer=…&esplora=…`) are used only after a confirmation naming them,
+  for that tab only, with a warning on screen: a dishonest indexer could show a wrong price or
+  payment address. The suggested fee rate is capped at 200 sat/vB, the vault refuses more than
+  1,000 sat/vB, and it asks before signing a fee above 20,000 sats.
 
 ## How a MINT is built
 

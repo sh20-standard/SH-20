@@ -6,6 +6,7 @@
 
 const trim = (u) => u.replace(/\/+$/, '');
 const NOTE_PAGE = 5000; // the API's maximum page
+export const MAX_FEE_RATE = 200; // sat/vB, cap on a server's suggestion
 
 async function getJson(url) {
   const r = await fetch(url, { headers: { accept: 'application/json' } });
@@ -112,11 +113,15 @@ export class Esplora {
     const j = await getJson(`${this.base}/address/${encodeURIComponent(address)}/utxo`);
     return j.map((u) => ({ txid: u.txid, vout: u.vout, value: BigInt(u.value), confirmed: !!u.status?.confirmed }));
   }
-  /** sat/vB for confirmation within ~2 blocks; 1 when the server has no estimate. */
+  /**
+   * Suggested sat/vB for confirmation within ~2 blocks, clamped to
+   * [1, MAX_FEE_RATE] so a dishonest server cannot suggest a ruinous fee.
+   */
   async feeRate() {
     try {
       const j = await getJson(`${this.base}/fee-estimates`);
-      return Math.max(1, Math.ceil((j['2'] ?? j['3'] ?? j['6'] ?? 1) * 10) / 10);
+      const r = Number(j['2'] ?? j['3'] ?? j['6'] ?? 1);
+      return Number.isFinite(r) ? Math.min(MAX_FEE_RATE, Math.max(1, Math.ceil(r * 10) / 10)) : 1;
     } catch {
       return 1;
     }

@@ -50,3 +50,11 @@ test('field elements: hex (with or without 0x) or decimal, nothing else', () => 
   assert.equal(frOf('nope'), null);
   assert.equal(frOf(undefined), null);
 });
+
+test('a server cannot suggest a ruinous fee rate', async () => {
+  const { Esplora, MAX_FEE_RATE } = await import('../src/api.js');
+  for (const [body, want] of [[{ 2: 1e6 }, MAX_FEE_RATE], [{ 2: 'x' }, 1], [{ 2: -5 }, 1], [{ 2: 3.21 }, 3.3]]) {
+    globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => body });
+    assert.equal(await new Esplora('http://x').feeRate(), want);
+  }
+});

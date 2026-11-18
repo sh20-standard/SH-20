@@ -103,3 +103,9 @@ test('mainnet or legacy payers are refused', () => {
   assert.throws(() => buildMint({ ...args, payer: { address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4' } }), /not a signet address/);
   assert.throws(() => buildMint({ ...args, payer: { address: 'tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7' } }), /native segwit, nested segwit or taproot/);
 });
+
+test('fee rate above the hard cap is refused', () => {
+  const { idx, c } = setup({});
+  const t = normToken(idx.token('GENE'));
+  assert.throws(() => buildMint({ token: t, opening: noteOpening(seed, 0), payer: { address: WPKH }, utxos: [utxo(10n ** 8n)], feeRate: 5000, tipHeight: c.next }), /fee rate must be between/);
+});

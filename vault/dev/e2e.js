@@ -70,11 +70,15 @@ async function main() {
   let id = 0;
   const pending = new Map();
   const problems = [];
+  const dialogs = [];
   ws.addEventListener('message', (ev) => {
     const m = JSON.parse(ev.data);
     if (m.id && pending.has(m.id)) {
       pending.get(m.id)(m);
       pending.delete(m.id);
+    } else if (m.method === 'Page.javascriptDialogOpening') {
+      dialogs.push(m.params.message);
+      ws.send(JSON.stringify({ id: ++id, method: 'Page.handleJavaScriptDialog', params: { accept: true } }));
     } else if (m.method === 'Runtime.exceptionThrown') {
       problems.push('exception: ' + m.params.exceptionDetails.exception?.description);
     } else if (m.method === 'Runtime.consoleAPICalled' && ['error', 'warning'].includes(m.params.type)) {
@@ -108,6 +112,9 @@ async function main() {
   await send('Page.navigate', { url: PAGE });
 
   const step = (s) => console.log('·', s);
+  await waitFor(`document.querySelector('#warnings').innerText.includes('servers from the link')`, 'URL servers warning');
+  if (!dialogs.some((d) => d.includes('127.0.0.1:8020'))) throw new Error('URL servers applied without confirmation');
+  step('URL servers confirmed by a dialog and flagged on the page');
   await waitFor(`document.querySelector('#tokens-body td strong')?.textContent === 'GENE'`, 'ticker table');
   step('tickers loaded from /tokens: ' + (await evaluate(`document.querySelector('#tokens-body tbody tr').innerText.replace(/\\s+/g, ' ')`)));
 

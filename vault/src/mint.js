@@ -13,6 +13,8 @@ import {
 } from './btc.js';
 import { fromHex } from './bytes.js';
 
+export const MAX_FEE_RATE = 1000; // sat/vB: refuse anything above, whoever typed it
+
 const SEQUENCE = 0xfffffffd; // RBF on, no relative lock
 
 /**
@@ -82,7 +84,7 @@ export function selectCoins(utxos, fixed, inType, changeScript, feeRate) {
 export function buildMint({ token, opening, payer, utxos, feeRate, tipHeight }) {
   const problems = mintProblems(token, tipHeight + 1);
   if (problems.length) throw new Error(problems.join('; '));
-  if (!(feeRate > 0)) throw new Error('fee rate must be positive');
+  if (!(feeRate > 0) || feeRate > MAX_FEE_RATE) throw new Error(`fee rate must be between 0 and ${MAX_FEE_RATE} sat/vB`);
   const payScript = addressToScript(payer.address);
   const inType = scriptType(payScript);
   if (!SUPPORTED_INPUTS.includes(inType)) throw new Error(`pay from a native segwit, nested segwit or taproot address, not ${inType}`);
