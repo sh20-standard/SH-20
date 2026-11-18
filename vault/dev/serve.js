@@ -12,13 +12,19 @@
 // next block of the demo chain, so the whole mint flow runs without a real
 // wallet or signet coins (see e2e.js).
 //
-//   node vault/dev/serve.js [--port 8000] [--api-port 8020] [--api-port2 8030] [--liar-port 8031] [--deploy-burn 1000]
+//   node vault/dev/serve.js [--port 8000] [--api-port 8020] [--api-port2 8030] [--liar-port 8031] [--deploy-burn 1000] [--isolate]
+//
+// Spends are verified with the real PLONK verifier (vault/prover/sh20_circuit.wasm). --isolate sends
+// the cross-origin isolation headers, so the page gets shared memory and proves on a thread pool;
+// without it the page is not isolated and proves on one thread, as from an IPFS gateway.
 
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 import { Indexer } from '../../indexer/src/indexer.js';
+import { plonkVerifier } from '../../indexer/src/adapters/plonk.js';
 import { apiHandler } from '../../indexer/src/api.js';
 import { serializeEnvelope } from '../../indexer/src/codec.js';
 import { deployEnv, opening } from '../../indexer/test/helpers.js';
@@ -34,7 +40,10 @@ const LIAR_PORT = Number(arg('--liar-port', 8031)); // a lying indexer
 
 const DEPLOY_BURN = BigInt(arg('--deploy-burn', '1000'));
 
-const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: DEPLOY_BURN } });
+// spends are checked with the pinned PLONK verifier, from the vault's own single-thread module
+const verifier = plonkVerifier({ wasm: new Uint8Array(readFileSync(new URL('../prover/sh20_circuit.wasm', import.meta.url))) });
+const ISOLATE = process.argv.includes('--isolate'); // COOP/COEP: shared memory, so the prover's thread pool
+const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: DEPLOY_BURN }, verifier });
 const api = apiHandler(idx, { network: 'signet' });
 const chainTxs = new Map(); // txid -> { hex, height }
 
@@ -120,7 +129,8 @@ createServer(serveApi(api)).listen(API_PORT, '127.0.0.1');
 createServer(serveApi(api)).listen(API_PORT2, '127.0.0.1');
 createServer(serveApi(liar)).listen(LIAR_PORT, '127.0.0.1');
 
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm' };
+const ISOLATION = ISOLATE ? { 'cross-origin-opener-policy': 'same-origin', 'cross-origin-embedder-policy': 'require-corp' } : {};
 createServer(async (req, res) => {
   const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^(\.\.[/\\])+/, '');
   let file = join(root, path);
@@ -132,7 +142,7 @@ createServer(async (req, res) => {
   } catch {
     return res.writeHead(404).end('not found');
   }
-  res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream' }).end(body);
+  res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream', ...ISOLATION }).end(body);
 }).listen(STATIC_PORT, '127.0.0.1');
 
 console.log(`vault http://localhost:${STATIC_PORT}/vault/`);

@@ -121,3 +121,54 @@ test('a TRANSFER built and proved by the vault is accepted by the indexer with t
   // and the indexer's nullifiers are the ones the vault computes for its two notes
   for (const n of notes) assert.ok(ix.nullifiers.has(frHex(vault.nullifier(n))));
 });
+
+test('a DEPLOY that burns D SH20, planned from a synced vault and proved, is accepted with the real verifier', async () => {
+  const { listen } = await import('../../indexer/src/api.js');
+  const { IndexerApi } = await import('../src/api.js');
+  const { Sync } = await import('../src/sync.js');
+  const { memoryCache } = await import('../src/cache.js');
+  const { planDeployBurn, proveSpend, planCarrier, revealFor } = await import('../src/send.js');
+  const { deployProblems } = await import('../src/deploy-plan.js');
+
+  // the reference profile: D = 1000, SH20 from block 1
+  const ix = new Indexer({ profile: { activationHeight: 1 }, verifier: plonkVerifier({ wasm: new Uint8Array(readFileSync(WASM)) }) });
+  const c = chain(ix);
+  c.block();
+  const vault = await vaultOf(cv.wallets[1].m);
+  const o = vault.opening(0);
+  const b = c.block(helperTx({ env: { type: 'MINT', ticker: 'SH20', npk: o.npk, k: 2 } })); // 2,000 SH20, free
+  assert.equal(b.events[0]?.type, 'MINT', JSON.stringify(b.rejected));
+  const note = await vault.addNote({ index: 0, ticker: 'SH20', v: 2000n, txid: null, status: 'in tree', pos: b.events[0].pos });
+
+  const server = await listen(ix, { port: 0 });
+  try {
+    const s = new Sync(memoryCache(), 'test');
+    await s.sync(new IndexerApi(`http://127.0.0.1:${server.address().port}`));
+    await vault.updateNote(note.id, { spent: s.spentAt(frHex(vault.nullifier(note))) === null ? 'no' : 'yes' });
+    const tip = c.next - 1;
+    const d = { ticker: 'NEWT', max: 1000000n, lim: 100n, pre: 0n, start: tip + 5, end: 0, unlock: tip + 5, payMode: 0, price: 0n, payScript: new Uint8Array(0) };
+    assert.deepEqual(deployProblems(d, { nextHeight: tip + 1, taken: ['SH20'] }), []);
+    const built = planDeployBurn({ vault, sync: s, tip, d, D: 1000n });
+    assert.equal(built.change, 1000n);
+    const envelope = await proveSpend(nodeProver(), built);
+    assert.equal(envelope.length, 56 + 824, 'the size the deploy screen shows');
+    const cp = planCarrier({ envelope, payer: { address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx' }, utxos: [{ txid: '22'.repeat(32), vout: 0, value: 100000n }], feeRate: 1, tipHeight: tip });
+    assert.equal(cp.commit.tx.vout[0].value, cp.value, 'the commit pays the reveal');
+    const reveal = revealFor(cp, 'c1'.repeat(32));
+    const r = c.block(toIndexerTx(reveal.tx, reveal.txid));
+    assert.deepEqual(r.rejected, []);
+    assert.equal(r.events[0].type, 'DEPLOY');
+    assert.equal(ix.token('NEWT').max, 1000000n);
+    assert.equal(ix.token('SH20').burned, 1000n, 'D SH20 burned');
+    // a fresh server: the synchronous prover blocked this process for half a minute, past the
+    // keep-alive of the first connection (in the browser it runs in a Worker)
+    const again = await listen(ix, { port: 0 });
+    await s.sync(new IndexerApi(`http://127.0.0.1:${again.address().port}`)).finally(() => again.close());
+    assert.ok(s.spentAt(frHex(vault.nullifier(note))) > 0, 'the 2,000 note is spent');
+    const got = [];
+    for (const n of ix.notes.filter((x) => x.kind === 'OUT')) got.push(await vault.receive({ pos: n.pos, leaf: BigInt('0x' + n.leaf), pkEph: fromHex(n.pkEph), ct: fromHex(n.ct) }));
+    assert.deepEqual(got.filter(Boolean).map((x) => [x.ticker, x.v]), [['SH20', '1000']], 'the change comes back as a sealed note');
+  } finally {
+    server.close();
+  }
+});

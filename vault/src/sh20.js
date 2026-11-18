@@ -13,7 +13,7 @@ export { poseidon2 } from '../../indexer/src/poseidon.js';
 export { rootFromPath } from '../../indexer/src/tree.js';
 export { sign as schnorrSign, verify as schnorrVerify, publicKey as schnorrPublicKey, taggedHash } from '../../indexer/src/schnorr.js';
 export { HRP, encodeAddress, decodeAddress } from '../../circuit/js/address.js';
-export { walletKeys, publicOpening, scan, seal, spendKeys } from '../../circuit/js/seal.js';
+export { walletKeys, publicOpening, scan, seal, spendKeys, masterSecret } from '../../circuit/js/seal.js';
 export { nullifier, noteKeys, bodyHash } from '../../circuit/js/notes.js';
 export { sign as eddsaSign, verify as eddsaVerify } from '../../circuit/js/eddsa.js';
 export { L } from '../../circuit/js/babyjub.js';

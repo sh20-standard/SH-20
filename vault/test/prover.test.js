@@ -21,6 +21,10 @@ test('the shipped prover modules name no machine path, and give the pinned verif
     assert.match(text, /\/cargo\/registry\//, `${f} was built with the remapped paths`);
   }
   assert.equal(nodeProver().vkDigest, SPEND_VK_DIGEST);
+  // what the hosts call: prover-worker.js, and circuit/web/host.js for the pool
+  const exportsOf = (f) => WebAssembly.Module.exports(new WebAssembly.Module(readFileSync(file(f)))).map((e) => e.name);
+  for (const n of ['sh20_alloc', 'sh20_load_key', 'sh20_prove', 'sh20_verify', 'sh20_vk_digest']) assert.ok(exportsOf('sh20_circuit.wasm').includes(n), n);
+  for (const n of ['__wasi_init_tp', '__wasm_call_ctors', 'wasi_thread_start', 'sh20_threads', 'sh20_prove']) assert.ok(exportsOf('sh20_circuit_threads.wasm').includes(n), `threads: ${n}`);
 });
 
 test('the site carries the prover: both builds, the proving key, host.js and the pool thread', () => {

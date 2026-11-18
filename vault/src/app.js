@@ -61,7 +61,14 @@ const explorerTx = (id) => settings.esplora.replace(/\/api\/?$/, '') + '/tx/' + 
 
 // ---- state ----------------------------------------------------------------------
 
-const st = { vault: null, wallet: null, tokens: [], status: null, tip: null, sync: null, profiles: [] };
+const st = { vault: null, wallet: null, tokens: [], status: null, tip: null, sync: null, profiles: [], results: {} };
+
+/** Shows `nodes` in the panel `id` and keeps them there across renders. */
+function result(id, ...nodes) {
+  st.results[id] = nodes.flat().filter(Boolean);
+  $(id)?.replaceChildren(...st.results[id]);
+}
+const resultBox = (id) => h('div', { id }, ...(st.results[id] ?? []));
 
 // ---- DOM helpers ----------------------------------------------------------------
 
@@ -131,9 +138,13 @@ function renderVault() {
       v.state.obsolete?.length ? h('p', { class: 'muted' }, `${v.state.obsolete.length} note(s) made with the provisional keys of draft v0.2 are kept aside in the backup: they cannot exist on a v0.3 chain.`) : null,
       h('div', { class: 'row' },
         h('button', { type: 'button', class: 'secondary', onclick: () => navigator.clipboard?.writeText(v.address).catch(report) }, 'Copy address'),
+        v.words ? h('button', { type: 'button', class: 'secondary', onclick: () => { st.showWords = !st.showWords; renderVault(); } }, st.showWords ? 'Hide recovery words' : 'Show recovery words') : null,
         h('button', { type: 'button', class: 'secondary', onclick: downloadBackup }, 'Download backup'),
-        h('button', { type: 'button', class: 'secondary', onclick: () => { v.lock(); st.vault = null; renderAll(); } }, 'Lock')),
-      h('p', { class: 'muted' }, 'The backup holds the seed (encrypted if you set a passphrase). A new version of this page on IPFS has a new origin and an empty storage: restore the backup there.'));
+        h('button', { type: 'button', class: 'secondary', onclick: () => { v.lock(); st.vault = null; st.showWords = false; renderAll(); } }, 'Lock')),
+      st.showWords && v.words ? wordsBox(v.words) : null,
+      h('p', { class: 'muted' }, v.words
+        ? 'The 12 recovery words restore everything (keys, notes, address) in any wallet that follows SPEC-NOTES. Write them on paper; anyone who reads them owns your notes. A new version of this page on IPFS has a new origin and an empty storage: restore there from the words or the backup.'
+        : 'This vault was made before recovery words existed: only its backup file restores it (encrypted if you set a passphrase).'));
     return;
   }
   if (Vault.exists(localStorage)) {
@@ -159,6 +170,7 @@ function renderVault() {
     busy(create, async () => {
       if (!pass.value && !confirm('Create the vault without a passphrase? Anyone using this browser profile could read it.')) return;
       st.vault = await Vault.create(localStorage, pass.value);
+      st.showWords = true; // shown once on creation, to be written down
       navigator.storage?.persist?.().catch(() => {});
       renderAll();
     })();
@@ -172,10 +184,28 @@ function renderVault() {
     renderAll();
     syncNotes({ full: true }).catch(report); // a restored vault looks for its notes in every leaf
   }));
+  const words = h('textarea', { rows: '2', name: 'words', spellcheck: 'false', autocomplete: 'off', placeholder: '12 recovery words' });
+  const wpass = h('input', { type: 'password', placeholder: 'new passphrase for this device', autocomplete: 'new-password' });
+  const fromWords = h('button', { type: 'button', class: 'secondary' }, 'Restore from words');
+  fromWords.addEventListener('click', busy(fromWords, async () => {
+    st.vault = await Vault.fromWords(localStorage, words.value, wpass.value);
+    words.value = '';
+    renderAll();
+    syncNotes({ full: true }).catch(report); // looks for its notes in every leaf
+  }));
   fill('vault-body',
-    h('p', {}, 'No vault on this device. The seed is generated here and never leaves it.'),
+    h('p', {}, 'No vault on this device. Its 12 recovery words are generated here and never leave it.'),
     form,
+    h('p', { class: 'muted' }, 'Or restore one:'),
+    h('label', {}, 'From its recovery words', words),
+    h('div', { class: 'row' }, wpass, fromWords),
     h('div', { class: 'row' }, file, rpass, restore));
+}
+
+function wordsBox(words) {
+  return h('div', { class: 'words' },
+    h('p', {}, h('strong', {}, 'Recovery words. '), 'Write them down in this order and keep them offline.'),
+    h('ol', { id: 'words' }, words.split(' ').map((w) => h('li', { class: 'mono' }, w))));
 }
 
 function downloadBackup() {
@@ -487,7 +517,7 @@ function renderDeploy() {
         : `${plan.bytes} bytes in one OP_RETURN transaction`)] : null),
     plan.problems.map((p) => h('div', { class: 'warn' }, p)),
     deployButton(d, plan, D),
-    h('div', { id: 'deploy-out' }));
+    resultBox('deploy-out'));
 }
 
 function deployButton(d, plan, D) {
@@ -510,7 +540,7 @@ function deployButton(d, plan, D) {
 const termsKey = (d) => JSON.stringify(d, (_, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v));
 
 async function sendDeploy(shown, D, feeRate) {
-  const out = $('deploy-out');
+  const out = 'deploy-out';
   await refresh(); // D, the tickers taken and the tip, now
   if (String(deployBurn().D) !== String(D)) throw new Error('D changed: check again');
   const tip = await esplora.tipHeight();
@@ -524,7 +554,7 @@ async function sendDeploy(shown, D, feeRate) {
     const m = buildPlainDeploy({ d: shown, team, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip });
     const done = await signFunded(m);
     const id = await esplora.broadcast(done.hex);
-    out.replaceChildren(h('p', { class: 'ok' }, `DEPLOY of ${shown.ticker} broadcast (${done.vsize} vB).`), txLink(id));
+    result(out, h('p', { class: 'ok' }, `DEPLOY of ${shown.ticker} broadcast (${done.vsize} vB).`), txLink(id));
     return;
   }
   const s = await getSyncer();
@@ -561,8 +591,17 @@ async function signFunded(m) {
  * A proof-carrying spend: plan (witness), prove, commit (wallet), reveal (vault), broadcast both.
  * The one-time key is saved before the wallet signs, so the reveal can always be sent again.
  */
-async function carry({ kind, out, feeRate, tip, plan, label }) {
-  const status = (t) => out.replaceChildren(h('p', { class: 'muted' }, t));
+async function carry(args) {
+  try {
+    await carryOnce(args);
+  } catch (e) {
+    result(args.out, h('p', { class: 'err' }, e.message || String(e)));
+    throw e;
+  }
+}
+
+async function carryOnce({ kind, out, feeRate, tip, plan, label }) {
+  const status = (t) => result(out, h('p', { class: 'muted' }, t));
   status('Building the spend: note keys, sealed outputs, signatures…');
   await new Promise((r) => setTimeout(r, 30));
   const built = plan();
@@ -586,7 +625,7 @@ async function carry({ kind, out, feeRate, tip, plan, label }) {
   await esplora.broadcast(reveal.hex);
   await st.vault.updatePending(pid, { status: 'broadcast' });
   renderAll();
-  out.replaceChildren(
+  result(out,
     h('p', { class: 'ok' }, `${label}: broadcast. Proved in ${proveS} s; ${envelope.length}-byte envelope; reveal ${reveal.vsize} vB.`),
     h('p', { class: 'muted' }, 'Commit, then reveal:'), txLink(done.txid), txLink(reveal.txid),
     h('p', { class: 'muted' }, 'Sync after the next block: the notes spent show their block, and the change shows as a received note.'));
@@ -621,12 +660,12 @@ function renderSend() {
     el.addEventListener('input', () => { f[key] = el.value; });
     return el;
   };
-  const out = h('div', { id: 'send-out' });
+  const out = resultBox('send-out');
   const need = [];
   if (!bal.size) need.push('hold a note that is in the tree and known unspent (sync)');
   if (!st.wallet) need.push('connect a wallet (it pays the network fees)');
   const b = h('button', { type: 'button', disabled: need.length > 0, name: 'send' }, 'Prove and send');
-  b.addEventListener('click', busy(b, () => sendTransfer(out)));
+  b.addEventListener('click', busy(b, () => sendTransfer('send-out')));
   fill('send-body',
     h('p', { class: 'muted' }, 'A private TRANSFER, proved on this device: the amount, the ticker, the sender and the recipient stay hidden. Your Bitcoin wallet pays the network fees.'),
     h('div', { class: 'grid' },

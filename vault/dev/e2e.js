@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 const CHROME = process.argv[2] || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 // E2E_PATH=/vault/dist/vault/ runs the same flow on the IPFS build.
@@ -20,6 +21,11 @@ const LIAR = !!process.env.E2E_LIAR;
 // E2E_D0=1 (serve.js --deploy-burn 0): mint GENE, checked against its DEPLOY transaction.
 const D0 = !!process.env.E2E_D0;
 const TICKER = D0 ? 'GENE' : 'SH20';
+// a wallet of circuit/js/vectors.json to send to: its own scan must find the note (checked in test/spend.test.js)
+const RECIPIENT = JSON.parse(readFileSync(new URL('../../circuit/js/vectors.json', import.meta.url), 'utf8')).wallets.find((w) => w.name === 'recipient').addressTest;
+// a fresh ticker each run: the dev chain lives as long as serve.js, across runs
+const NEW_TICKER = 'T' + Array.from(crypto.getRandomValues(new Uint8Array(3)), (x) => String.fromCharCode(65 + (x % 26))).join('');
+const LONG = 3000; // × 100 ms: a proof on one thread in a browser takes about half a minute
 const INDEXERS = ['http://127.0.0.1:8020', 'http://127.0.0.1:8030', ...(LIAR ? ['http://127.0.0.1:8031'] : [])].join(',');
 const PAGE = `http://localhost:8000${process.env.E2E_PATH || '/vault/'}?indexer=${INDEXERS}&esplora=http://127.0.0.1:8020/esplora`;
 const PORT = 9333;
@@ -141,6 +147,9 @@ async function main() {
   const address = await evaluate(`document.querySelector('#address')?.textContent`);
   if (!/^tsh201[02-9ac-hj-np-z]{162}$/.test(address)) throw new Error('no signet sh20 address shown: ' + address);
   step('sh20 address: ' + address.slice(0, 24) + '…');
+  const words = await evaluate(`[...document.querySelectorAll('#words li')].map((li) => li.textContent).join(' ')`);
+  if (words.split(' ').length !== 12) throw new Error('the 12 recovery words are not shown on creation');
+  step('recovery words shown once: ' + words.split(' ').slice(0, 2).join(' ') + ' … (12)');
 
   await waitFor(`[...document.querySelectorAll('#wallet-body button')].some((b) => b.textContent === 'UniSat' && !b.disabled)`, 'UniSat detected');
   await click('#wallet-body button', 'UniSat');
@@ -181,14 +190,57 @@ async function main() {
   if (leaks.length) throw new Error('per-note requests sent: ' + leaks.join(', '));
   step(`${urls.filter((u) => u.includes(':80')).length} requests to the indexers and Esplora, none per note`);
 
-  // the deploy screen shows the burn of D SH20 (with a proof), or no burn when D = 0
-  await evaluate(`(() => { const i = document.querySelector('#deploy-body input'); i.value = 'NEWT'; i.dispatchEvent(new Event('change')); })()`);
+  // a private TRANSFER of 700, proved in the page (thread pool if isolated, else one thread)
+  const setField = (sel, value) => evaluate(`(() => { const i = document.querySelector(${JSON.stringify(sel)}); i.value = ${JSON.stringify(value)}; i.dispatchEvent(new Event('input')); i.dispatchEvent(new Event('change')); })()`);
+  await waitFor(`!document.querySelector('#send-body button[name=send]')?.disabled`, 'send enabled');
+  await setField('#send-body input[name=amount]', '700');
+  await setField('#send-body input[name=to]', RECIPIENT);
+  const isolated = await evaluate('self.crossOriginIsolated === true');
+  const t0 = Date.now();
+  await click('#send-body button', 'Prove and send');
+  await waitFor(`document.querySelector('#send-out')?.innerText.includes('broadcast.')`, 'transfer broadcast', LONG);
+  step(`TRANSFER (${isolated ? 'isolated: thread pool' : 'not isolated: one thread'}, ${((Date.now() - t0) / 1000).toFixed(0)} s in all): ` + (await evaluate(`document.querySelector('#send-out .ok').innerText`)));
+  await click('#notes button', 'Sync');
+  await waitFor(`document.querySelector('#notes-body').innerText.includes('received, sealed')`, 'change found by scanning', 600);
+  const notesNow = await evaluate(`document.querySelector('#notes-body tbody').innerText.replace(/\\s+/g, ' ')`);
+  if (!/1,300 in tree/.test(notesNow) || !/yes, block/.test(notesNow)) throw new Error('after the transfer: ' + notesNow);
+  step('after the transfer: ' + notesNow);
+
+  // a DEPLOY: with D > 0 it burns 1,000 SH20 with a proof (paid by the 1,300 of change); with D = 0, one OP_RETURN
+  await evaluate(`(() => { const i = document.querySelector('#deploy-body input'); i.value = '${NEW_TICKER}'; i.dispatchEvent(new Event('change')); })()`);
   await waitFor(`document.querySelector('#deploy-body').innerText.includes('Envelope')`, 'deploy plan');
   const plan = await evaluate(`document.querySelector('#deploy-body dl').innerText.replace(/\\n/g, ' | ')`);
   const want = D0 ? ['D = 0', '56 bytes in one OP_RETURN'] : ['1,000 SH20 burned with a proof', '2 indexers agree on D', 'one note would pay the burn', '880 bytes in a tapscript witness'];
   for (const w of want) if (!plan.includes(w)) throw new Error(`deploy screen lacks "${w}": ${plan}`);
-  if (!(await evaluate(`[...document.querySelectorAll('#deploy-body button')].find((b) => b.textContent.includes('Sign')).disabled`))) throw new Error('deploy can be sent');
   step('deploy screen: ' + plan);
+  await waitFor(`!document.querySelector('#deploy-body button[name=deploy]').disabled`, 'deploy enabled');
+  await evaluate(`document.querySelector('#deploy-body button[name=deploy]').click()`);
+  await waitFor(`/broadcast/.test(document.querySelector('#deploy-out')?.innerText ?? '')`, 'deploy broadcast', LONG);
+  step('DEPLOY: ' + (await evaluate(`document.querySelector('#deploy-out .ok').innerText`)));
+  await click('#tokens h2 button', 'Refresh');
+  await waitFor(`[...document.querySelectorAll('#tokens-body strong')].some((x) => x.textContent === '${NEW_TICKER}')`, 'the new ticker deployed');
+  step('tickers now: ' + (await evaluate(`[...document.querySelectorAll('#tokens-body strong')].map((x) => x.textContent).join(', ')`)));
+  await click('#notes button', 'Sync');
+  if (!D0) await waitFor(`document.querySelector('#notes-body').innerText.replace(/\\s+/g, ' ').includes(' 300 in tree')`, 'the change of the burn', 600);
+  await waitFor(`!document.querySelector('#scan').disabled`, 'the sync to finish', 600);
+  const before = await evaluate(`document.querySelector('#notes-body tbody').innerText.replace(/\\s+/g, ' ')`);
+  step('notes: ' + before);
+
+  // restore on an empty device from the 12 words alone: the same notes come back, public and sealed
+  await waitFor(`!document.querySelector('#scan').disabled`, 'the sync to finish', 600);
+  await click('#vault-body button', 'Lock');
+  await evaluate(`localStorage.removeItem('sh20.vault.v0')`);
+  await send('Page.reload');
+  await waitFor(`!!document.querySelector('#vault-body textarea[name=words]')`, 'restore form');
+  await evaluate(`document.querySelector('#vault-body textarea[name=words]').value = ${JSON.stringify(words)}`);
+  await click('#vault-body button', 'Restore from words');
+  await waitFor(`document.querySelector('#notes-body').innerText.includes('received, sealed')`, 'notes found again from the words', 900);
+  await sleep(500);
+  const after = await evaluate(`document.querySelector('#notes-body tbody').innerText.replace(/\\s+/g, ' ')`);
+  const amounts = (t) => [...t.matchAll(/(\d[\d,]*) (in tree|spending)/g)].map((m) => m[1]).sort().join(' ');
+  if (amounts(after) !== amounts(before)) throw new Error(`restored from words: ${after}\nwas: ${before}`);
+  if ((await evaluate(`document.querySelector('#address').textContent`)) !== address) throw new Error('another address after the restore');
+  step('restored from the 12 words: same address, same notes: ' + after);
 
   ws.close();
   // a 404 on /nullifiers is expected from an indexer without the route (before PR #5): spends shown as unknown
