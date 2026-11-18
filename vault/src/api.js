@@ -27,8 +27,8 @@ export function frOf(x) {
 
 export function normToken(t) {
   return {
-    tokenNum: num(t.tokenNum),
     ticker: String(t.ticker),
+    t: t.t === undefined ? null : big(t.t), // the ticker's id in notes; checked against tickerT(ticker)
     max: big(t.max),
     lim: big(t.lim),
     pre: big(t.pre),
@@ -45,13 +45,12 @@ export function normToken(t) {
   };
 }
 
-/** A tree leaf: MINT / TEAM / TAKE / CLAIM carry a public opening (t, v, npk, rho); OUT does not. */
+/** A tree leaf: MINT / TEAM / TAKE / CLAIM carry a public opening (ticker, v, npk, rho); OUT does not. */
 export function normNote(n) {
-  const t = n.t ?? n.tokenNum;
   return {
     pos: n.pos ?? null,
     kind: n.kind ?? null,
-    tokenNum: t === undefined ? null : num(t),
+    ticker: typeof n.ticker === 'string' && /^[A-Z0-9]{4}$/.test(n.ticker) ? n.ticker : null,
     v: n.v === undefined ? null : big(n.v),
     npk: frOf(n.npk),
     rho: frOf(n.rho),

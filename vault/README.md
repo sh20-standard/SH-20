@@ -1,6 +1,6 @@
 # sh20-vault
 
-Browser vault for **SH-20** (draft v0.1, **signet only**): a static page with no server of
+Browser vault for **SH-20** (spec draft v0.2, **signet only**): a static page with no server of
 ours, which you can host on IPFS. Keys are generated and kept on the device. Bitcoin is paid
 and signed by **Xverse, UniSat or Leather**. Tickers and mints are read from any SH-20 indexer API.
 
@@ -86,7 +86,7 @@ folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
 ## How a MINT is built
 
 ```
-vout 0  OP_RETURN <"SH20" 00 02 tokenNum(4) npk(32) rho(32)>   value = price if payMode 1 (burn), else 0
+vout 0  OP_RETURN <"SH20" 00 02 ticker(4) npk(32) rho(32)>     value = price if payMode 1 (burn), else 0
 vout 1  payScript, value = max(price, dust)                     only if payMode 2
 vout n  change to the payer                                     only if above dust
 ```
@@ -100,14 +100,13 @@ vout n  change to the payer                                     only if above du
   checks its txid and confirmation height, decodes the DEPLOY with the indexer's own `carrier.js`
   and `codec.js`, and refuses the mint if `ticker`, `max`, `lim`, `pre`, `start`, `end`, `price`,
   `payMode` or `payScript` differ (`src/deploy.js`). This stops an indexer that lies about a real
-  DEPLOY, for example with its own `payScript`. It cannot tell which of two DEPLOYs of a ticker
-  came first, and it does **not** verify `tokenNum`: that number is not in the envelope (it is the
-  DEPLOY's rank among accepted ones), so a lying indexer could pair the true terms of one token
-  with the number of another, and the mint would go to that other token or be rejected. The page
-  shows the token number as unverified when only one indexer answers.
+  DEPLOY, for example with its own `payScript`. Since spec v0.2 the MINT names its token by
+  `ticker` and the note's asset id is `t = tickerT(ticker)` (recomputed by the vault, and compared
+  with the indexer's `t`), so nothing in the mint depends on a number only an indexer knows. What
+  the chain alone cannot show is which of two DEPLOYs of a ticker came first.
 - **Several indexers** (optional, Settings, one URL per line; the first lists tickers and notes).
   Before a mint the vault asks all of them (`src/consensus.js`) and refuses the mint if they
-  disagree on the token's fixed terms (`tokenNum`, `ticker`, `max`, `lim`, `pre`, `start`, `end`,
+  disagree on the token's fixed terms (`ticker`, `t`, `max`, `lim`, `pre`, `start`, `end`,
   `unlock`, `price`, `payMode`, `payScript`, `deployTxid`, `deployHeight`), if one does not know the
   ticker, or if two at the same height report different `digest`s. Indexers a block apart are
   retried, then compared on terms only, with a warning. An unreachable indexer, or a single one,
@@ -147,7 +146,7 @@ The vault reads the API of `indexer/bin/follow.js` ([`docs/API.md`](../docs/API.
 
 Big integers arrive as decimal strings, field elements as 64-char hex. The vault downloads every
 note and matches its own locally by `npk`, so the indexer does not learn which notes are yours.
-It does not take the API's word for a note: it recomputes the leaf from `(t, v, npk, rho)` and
+It does not take the API's word for a note: it recomputes the leaf from `(tickerT(ticker), v, npk, rho)` and
 requires it to equal the `leaf` the API reports. `OUT` notes (spend outputs) are skipped until
 the `ct` format exists.
 

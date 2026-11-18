@@ -4,16 +4,13 @@
 // and refuses the mint if the terms it would pay against differ.
 //
 // This catches an indexer that lies about a real DEPLOY (for example a payScript
-// of its own). It does NOT verify:
-//  - tokenNum, which is not in the envelope: it is the DEPLOY's rank among the
-//    accepted ones. A lying indexer can pair the true terms of one DEPLOY with
-//    the tokenNum of another token, and honest indexers would then credit (or
-//    reject) the mint for that other token;
-//  - which DEPLOY of a ticker came first (a later, rejected one can be named).
-// Both need the whole history: compare several independent indexers (digest,
-// tokenNum) until the vault can do that itself.
+// of its own). Since spec v0.2 the MINT names its token by ticker and the note
+// id is t = tickerT(ticker), both fixed by the DEPLOY itself, so no number from
+// the indexer enters the mint. What it cannot see is which DEPLOY of a ticker
+// came first (a later, rejected one can be named): that needs the whole history,
+// so the vault compares several independent indexers (consensus.js).
 
-import { extractEnvelope, parseEnvelope } from './sh20.js';
+import { extractEnvelope, parseEnvelope, tickerT } from './sh20.js';
 import { parseTx, txid as txidOf } from './btc.js';
 import { fromHex, toHex } from './bytes.js';
 
@@ -44,6 +41,9 @@ export function deployMismatches(token, rawHex, height) {
     return [`deployTxid envelope does not parse: ${e.message}`];
   }
   if (env.type !== 'DEPLOY') return [`deployTxid carries a ${env.type}, not a DEPLOY`];
+  if (token.t !== null && token.t !== undefined && BigInt(token.t) !== tickerT(env.ticker)) {
+    return [`t: the ticker gives ${tickerT(env.ticker)}, indexer says ${token.t}`];
+  }
   const onChain = { ...env, payScript: toHex(env.payScript) };
   const out = [];
   for (const k of FIELDS) {

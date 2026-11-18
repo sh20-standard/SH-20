@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 register('./hooks.mjs', import.meta.url);
 delete globalThis.Buffer;
 
-const vectors = JSON.parse(readFileSync(new URL('../../../indexer/vectors/v0.1.json', import.meta.url), 'utf8'));
+const vectors = JSON.parse(readFileSync(new URL('../../../indexer/vectors/v0.2.json', import.meta.url), 'utf8'));
 const sh20 = await import('../../src/sh20.js');
 const { ShimBuffer } = await import('../../src/shim/buffer.js');
 const { deriveNpk } = await import('../../src/npk.js');
@@ -19,7 +19,7 @@ for (const [name, e] of Object.entries(vectors.envelopes)) {
   out.envelopes[name] = sh20.serializeEnvelope(env).toString('hex') === e.hex;
 }
 const nl = vectors.noteLeaf;
-out.noteLeaf = frHex(sh20.noteLeaf(nl.t, BigInt(nl.v), BigInt('0x' + nl.npk), BigInt('0x' + nl.rho))) === nl.leaf;
+out.noteLeaf = String(sh20.tickerT(nl.ticker)) === nl.t && frHex(sh20.noteLeaf(sh20.tickerT(nl.ticker), BigInt(nl.v), BigInt('0x' + nl.npk), BigInt('0x' + nl.rho))) === nl.leaf;
 out.domainLeaf = frHex(sh20.DOMAIN.LEAF) === vectors.domainLeaf;
 out.npk7 = frHex(deriveNpk(new Uint8Array(32).fill(7), 3).npk);
 let threw = false;

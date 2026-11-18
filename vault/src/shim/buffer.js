@@ -81,6 +81,9 @@ class ShimBuffer extends Uint8Array {
   readUInt32LE(o = 0) {
     return this._dv.getUint32(o, true);
   }
+  readUInt32BE(o = 0) {
+    return this._dv.getUint32(o, false);
+  }
   readBigUInt64LE(o = 0) {
     return this._dv.getBigUint64(o, true);
   }

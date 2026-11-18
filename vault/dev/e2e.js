@@ -148,7 +148,7 @@ async function main() {
   await click('#mint-body button', 'Prepare');
   await waitFor(`[...document.querySelectorAll('#mint-body button')].some((b) => b.textContent.includes('Sign with'))`, 'prepared tx');
   if (!(await evaluate(`document.querySelector('#mint-body').innerText.includes('checked against the DEPLOY')`))) throw new Error('deploy check not shown');
-  if (!(await evaluate(`document.querySelector('#mint-body').innerText.includes('agreed by 2 indexers')`))) throw new Error('cross-check not shown');
+  if (!(await evaluate(`document.querySelector('#mint-body').innerText.includes('2 agree on these terms')`))) throw new Error('cross-check not shown');
   step('prepared: ' + (await evaluate(`document.querySelector('#mint-body div dl').innerText.replace(/\\n/g, ' | ')`)));
   await click('#mint-body button', 'Sign with');
   await waitFor(`document.querySelector('#mint-body').innerText.includes('Broadcast:')`, 'broadcast');

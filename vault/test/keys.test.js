@@ -40,7 +40,7 @@ test('vault with passphrase: seed not stored in clear, wrong passphrase fails, b
   const v = await Vault.create(st, 'correct horse');
   assert.ok(v.encrypted);
   const o = await v.reserveNote();
-  await v.addNote({ ...o, tokenNum: 1, ticker: 'GENE', v: 1000n, txid: 'ab'.repeat(32), status: 'broadcast' });
+  await v.addNote({ ...o, ticker: 'GENE', v: 1000n, txid: 'ab'.repeat(32), status: 'broadcast' });
   const rec = st.getItem(STORAGE_KEY);
   assert.ok(!rec.includes('GENE') && !rec.includes('seed'));
   await assert.rejects(Vault.open(st, 'wrong'), /wrong passphrase/);

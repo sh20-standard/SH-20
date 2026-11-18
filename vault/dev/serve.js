@@ -56,7 +56,7 @@ const envTx = (env, value = 0n) => ({
 
 // Demo chain: genesis GENE (burn 1000 sats per mint), mint open from block 2, two mints.
 mine([envTx(deployEnv({ ticker: 'GENE', start: 2, unlock: 2, price: 1000n, payMode: 1 }))]);
-mine([0, 1].map(() => envTx({ type: 'MINT', tokenNum: 1, ...opening() }, 1000n)));
+mine([0, 1].map(() => envTx({ type: 'MINT', ticker: 'GENE', ...opening() }, 1000n)));
 
 const json = (v) => JSON.stringify(v, (_, x) => (typeof x === 'bigint' ? x.toString() : x));
 

@@ -1,15 +1,15 @@
 // Cross-check of several independent indexers before a mint.
 //
 // One indexer is enough to use the vault, but it is then trusted for what the
-// chain alone cannot show the vault: the token number and which DEPLOY of a
-// ticker came first. With several, the vault requires them to agree on the
-// token's terms and, when they are at the same height, on the state digest.
+// chain alone cannot show the vault: which DEPLOY of a ticker came first.
+// With several, the vault requires them to agree on the token's terms and,
+// when they are at the same height, on the state digest.
 // Any disagreement refuses the mint; an unreachable indexer or a single one
 // only warns.
 
 // Fixed at DEPLOY (plus where the indexer says it is): must be identical everywhere.
 // mints and burned change every block, so they are not compared.
-export const TERMS = ['tokenNum', 'ticker', 'max', 'lim', 'pre', 'start', 'end', 'unlock', 'price', 'payMode', 'payScript', 'deployTxid', 'deployHeight'];
+export const TERMS = ['ticker', 't', 'max', 'lim', 'pre', 'start', 'end', 'unlock', 'price', 'payMode', 'payScript', 'deployTxid', 'deployHeight'];
 
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -63,7 +63,7 @@ export async function crossCheck(apis, ticker, { retries = 2, delayMs = 1500, sl
       warnings.push(`indexers are at different blocks (${ok.map((r) => `${r.base} ${r.status.height}`).join(', ')}): state digests not compared, token terms are`);
     }
     if (down.length) warnings.push(`unreachable, not compared: ${down.join(', ')}`);
-    if (ok.length === 1) warnings.push('only one indexer answered: its token number and the order of DEPLOYs are not cross-checked. Add independent indexers in Settings.');
+    if (ok.length === 1) warnings.push('only one indexer answered: which DEPLOY of this ticker came first is not cross-checked. Add independent indexers in Settings.');
 
     return { token: ref.token, agreed: problems.length ? 0 : ok.length, problems, warnings };
   }

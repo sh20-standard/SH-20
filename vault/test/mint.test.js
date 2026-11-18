@@ -8,7 +8,7 @@ import { buildMint, mintProblems, selectCoins } from '../src/mint.js';
 import { normToken } from '../src/api.js';
 import { noteOpening } from '../src/keys.js';
 import { parsePsbt, addressToScript, scriptType, estimateVsize, txid, vsize } from '../src/btc.js';
-import { noteLeaf, parseEnvelope } from '../src/sh20.js';
+import { noteLeaf, parseEnvelope, tickerT } from '../src/sh20.js';
 
 const TR = 'tb1pqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesf3hn0c';
 const WPKH = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx';
@@ -60,7 +60,8 @@ for (const [label, over, payer] of [
     const r = c.block(toIndexerTx(m.tx));
     assert.deepEqual(r.rejected, []);
     assert.equal(r.events[0].type, 'MINT');
-    const leaf = noteLeaf(1, token.lim, opening.npk, opening.rho);
+    assert.equal(parseEnvelope(Buffer.from(m.envelope)).env.ticker, 'GENE', 'the MINT names its token by ticker');
+    const leaf = noteLeaf(tickerT('GENE'), token.lim, opening.npk, opening.rho);
     assert.equal(idx.tree.leaves[r.events[0].pos], leaf);
 
     const outs = m.tx.vout.reduce((s, o) => s + o.value, 0n);

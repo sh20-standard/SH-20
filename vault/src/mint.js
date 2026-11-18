@@ -1,6 +1,6 @@
 // MINT: one transaction, OP_RETURN carrier (docs/SPEC-WIRE.md §3, §4, §5).
 //
-//   vout 0  OP_RETURN <"SH20" 00 02 tokenNum opening>   value = price if payMode 1 (burn), else 0
+//   vout 0  OP_RETURN <"SH20" 00 02 ticker opening>     value = price if payMode 1 (burn), else 0
 //   vout 1  payScript, value = price                    only if payMode 2
 //   vout n  change to the payer                          only if above dust
 //
@@ -89,7 +89,7 @@ export function buildMint({ token, opening, payer, utxos, feeRate, tipHeight }) 
   const inType = scriptType(payScript);
   if (!SUPPORTED_INPUTS.includes(inType)) throw new Error(`pay from a native segwit, nested segwit or taproot address, not ${inType}`);
 
-  const envelope = serializeEnvelope({ type: 'MINT', tokenNum: token.tokenNum, npk: opening.npk, rho: opening.rho });
+  const envelope = serializeEnvelope({ type: 'MINT', ticker: token.ticker, npk: opening.npk, rho: opening.rho });
   const fixed = fixedOutputs(token, envelope);
   const { picked, change, fee } = selectCoins(utxos, fixed, inType, payScript, feeRate);
 

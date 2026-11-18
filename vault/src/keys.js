@@ -5,7 +5,7 @@
 
 import { deriveNpk } from './npk.js';
 import { hashToFr, frHex } from './fr.js';
-import { noteLeaf } from './sh20.js';
+import { noteLeaf, tickerT } from './sh20.js';
 import { toHex, fromHex, toBase64, fromBase64, utf8 } from './bytes.js';
 
 export const STORAGE_KEY = 'sh20.vault.v0';
@@ -123,11 +123,11 @@ export class Vault {
     return noteOpening(this.#seed, index);
   }
 
-  /** Records a public note the vault created (MINT): tokenNum, v and the expected leaf. */
-  async addNote({ index, scheme, npk, rho, tokenNum, ticker, v, txid, status }) {
-    const leaf = noteLeaf(tokenNum, v, npk, rho);
+  /** Records a public note the vault created (MINT): ticker, v and the expected leaf (t = tickerT(ticker)). */
+  async addNote({ index, scheme, npk, rho, ticker, v, txid, status }) {
+    const leaf = noteLeaf(tickerT(ticker), v, npk, rho);
     const note = {
-      index, scheme, tokenNum, ticker, v: v.toString(), npk: frHex(npk), rho: frHex(rho), leaf: frHex(leaf),
+      index, scheme, ticker, v: v.toString(), npk: frHex(npk), rho: frHex(rho), leaf: frHex(leaf),
       txid, status, pos: null,
     };
     this.state.notes.push(note);

@@ -10,7 +10,7 @@ import { crossCheck, TERMS } from './consensus.js';
 import { finalizePsbt, sameUnsignedTx, scriptType, addressToScript } from './btc.js';
 import { frHex } from './fr.js';
 import { NPK_SCHEME } from './npk.js';
-import { PAY_MODE, noteLeaf } from './sh20.js';
+import { PAY_MODE, noteLeaf, tickerT } from './sh20.js';
 import { toHex } from './bytes.js';
 
 if (window.top !== window.self) {
@@ -247,7 +247,6 @@ function renderTokens() {
     b.addEventListener('click', () => openMint(t.ticker));
     return h('tr', {},
       h('td', {}, h('strong', {}, t.ticker)),
-      h('td', { class: 'num' }, t.tokenNum),
       h('td', { class: 'num' }, units(t.lim)),
       h('td', { class: 'num' }, `${units(t.mints)} / ${units((t.max - t.pre) / t.lim)}`),
       h('td', {}, payText(t)),
@@ -256,7 +255,7 @@ function renderTokens() {
       h('td', {}, problems.length ? h('span', { class: 'muted' }, problems[0]) : b));
   });
   fill('tokens-body', h('div', { class: 'table-wrap' }, h('table', {},
-    h('thead', {}, h('tr', {}, ['Ticker', '#', 'Per mint', 'Mints', 'Price', 'Window', 'Team', ''].map((x) => h('th', {}, x)))),
+    h('thead', {}, h('tr', {}, ['Ticker', 'Per mint', 'Mints', 'Price', 'Window', 'Team', ''].map((x) => h('th', {}, x)))),
     h('tbody', {}, rows))),
   h('p', { class: 'muted' }, `Chain tip ${H ?? '?'}; a mint sent now confirms at ${H === null ? '?' : H + 1} or later.`));
 }
@@ -330,9 +329,7 @@ async function prepareMint(shown, feeRate, out) {
       h('dt', {}, 'Mint price'), h('dd', {}, sats(m.price)),
       h('dt', {}, 'Total'), h('dd', {}, h('strong', {}, sats(m.fee + m.price))),
       h('dt', {}, 'Terms'), h('dd', {}, 'price, payment, window and supply checked against the DEPLOY transaction on chain'),
-      h('dt', {}, 'Token number'), h('dd', {}, check.agreed > 1
-        ? `#${token.tokenNum}, agreed by ${check.agreed} indexers`
-        : h('span', { class: 'err' }, `#${token.tokenNum}, from one indexer only (not cross-checked)`)),
+      check.agreed > 1 ? [h('dt', {}, 'Indexers'), h('dd', {}, `${check.agreed} agree on these terms`)] : null,
       h('dt', {}, 'Envelope'), h('dd', {}, h('code', {}, toHex(m.envelope)))),
     checkNotes(check),
     h('p', { class: 'muted' }, 'A mint rejected by the indexers (for example sold out by a mint in the same block) is not refunded.'),
@@ -347,7 +344,7 @@ async function signAndSend(token, m, opening, out) {
   if (!sameUnsignedTx(done.tx, m.tx)) throw new Error('the wallet changed the transaction; nothing was sent');
   const reserved = await st.vault.reserveNote();
   if (reserved.index !== opening.index) throw new Error('note index moved; prepare the transaction again');
-  await st.vault.addNote({ ...reserved, tokenNum: token.tokenNum, ticker: token.ticker, v: token.lim, txid: done.txid, status: 'signed' });
+  await st.vault.addNote({ ...reserved, ticker: token.ticker, v: token.lim, txid: done.txid, status: 'signed' });
   let id;
   try {
     id = await esplora.broadcast(done.hex);
@@ -395,16 +392,15 @@ async function scanNotes() {
   const pub = await indexer.notes();
   const v = st.vault;
   const keys = v.npkWindow(20);
-  const byTicker = new Map(st.tokens.map((t) => [t.tokenNum, t.ticker]));
   let found = 0;
   for (const n of pub) {
-    if (n.npk === null || n.tokenNum === null || n.v === null) continue; // OUT notes: wait for the ct format
+    if (n.npk === null || n.ticker === null || n.v === null) continue; // OUT notes: wait for the ct format
     const index = keys.get(frHex(n.npk));
     if (index === undefined) continue;
     const o = v.opening(index);
     if (n.rho !== null && n.rho !== o.rho) continue;
     // never trust the API's (t, v) alone: they must give back the leaf it put in the tree
-    const leaf = frHex(noteLeaf(n.tokenNum, n.v, o.npk, o.rho));
+    const leaf = frHex(noteLeaf(tickerT(n.ticker), n.v, o.npk, o.rho));
     if (n.leaf !== null && frHex(n.leaf) !== leaf) continue;
     const mine = v.state.notes.find((x) => x.index === index);
     if (mine) {
@@ -412,7 +408,7 @@ async function scanNotes() {
       if (mine.status !== 'in tree') found++;
       await v.updateNote(index, { status: 'in tree', pos: n.pos, ...(n.txid ? { txid: n.txid } : {}) });
     } else {
-      await v.addNote({ ...o, tokenNum: n.tokenNum, ticker: byTicker.get(n.tokenNum) ?? `#${n.tokenNum}`, v: n.v, txid: n.txid, status: 'in tree' });
+      await v.addNote({ ...o, ticker: n.ticker, v: n.v, txid: n.txid, status: 'in tree' });
       await v.updateNote(index, { pos: n.pos });
       if (v.state.next <= index) v.state.next = index + 1;
       found++;

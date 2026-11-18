@@ -13,6 +13,7 @@ test('Buffer shim behaves like Node Buffer on what the codec uses', () => {
   assert.equal(b.toString('hex'), a.toString('hex'));
   assert.equal(b.readUInt16LE(1), a.readUInt16LE(1));
   assert.equal(b.readUInt32LE(3), a.readUInt32LE(3));
+  assert.equal(b.readUInt32BE(3), a.readUInt32BE(3));
   assert.equal(b.readBigUInt64LE(5), a.readBigUInt64LE(5));
   assert.equal(ShimBuffer.from('SH20', 'ascii').toString('latin1'), 'SH20');
   assert.ok(b.subarray(2, 4) instanceof ShimBuffer);

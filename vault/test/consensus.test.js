@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { crossCheck } from '../src/consensus.js';
 
 const GENE = {
-  tokenNum: 1, ticker: 'GENE', max: 21000000n, lim: 1000n, pre: 0n, start: 2, end: 0, unlock: 2, price: 1000n,
+  ticker: 'GENE', t: 1195724357n, max: 21000000n, lim: 1000n, pre: 0n, start: 2, end: 0, unlock: 2, price: 1000n,
   payMode: 2, payScript: '0014' + '66'.repeat(20), mints: 5n, burned: 0n, deployTxid: 'aa'.repeat(32), deployHeight: 1,
 };
 const notFound = () => Object.assign(new Error('HTTP 404'), { status: 404 });
@@ -31,15 +31,15 @@ test('honest indexers agree: no problem, no warning', async () => {
   assert.deepEqual(r.problems, []);
   assert.deepEqual(r.warnings, []);
   assert.equal(r.agreed, 3);
-  assert.equal(r.token.tokenNum, 1);
+  assert.equal(r.token.t, 1195724357n);
 });
 
-test('an indexer lying about payScript or tokenNum refuses the mint', async () => {
+test('an indexer lying about payScript or the DEPLOY refuses the mint', async () => {
   let r = await crossCheck([ix('honest'), ix('liar', { token: { ...GENE, payScript: '0014' + 'ee'.repeat(20) } })], 'GENE', fast);
   assert.match(r.problems.join(), /liar and honest disagree on GENE: payScript/);
   assert.equal(r.agreed, 0);
-  r = await crossCheck([ix('honest'), ix('liar', { token: { ...GENE, tokenNum: 7 } })], 'GENE', fast);
-  assert.match(r.problems.join(), /tokenNum 7 ≠ 1/);
+  r = await crossCheck([ix('honest'), ix('liar', { token: { ...GENE, deployTxid: 'bb'.repeat(32) } })], 'GENE', fast);
+  assert.match(r.problems.join(), /deployTxid/, 'naming another DEPLOY of the ticker is a disagreement');
   r = await crossCheck([ix('honest'), ix('liar', { token: null })], 'GENE', fast);
   assert.match(r.problems.join(), /liar does not know GENE/);
 });
