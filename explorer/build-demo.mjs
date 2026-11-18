@@ -48,7 +48,7 @@ const spend = (seed, anchorHeight) => ({
   nf: [fr(seed + '/nf0'), fr(seed + '/nf1')],
   outs: [0, 1, 2].map((j) => ({
     leaf: fr(`${seed}/leaf${j}`),
-    pkEph: Buffer.concat([Buffer.from([2 + (h(seed + j)[0] & 1)]), bytes(`${seed}/epk${j}`, 32)]),
+    pkEph: bytes(`${seed}/epk${j}`, 32),
     ct: bytes(`${seed}/ct${j}`, 28),
   })),
   proof: bytes(`${seed}/proof`, 480),

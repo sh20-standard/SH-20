@@ -1,7 +1,7 @@
 {
   "name": "sh20-indexer",
   "version": "0.1.0",
-  "description": "Reference indexer for SH-20, fungible shielded tokens on Bitcoin L1 (draft v0.2)",
+  "description": "Reference indexer for SH-20, fungible shielded tokens on Bitcoin L1 (draft v0.3)",
   "type": "module",
   "license": "MIT",
   "scripts": { "test": "node --test 'test/*.test.js'", "vectors": "node bin/vectors.js" },

@@ -1,7 +1,11 @@
-# SH-20 wire format and acceptance rules — draft v0.2
+# SH-20 wire format and acceptance rules — draft v0.3
 
 Status: draft. Nothing here is activated on any network. This file is normative for
 `indexer/src/`; the design rationale lives in [`DESIGN.md`](DESIGN.md).
+
+Changes from v0.2: `pk_eph` is a 32-byte X25519 public key (was a 33-byte secp256k1 point), so wallets can scan with
+the native X25519 of WebCrypto; the spend section loses `proofLen`, since the proof always has 480 bytes. A TRANSFER is
+830 bytes. Sealing and scanning are specified for wallets in [`SPEC-NOTES.md`](SPEC-NOTES.md).
 
 Changes from v0.1: tokens are named by their ticker everywhere. MINT, BURN and LIST carry `ticker(4)`
 instead of an indexer-assigned `tokenNum(4)` (same size), and the asset id inside notes and proofs is
@@ -41,7 +45,7 @@ A transaction carries **at most one** envelope. Two envelopes of any kind reject
   `OP_0 OP_IF <push "SH20"> <push>... OP_ENDIF`; each push is minimal and at most 520 bytes;
   the envelope is `"SH20" ‖ concat(pushes)`.
 
-Proof-carrying envelopes (835 bytes for a TRANSFER, with the pinned 480-byte proof) use the witness carrier.
+Proof-carrying envelopes (830 bytes for a TRANSFER, with the pinned 480-byte proof) use the witness carrier.
 
 ## 4. Envelopes
 
@@ -51,11 +55,11 @@ After parsing, re-serialising must give the same bytes; trailing bytes are rejec
 
 | Type | Code | Body after the header | Bytes |
 | --- | --- | --- | --- |
-| DEPLOY | 0x01 | `ticker(4) max(8) lim(8) pre(8) start(4) end(4) unlock(4) price(8) payMode(1) psLen(1) payScript(psLen) [team opening(64) if pre > 0] [spend if bytes remain]` | 120 genesis with team; + 829 with a spend |
+| DEPLOY | 0x01 | `ticker(4) max(8) lim(8) pre(8) start(4) end(4) unlock(4) price(8) payMode(1) psLen(1) payScript(psLen) [team opening(64) if pre > 0] [spend if bytes remain]` | 120 with a team opening; + 824 with a spend |
 | MINT | 0x02 | `ticker(4) opening(64)` | 74 |
-| TRANSFER | 0x03 | `spend` | 835 |
-| BURN | 0x04 | `ticker(4) vPub(8) spend` | 847 |
-| LIST | 0x05 | `ticker(4) amount(8) price(8) lockVout(1) psLen(1) payScript(psLen) spend` | 857 + payScript |
+| TRANSFER | 0x03 | `spend` | 830 |
+| BURN | 0x04 | `ticker(4) vPub(8) spend` | 842 |
+| LIST | 0x05 | `ticker(4) amount(8) price(8) lockVout(1) psLen(1) payScript(psLen) spend` | 852 + payScript |
 | TAKE | 0x06 | `opening(64)` | 70 |
 | CLAIM | 0x07 | `listTxid(32) opening(64) sig(64)` | 166 |
 
@@ -65,12 +69,13 @@ After parsing, re-serialising must give the same bytes; trailing bytes are rejec
 **Spend section**
 
 ```
-anchorHeight(4) ‖ nf0(32) ‖ nf1(32) ‖ 3 × [ leaf(32) ‖ pk_eph(33) ‖ ct(28) ] ‖ proofLen(2) ‖ proof(proofLen)
+anchorHeight(4) ‖ nf0(32) ‖ nf1(32) ‖ 3 × [ leaf(32) ‖ pk_eph(32) ‖ ct(28) ] ‖ proof(480)
 ```
 
-- `pk_eph`: compressed secp256k1 point (prefix 02/03). `ct`: amount u64 ‖ ticker (4) ‖ 16-byte tag, sealed to the recipient.
-- `1 ≤ proofLen ≤ 4096`. The pinned verifier accepts only `proofLen = 480` (below), so a spend section is 829 bytes.
-- `body` = every envelope byte before `proofLen`; `bodyHash = SHA256("sh20/v0/body" ‖ body) mod r`.
+- `pk_eph`: X25519 public key (RFC 7748), 32 bytes; indexers accept any 32 bytes. `ct`: AES-256-GCM of amount u64 ‖ ticker (4),
+  with its 16-byte tag, sealed to the recipient (`SPEC-NOTES.md` §3). Indexers never open it.
+- `proof`: exactly 480 bytes (the pinned PLONK proof, below), so a spend section is 824 bytes. There is no length field.
+- `body` = every envelope byte before the proof; `bodyHash = SHA256("sh20/v0/body" ‖ body) mod r`.
 
 **Verifier inputs** (public inputs of the spend circuit, in this order): `R[anchorHeight], nf0, nf1, leaf0, leaf1, leaf2, bodyHash, vPub, tPub`.
 

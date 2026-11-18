@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { serializeEnvelope } from '../src/codec.js';
-import { FR, MAGIC } from '../src/constants.js';
+import { FR, MAGIC, PROOF_BYTES } from '../src/constants.js';
 
 let counter = 0;
 export const txid = () => createHash('sha256').update(`tx-${counter++}`).digest('hex');
@@ -34,12 +34,15 @@ export function witnessFor(envBytes) {
 export const p2tr = (key = randomBytes(32)) => Buffer.concat([Buffer.from([0x51, 0x20]), key]);
 export const p2wpkh = () => Buffer.concat([Buffer.from([0x00, 0x14]), randomBytes(20)]);
 
+/** A 480-byte test proof: a tag padded with zeros (the mock verifier accepts the tag "valid-proof"). */
+export const testProof = (tag = 'valid-proof') => Buffer.concat([Buffer.from(tag), Buffer.alloc(PROOF_BYTES - Buffer.byteLength(tag))]);
+
 export function spend(anchorHeight, proof = 'valid-proof') {
   return {
     anchorHeight,
     nf: [fr(), fr()],
-    outs: [0, 1, 2].map(() => ({ leaf: fr(), pkEph: Buffer.concat([Buffer.from([0x02]), randomBytes(32)]), ct: randomBytes(28) })),
-    proof: Buffer.from(proof),
+    outs: [0, 1, 2].map(() => ({ leaf: fr(), pkEph: randomBytes(32), ct: randomBytes(28) })),
+    proof: testProof(proof),
   };
 }
 
@@ -64,7 +67,7 @@ export function mockVerifier() {
     name: 'mock',
     verifySpend(args) {
       calls.push(args);
-      return Buffer.from(args.proof).toString() === 'valid-proof';
+      return Buffer.from(args.proof).equals(testProof());
     },
   };
 }

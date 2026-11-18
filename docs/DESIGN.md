@@ -1,4 +1,4 @@
-# SH-20 design — draft v0.2
+# SH-20 design — draft v0.3
 
 SH-20 is an open standard for fungible shielded tokens on Bitcoin L1: anyone deploys a ticker, the
 mint is public and paid in BTC, and transfers are private. Bitcoin only publishes and orders data;

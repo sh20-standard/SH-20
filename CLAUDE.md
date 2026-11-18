@@ -25,16 +25,17 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 5. **Contributor anonymity.** Commit as `SH-20 contributors <contributors@sh20.invalid>`. Never commit
    personal names, emails, IP addresses, wallet addresses or machine paths.
 6. **Determinism.** Any change to bytes or rules updates `docs/SPEC-WIRE.md`, the tests and
-   `indexer/vectors/v0.2.json` (regenerate with `npm run vectors`; bump the draft version if the format changes).
+   `indexer/vectors/v0.3.json` (regenerate with `npm run vectors`; bump the draft version if the format changes).
 
 ## Repository map
 
 | Path | What |
 | --- | --- |
 | `docs/DESIGN.md` | why SH-20 is built this way, competitors, open decisions |
-| `docs/SPEC-WIRE.md` | wire format and acceptance rules, draft v0.2 (normative for the indexer) |
+| `docs/SPEC-WIRE.md` | wire format and acceptance rules, draft v0.3 (normative for the indexer) |
+| `docs/SPEC-NOTES.md` | wallet keys, addresses, note sealing (`pk_eph`, `ct`) and scanning, draft v0.3 (normative for wallets, unreviewed) |
 | `indexer/` | reference indexer, Node ≥ 20, zero dependencies |
-| `indexer/vectors/v0.2.json` | deterministic vectors for a second implementation |
+| `indexer/vectors/v0.3.json` | deterministic vectors for a second implementation |
 | `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` (for the vault and relayers) |
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
 | `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
@@ -44,7 +45,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 46 tests (4 need the verifier module below and are skipped without it)
+npm test            # 46 tests (the 5 real-proof tests need the verifier module below and a fixture regenerated for wire v0.3)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
@@ -55,13 +56,15 @@ bench/cross-check.sh    # snarkjs against our verifier, both ways (hard requirem
 web/build.sh            # the phone test page, in web/dist/ (see circuit/web/README.md)
 ```
 
-## Status (draft v0.2)
+## Status (draft v0.3)
 
 Done in `indexer/`:
 - Strict codec for the 7 envelope types (DEPLOY, MINT, TRANSFER, BURN, LIST, TAKE, CLAIM). Tokens are named by their ticker
-  everywhere (v0.2): the asset id is `t = tickerT(ticker)`, the 4 ASCII bytes as a big-endian u32; `t = 0` is reserved for BTC,
+  everywhere (since v0.2): the asset id is `t = tickerT(ticker)`, the 4 ASCII bytes as a big-endian u32; `t = 0` is reserved for BTC,
   types `0x08`–`0x0f` for extensions.
-- Two carriers: OP_RETURN (small proof-less envelopes, one transaction) and a tapscript witness on input 0 (proof-carrying envelopes, 835 bytes for a TRANSFER).
+- Two carriers: OP_RETURN (small proof-less envelopes, one transaction) and a tapscript witness on input 0 (proof-carrying envelopes, 830 bytes for a TRANSFER).
+- Wire v0.3: `pk_eph` is a 32-byte X25519 key and the spend section has no `proofLen` (the proof is always 480 bytes).
+  `docs/SPEC-NOTES.md` (draft, unreviewed) specifies keys, addresses, sealing and scanning for wallets.
 - State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest.
 - Poseidon over BN254 written from scratch (constants generated with the Grain LFSR, matches circomlib's `poseidon([1,2])`), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
 - Live chain follower (Bitcoin Core RPC or Esplora, reorgs with 288 blocks of undo) and a read-only HTTP API with a per-leaf note log for wallets (`docs/API.md`).
@@ -88,7 +91,7 @@ Done in `circuit/` (2026-11-18):
   witnesses, and snarkjs both ways: its verifier accepts our proofs, our verifier accepts its proofs (`bench/cross-check.sh`).
 
 Not done: an audit; the figures on a real phone (the page exists and was measured on a laptop browser: 4.5 s on 10 threads,
-25.5 s on one; nobody has run it on a phone yet); the `ct` sealing format; transfers in the vault (it mints and syncs privately
+25.5 s on one; nobody has run it on a phone yet); a review of the `ct` sealing format (`docs/SPEC-NOTES.md`) and its reference code with vectors; transfers in the vault (it mints and syncs privately
 today); a relayer; a second independent indexer; the
 profile constants (activation height, `D`); the canonical event encoding inside the digest.
 
@@ -131,14 +134,14 @@ Goal from the maintainer: an SH-20 transaction should cost about what a normal B
 and the mint must stay cheap. Reference: a P2TR payment with 1 input and 2 outputs is about 154 vB.
 Keep only what the protocol needs; add nothing that costs bytes without a clear use.
 
-| Action | Today (v0.2) | Target |
+| Action | Today (v0.3) | Target |
 | --- | --- | --- |
 | MINT (proof-less, OP_RETURN) | 74-byte envelope, 196 vB with one input and one change output | ~165 vB |
-| TRANSFER, alone | 835-byte envelope (480-byte PLONK proof), 340 vB + commit | ≤ ~350 vB |
+| TRANSFER, alone | 830-byte envelope (480-byte PLONK proof), about 339 vB + commit | ≤ ~350 vB |
 | TRANSFER, in a relayer batch | not supported yet | ≤ ~150 vB per transfer |
 
 Sizes are computed from serialized envelopes by `circuit/bench/tx-vsize.mjs` (a P2TR payment comes out at 154 vB by the same
-count); nothing has been broadcast yet. The batch target is out of reach of lever 1 alone: a spend section is 829 bytes, 207 vB
+count); nothing has been broadcast yet. The batch target is out of reach of lever 1 alone: a spend section is 824 bytes, 206 vB
 of witness even when every other byte is shared, so it needs lever 5 and probably one proof for several transfers.
 
 Levers, biggest first. Measure each one and keep every hard requirement above:
@@ -149,7 +152,7 @@ Levers, biggest first. Measure each one and keep every hard requirement above:
 3. **Arity.** Decided: three outputs stay. The third pays a relayer in tokens.
 4. **Mint bytes.** Drop `rho` from public openings if the security review agrees (a fresh `npk` already
    makes each public leaf unique), and consider a batch mint (k mints in one envelope, paying k × price).
-5. **Small fields.** 32-byte x-only `pk_eph`, the shortest safe `ct`.
+5. **Small fields.** Done in v0.3: 32-byte X25519 `pk_eph`, no `proofLen`. `ct` stays 28 bytes (amount, ticker, 16-byte tag).
 6. **Never** put proof-carrying envelopes in OP_RETURN (four times the witness rate).
 
 Tacit transactions were reported at 25,000–30,000 sats in May 2026. Do not copy what makes them heavy:
@@ -177,4 +180,4 @@ several envelopes per transaction · exact event encoding in the digest.
 Decided by the maintainer: the genesis token is **SH20**, fixed in the activation profile (no DEPLOY, no race):
 21,000,000 max, 1,000 per mint, free mint (network fees only), no team allocation.
 Decided (2026-11-18): PLONK-KZG is the proof system (hard requirement 4). Three outputs stay; the third pays a relayer in
-tokens. `proofLen` is left alone in the circuit work: the indexer work removes it afterwards.
+tokens. `proofLen` is removed in wire v0.3, together with the 32-byte X25519 `pk_eph`.

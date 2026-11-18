@@ -1,4 +1,4 @@
-# SH-20 indexer API — draft v0.2
+# SH-20 indexer API — draft v0.3
 
 Read-only JSON over HTTP, served by `indexer/bin/follow.js`. GET only, CORS open (`*`), no
 authentication: it reports what the chain implies and can change nothing. Anyone can run it;

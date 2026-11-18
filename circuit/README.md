@@ -3,7 +3,7 @@
 The spend circuit of **SH-20** (`docs/SPEC-WIRE.md` §4): prover, verifier, and the measurements
 behind the choice of proof system.
 
-**Status: draft v0.2. Not audited. Not activated anywhere.**
+**Status: draft v0.3. Not audited. Not activated anywhere.**
 
 | | |
 | --- | --- |
