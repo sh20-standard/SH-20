@@ -25,45 +25,49 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 5. **Contributor anonymity.** Commit as `SH-20 contributors <contributors@sh20.invalid>`. Never commit
    personal names, emails, IP addresses, wallet addresses or machine paths.
 6. **Determinism.** Any change to bytes or rules updates `docs/SPEC-WIRE.md`, the tests and
-   `indexer/vectors/v0.2.json` (regenerate with `npm run vectors`; bump the draft version if the format changes).
+   `indexer/vectors/v0.3.json` (regenerate with `npm run vectors`; bump the draft version if the format changes).
 
 ## Repository map
 
 | Path | What |
 | --- | --- |
 | `docs/DESIGN.md` | why SH-20 is built this way, competitors, open decisions |
-| `docs/SPEC-WIRE.md` | wire format and acceptance rules, draft v0.2 (normative for the indexer) |
+| `docs/SPEC-WIRE.md` | wire format and acceptance rules, draft v0.3 (normative for the indexer) |
+| `docs/SPEC-NOTES.md` | wallet keys, addresses, note sealing (`pk_eph`, `ct`) and scanning, draft v0.3 (normative for wallets; reviewed once by the circuit session, §8 lists the changes; not audited) |
 | `indexer/` | reference indexer, Node ≥ 20, zero dependencies |
-| `indexer/vectors/v0.2.json` | deterministic vectors for a second implementation |
+| `indexer/vectors/v0.3.json` | deterministic vectors for a second implementation |
 | `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` (for the vault and relayers) |
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
 | `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
 | `circuit/` | the spend circuit: PLONK prover and verifier in Rust, WebAssembly build, measurements ([`circuit/README.md`](circuit/README.md)) |
-| `circuit/js/` | what a wallet computes for a spend, in dependency-free JavaScript, checked against vectors written by the circuit's model (`cd circuit/js && npm test`) |
+| `circuit/js/` | what a wallet computes, in dependency-free JavaScript: the witness of a spend, and the addresses, sealing and scanning of `SPEC-NOTES.md`; checked against vectors written by the Rust models (`cd circuit/js && npm test`, 25 tests) |
 | `circuit/circom/` | the same relation in circom, used only to cross-check the Rust circuit |
 | `circuit/web/` | the phone test page, and the host side of the threaded WebAssembly prover |
 
 ```sh
 cd indexer
-npm test            # 47 tests (4 need the verifier module below and are skipped without it)
+npm test            # 51 tests (4 need the verifier module below and are skipped without it)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
 cd circuit
-cargo test --release    # 21 tests, with the shipped proving key (artifacts/spend.pk)
+cargo test --release    # 28 tests, with the shipped proving key (artifacts/spend.pk)
 ./build-wasm.sh         # two WebAssembly builds: one thread with no imports, and a thread pool over Web Workers
 bench/cross-check.sh    # snarkjs against our verifier, both ways (hard requirement 4)
 web/build.sh            # the phone test page, in web/dist/ (see circuit/web/README.md)
 ```
 
-## Status (draft v0.2)
+## Status (draft v0.3)
 
 Done in `indexer/`:
 - Strict codec for the 7 envelope types (DEPLOY, MINT, TRANSFER, BURN, LIST, TAKE, CLAIM). Tokens are named by their ticker
-  everywhere (v0.2): the asset id is `t = tickerT(ticker)`, the 4 ASCII bytes as a big-endian u32; `t = 0` is reserved for BTC,
+  everywhere (since v0.2): the asset id is `t = tickerT(ticker)`, the 4 ASCII bytes as a big-endian u32; `t = 0` is reserved for BTC,
   types `0x08`–`0x0f` for extensions.
-- Two carriers: OP_RETURN (small proof-less envelopes, one transaction) and a tapscript witness on input 0 (proof-carrying envelopes, 835 bytes for a TRANSFER).
-- State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest.
+- Two carriers: OP_RETURN (small proof-less envelopes, one transaction) and a tapscript witness on input 0 (proof-carrying envelopes, 830 bytes for a TRANSFER).
+- Wire v0.3: `pk_eph` is a 32-byte X25519 key and the spend section has no `proofLen` (the proof is always 480 bytes).
+  `docs/SPEC-NOTES.md` (draft, reviewed once, not audited) specifies keys, addresses, sealing and scanning for wallets;
+  `circuit/src/notes.rs` is its model and `circuit/js` its reference, with shared vectors.
+- State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest over a byte encoding of the events (v0.3, `SPEC-WIRE.md` §6; the GENESIS record commits to the profile's rules).
 - Poseidon over BN254 written from scratch for 2 to 5 inputs (constants generated with the Grain LFSR, checked against circomlibjs for every width; `poseidon2` is unchanged), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
 - Live chain follower (Bitcoin Core RPC or Esplora, reorgs with 288 blocks of undo) and a read-only HTTP API with a per-leaf note log for wallets (`docs/API.md`).
 - Explorer (`explorer/index.html`): a block explorer in one static page with no dependency; reads any indexer; demo data built from real indexer output.
@@ -90,12 +94,13 @@ Done in `circuit/` (2026-11-18):
 - A wallet reference in dependency-free JavaScript (`circuit/js/`): note keys and `npk`, the nullifier, the body hash, the
   EdDSA-Poseidon signature. Its vectors are written by the Rust model (`circuit/src/vectors.rs`) and a test fails if they drift.
 
-Measured on a phone (maintainer, 2026-11-18, iPhone 18 Pro Max, Safari): 14.5 s per proof on 4 threads, 31.9 s on one thread,
-232 MB; in Chrome on the laptop, 4.5 s on 10 threads and 25.5 s on one.
+Measured on a phone (2026-11-18, iPhone 18 Pro Max, Safari, through the test page): 14.5 s per proof on 4 threads,
+31.9 s on one, 232 MB; key load 0.7 s. On the M1 Pro in Chrome: 4.5 s on 10 threads, 25.5 s on one. Four threads are only
+2.2 times faster than one on the iPhone (Safari reports 4 of its 6 cores): worth a look before the 2^16 domain.
 
-Not done: an audit; a mid-range phone; the `ct` sealing format; transfers in the vault (it mints and syncs privately
+Not done: an audit; a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the circuit session; its reference code and vectors are in `circuit/js`); transfers in the vault (it mints and syncs privately
 today); a relayer; a second independent indexer; the
-profile constants (activation height, `D`); the canonical event encoding inside the digest.
+profile constants (activation height, `D`).
 
 ## Next task: the phone figures, then the vault
 
@@ -137,14 +142,14 @@ Goal from the maintainer: an SH-20 transaction should cost about what a normal B
 and the mint must stay cheap. Reference: a P2TR payment with 1 input and 2 outputs is about 154 vB.
 Keep only what the protocol needs; add nothing that costs bytes without a clear use.
 
-| Action | Today (v0.2) | Target |
+| Action | Today (v0.3) | Target |
 | --- | --- | --- |
-| MINT (proof-less, OP_RETURN) | 74-byte envelope, 196 vB with one input and one change output | ~165 vB |
-| TRANSFER, alone | 835-byte envelope (480-byte PLONK proof), 340 vB + commit | ≤ ~350 vB |
+| MINT (proof-less, OP_RETURN) | 42-byte envelope (v0.3), about 164 vB with one input and one change output | ~165 vB |
+| TRANSFER, alone | 830-byte envelope (480-byte PLONK proof), about 339 vB + commit | ≤ ~350 vB |
 | TRANSFER, in a relayer batch | not supported yet | ≤ ~150 vB per transfer |
 
 Sizes are computed from serialized envelopes by `circuit/bench/tx-vsize.mjs` (a P2TR payment comes out at 154 vB by the same
-count); nothing has been broadcast yet. The batch target is out of reach of lever 1 alone: a spend section is 829 bytes, 207 vB
+count); nothing has been broadcast yet. The batch target is out of reach of lever 1 alone: a spend section is 824 bytes, 206 vB
 of witness even when every other byte is shared, so it needs lever 5 and probably one proof for several transfers.
 
 Levers, biggest first. Measure each one and keep every hard requirement above:
@@ -153,9 +158,10 @@ Levers, biggest first. Measure each one and keep every hard requirement above:
    reasonable time.
 2. **Batching.** Allow several envelopes in one witness transaction so relayers share the commit/reveal overhead.
 3. **Arity.** Decided: three outputs stay. The third pays a relayer in tokens.
-4. **Mint bytes.** Drop `rho` from public openings if the security review agrees (a fresh `npk` already
-   makes each public leaf unique), and consider a batch mint (k mints in one envelope, paying k × price).
-5. **Small fields.** 32-byte x-only `pk_eph`, the shortest safe `ct`.
+4. **Mint bytes.** Done in v0.3: public openings are `npk` alone, public notes use `rho = 0` (74 → 42 bytes, about 32 vB less
+   per mint); the review of `docs/SPEC-NOTES.md` (§6) found nothing else that relied on a random `rho` there. Still open: a batch mint (k mints in one envelope, paying
+   k × price), a fairness question for the maintainer, since it makes bulk minting cheaper too.
+5. **Small fields.** Done in v0.3: 32-byte X25519 `pk_eph`, no `proofLen`. `ct` stays 28 bytes (amount, ticker, 16-byte tag).
 6. **Never** put proof-carrying envelopes in OP_RETURN (four times the witness rate).
 
 Tacit transactions were reported at 25,000–30,000 sats in May 2026. Do not copy what makes them heavy:
@@ -172,15 +178,23 @@ Use Fable 5.2 for the circuit and anything security-critical; Opus 5.5 is fine f
 - **Shielded Ordinals** (Ord Dropz): private NFTs; the platform signs mints and buys; "shielded runes" listed as not yet built.
 - **Shielded Bitcoin** ([alloc] init, paper September 2026, ePrint 2026/2749): Zcash-style private BTC transfers as a metaprotocol;
   BTC only, no tokens, BTC entry and exit left to a later paper, nothing deployed yet.
+- **SBRC-20** (sbrc20.com, announced 2026-09-28): the closest one, "BRC-20, but shielded": fair mints like BRC-20, then a shielded
+  pool shared by every ticker, so private transfers hide the ticker too. Their token $SHLD (21M, 1,000 per mint, a paid mint
+  whose fee doubles over time) is deployed on mainnet at block 970,040. As checked on 2026-11-18, the spec is a "draft v0.1"
+  with no proof system chosen, and their downloadable indexer handles only public deploy, mint and transfer: no shield, no
+  private transfer, no proof verification, despite an announcement that shielding is live. No team named, no code for the
+  private part. SH-20's answer: be the first whose private part anyone can run and verify (open code, a public signet).
 
-SH-20's edge: ticker hidden, unique tickers, private by default from the mint, Bitcoin only.
+SH-20's edge: ticker hidden, unique tickers, private by default from the mint (no public balance stage), Bitcoin only, and a
+private part that already proves and verifies, in open code.
 
 ## Open decisions (ask the maintainer)
 
 Final name and 4-byte magic · value of `D` (SH20 burned per DEPLOY) or no burn · ticker length (4 only, or 5–12) ·
-several envelopes per transaction · exact event encoding in the digest.
+several envelopes per transaction.
 
 Decided by the maintainer: the genesis token is **SH20**, fixed in the activation profile (no DEPLOY, no race):
 21,000,000 max, 1,000 per mint, free mint (network fees only), no team allocation.
 Decided (2026-11-18): PLONK-KZG is the proof system (hard requirement 4). Three outputs stay; the third pays a relayer in
-tokens. `proofLen` is left alone in the circuit work: the indexer work removes it afterwards.
+tokens. `proofLen` is removed in wire v0.3, together with the 32-byte X25519 `pk_eph`.
+Decided (technical, v0.3): the events inside the digest have a fixed byte encoding (`src/events.js`, `SPEC-WIRE.md` §6).

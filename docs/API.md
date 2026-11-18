@@ -1,4 +1,4 @@
-# SH-20 indexer API — draft v0.2
+# SH-20 indexer API — draft v0.3
 
 Read-only JSON over HTTP, served by `indexer/bin/follow.js`. GET only, CORS open (`*`), no
 authentication: it reports what the chain implies and can change nothing. Anyone can run it;
@@ -38,7 +38,7 @@ ticker came first.
 
 | kind | extra fields | created by |
 | --- | --- | --- |
-| `MINT`, `TEAM`, `TAKE`, `CLAIM` | `ticker`, `v`, `npk`, `rho` (public opening) | proof-less envelopes and team unlocks |
+| `MINT`, `TEAM`, `TAKE`, `CLAIM` | `ticker`, `v`, `npk` (public opening; `rho` is 0) | proof-less envelopes and team unlocks |
 | `OUT` | `j` (output index), `pkEph`, `ct` | the three outputs of every spend |
 
 A wallet scans `OUT` notes with its viewing key (decrypting `ct` with the ECDH secret from `pkEph`),

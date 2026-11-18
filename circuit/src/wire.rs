@@ -1,8 +1,8 @@
-//! The bytes of proof-carrying envelopes a wallet builds (docs/SPEC-WIRE.md §4): the body that
-//! `bodyHash` covers, and the envelope once the proof is attached.
+//! The bytes of proof-carrying envelopes a wallet builds (docs/SPEC-WIRE.md §4, wire v0.3): the body
+//! that `bodyHash` covers, and the envelope once the 480-byte proof is attached.
 
 use crate::model::{N_IN, N_OUT};
-use crate::plonk::fr_to_bytes;
+use crate::plonk::{fr_to_bytes, PROOF_BYTES};
 use ark_bn254::Fr;
 
 pub const MAGIC: &[u8; 4] = b"SH20";
@@ -14,8 +14,8 @@ pub const TYPE_BURN: u8 = 0x04;
 #[derive(Clone, Copy, Debug)]
 pub struct Output {
     pub leaf: Fr,
-    /// Compressed secp256k1 point (prefix 02 or 03).
-    pub pk_eph: [u8; 33],
+    /// X25519 public key of the output (docs/SPEC-NOTES.md §3).
+    pub pk_eph: [u8; 32],
     pub ct: [u8; 28],
 }
 
@@ -38,7 +38,7 @@ fn header(ty: u8) -> Vec<u8> {
     out
 }
 
-/// Body of a TRANSFER: every envelope byte before `proofLen`.
+/// Body of a TRANSFER: every envelope byte before the proof.
 pub fn transfer_body(anchor_height: u32, nf: &[Fr; N_IN], outs: &[Output; N_OUT]) -> Vec<u8> {
     let mut out = header(TYPE_TRANSFER);
     spend_section(&mut out, anchor_height, nf, outs);
@@ -54,9 +54,15 @@ pub fn burn_body(ticker: &[u8; 4], v_pub: u64, anchor_height: u32, nf: &[Fr; N_I
     out
 }
 
-/// body ‖ proofLen (u16) ‖ proof.
-pub fn envelope(mut body: Vec<u8>, proof: &[u8]) -> Vec<u8> {
-    body.extend_from_slice(&(proof.len() as u16).to_le_bytes());
+/// body ‖ proof. The proof has a fixed size and no length field.
+pub fn envelope(mut body: Vec<u8>, proof: &[u8; PROOF_BYTES]) -> Vec<u8> {
     body.extend_from_slice(proof);
     body
+}
+
+#[cfg(feature = "wallet")]
+impl From<crate::notes::Sealed> for Output {
+    fn from(o: crate::notes::Sealed) -> Output {
+        Output { leaf: o.leaf, pk_eph: o.pk_eph, ct: o.ct }
+    }
 }

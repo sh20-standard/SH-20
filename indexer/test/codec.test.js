@@ -24,26 +24,32 @@ test('every type round-trips byte for byte', () => {
 });
 
 test('sizes of the proof-less envelopes', () => {
-  assert.equal(serializeEnvelope({ type: 'MINT', ticker: 'GENE', ...opening() }).length, 74);
-  assert.equal(serializeEnvelope({ type: 'TAKE', ...opening() }).length, 70);
-  assert.equal(serializeEnvelope({ type: 'CLAIM', listTxid: '00'.repeat(32), ...opening(), sig: Buffer.alloc(64) }).length, 166);
+  assert.equal(serializeEnvelope({ type: 'MINT', ticker: 'GENE', ...opening() }).length, 42);
+  assert.equal(serializeEnvelope({ type: 'TAKE', ...opening() }).length, 38);
+  assert.equal(serializeEnvelope({ type: 'CLAIM', listTxid: '00'.repeat(32), ...opening(), sig: Buffer.alloc(64) }).length, 134);
   assert.equal(serializeEnvelope(deployEnv()).length, 6 + 4 + 8 * 3 + 4 * 3 + 8 + 1 + 1);
 });
 
-test('a TRANSFER with a 2,080-byte proof is 2,435 bytes and rides the witness in 520-byte chunks', () => {
-  const env = { type: 'TRANSFER', spend: spend(7, 'x'.repeat(2080)) };
+test('a TRANSFER is 830 bytes (480-byte proof, no length field) and rides the witness in 520-byte chunks', () => {
+  const env = { type: 'TRANSFER', spend: spend(7, 'x') };
   const bytes = serializeEnvelope(env);
-  assert.equal(bytes.length, 6 + 4 + 2 * 32 + 3 * 93 + 2 + 2080); // 2,435
+  assert.equal(bytes.length, 6 + 4 + 2 * 32 + 3 * 92 + 480); // 830
   const found = extractEnvelope({ txid: 'a', vin: [{ txid: 'b', vout: 0, witness: witnessFor(bytes) }], vout: [] });
   assert.equal(found.carrier, 'witness');
   assert.ok(found.bytes.equals(bytes));
 });
 
-test('the body hash covers everything before proof_len', () => {
+test('the body hash covers everything before the proof; proofs and keys have fixed sizes', () => {
   const env = { type: 'BURN', ticker: 'GENE', vPub: 500n, spend: spend(7) };
   const bytes = serializeEnvelope(env);
   const { body } = parseEnvelope(bytes);
-  assert.equal(body.length, bytes.length - 2 - env.spend.proof.length);
+  assert.equal(body.length, bytes.length - 480);
+  assert.ok(body.equals(bytes.subarray(0, bytes.length - 480)));
+  assert.throws(() => serializeEnvelope({ ...env, spend: { ...env.spend, proof: Buffer.alloc(479) } }), /proof must be 480 bytes/);
+  const s = spend(7);
+  s.outs[1].pkEph = Buffer.alloc(33, 2);
+  assert.throws(() => serializeEnvelope({ type: 'TRANSFER', spend: s }), /pk_eph must be 32 bytes/);
+  assert.throws(() => parseEnvelope(bytes.subarray(0, bytes.length - 1)), /truncated/);
 });
 
 test('strict parsing rejects malformed envelopes', () => {
@@ -66,7 +72,7 @@ test('strict parsing rejects malformed envelopes', () => {
     assert.throws(() => parseEnvelope(buf), (e) => e instanceof CodecError && e.message.includes(reason.replace(' in MINT', '')), reason);
   }
   // A field element at or above the BN254 modulus is non-canonical.
-  const mint = serializeEnvelope({ type: 'MINT', ticker: 'GENE', npk: fr(), rho: fr() });
+  const mint = serializeEnvelope({ type: 'MINT', ticker: 'GENE', npk: fr() });
   const big = Buffer.from(mint);
   big.fill(0xff, 10, 42);
   assert.throws(() => parseEnvelope(big), /non-canonical field element/);
@@ -82,7 +88,7 @@ test('carrier rules: one envelope per transaction', () => {
   assert.match(extractEnvelope(twoOpReturns).error, /more than one/);
   const both = { txid: 'a', vin: [{ txid: 'b', vout: 0, witness: witnessFor(bytes) }], vout: [{ value: 0n, script: opReturn(bytes) }] };
   assert.match(extractEnvelope(both).error, /more than one/);
-  const nonMinimal = Buffer.concat([Buffer.from([0x6a, 0x4c, bytes.length]), bytes]); // PUSHDATA1 for a 74-byte push
+  const nonMinimal = Buffer.concat([Buffer.from([0x6a, 0x4c, bytes.length]), bytes]); // PUSHDATA1 for a 42-byte push
   assert.match(extractEnvelope({ txid: 'a', vin: [], vout: [{ value: 0n, script: nonMinimal }] }).error, /minimal push/);
   assert.ok(extractEnvelope({ txid: 'a', vin: [], vout: [{ value: 0n, script: opReturn(Buffer.from('hello')) }] }).none);
 });

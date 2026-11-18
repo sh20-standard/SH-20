@@ -15,9 +15,12 @@ pub mod ffi;
 pub mod fixture;
 pub mod gadgets;
 pub mod model;
+#[cfg(feature = "wallet")]
+pub mod notes;
 pub mod plonk;
 pub mod poseidon;
 pub mod spend;
+#[cfg(feature = "wallet")]
 pub mod vectors;
 pub mod wire;
 

@@ -32,7 +32,7 @@ test('SH20 exists from activation, free to mint; a DEPLOY adds paid mints; unpai
   const b2 = c.block(mint('GENE', 1000n, o), mint('GENE', 999n));
   assert.deepEqual(reasons(b2), ['mint not paid']);
   assert.equal(ix.token('GENE').mints, 1n);
-  assert.equal(ix.tree.leaves[1], noteLeaf(G, 1000n, o.npk, o.rho));
+  assert.equal(ix.tree.leaves[1], noteLeaf(G, 1000n, o.npk, 0n));
   assert.equal(b2.root, ix.tree.root);
 });
 
@@ -73,7 +73,7 @@ test('team allocation enters the tree at the unlock block, not before', () => {
   assert.equal(ix.tree.size, 0);
   const b4 = c.block();
   assert.equal(b4.events[0].type, 'TEAM_UNLOCK');
-  assert.equal(ix.tree.leaves[0], noteLeaf(G, 1000000n, team.npk, team.rho));
+  assert.equal(ix.tree.leaves[0], noteLeaf(G, 1000000n, team.npk, 0n));
 });
 
 test('with D > 0 every DEPLOY burns D SH20 through a proof; with D = 0 it carries none', () => {
@@ -149,7 +149,7 @@ test('LIST then TAKE with payment: SOLD, buyer gets a public note', () => {
   const b = c.block(tx({ env: { type: 'TAKE', ...buyer }, vin: [lockIn], vout: [{ value: 50000n, script: pay }] }));
   assert.equal(b.events[0].outcome, 'SOLD');
   assert.equal(ix.listings.get(listTxid).state, 'SOLD');
-  assert.equal(ix.tree.leaves.at(-1), noteLeaf(G, 1000n, buyer.npk, buyer.rho));
+  assert.equal(ix.tree.leaves.at(-1), noteLeaf(G, 1000n, buyer.npk, 0n));
 });
 
 test('TAKE without payment is a cancel by the seller', () => {
@@ -164,13 +164,13 @@ test('lock spent without TAKE: CLOSED, then CLAIM signed by the lock key', () =>
   c.block({ txid: txid(), vin: [lockIn], vout: [] });
   assert.equal(ix.listings.get(listTxid).state, 'CLOSED');
   const back = opening();
-  const msg = Indexer.claimMessage(listTxid, back.npk, back.rho);
+  const msg = Indexer.claimMessage(listTxid, back.npk);
   const forged = c.block(tx({ env: { type: 'CLAIM', listTxid, ...back, sig: sign(randomBytes(32), msg) } }));
   assert.deepEqual(reasons(forged), ['bad CLAIM signature']);
   const ok = c.block(tx({ env: { type: 'CLAIM', listTxid, ...back, sig: sign(sk, msg) } }));
   assert.deepEqual(reasons(ok), []);
   assert.equal(ix.listings.get(listTxid).state, 'CLAIMED');
-  assert.equal(ix.tree.leaves.at(-1), noteLeaf(G, 1000n, back.npk, back.rho));
+  assert.equal(ix.tree.leaves.at(-1), noteLeaf(G, 1000n, back.npk, 0n));
 });
 
 test('LIST needs a P2TR lock of at least 330 sats', () => {
@@ -210,7 +210,7 @@ test('a MINT names its ticker: an unknown ticker is rejected, two tokens never m
   assert.deepEqual(reasons(b), ['unknown ticker']);
   assert.equal(ix.token('TWO2').mints, 1n);
   assert.equal(ix.token('GENE').mints, 1n);
-  assert.equal(ix.tree.leaves.at(-1), noteLeaf(tickerT('TWO2'), 1000n, o.npk, o.rho));
+  assert.equal(ix.tree.leaves.at(-1), noteLeaf(tickerT('TWO2'), 1000n, o.npk, 0n));
   assert.deepEqual(ix.notes.at(-1).ticker, 'TWO2');
 });
 

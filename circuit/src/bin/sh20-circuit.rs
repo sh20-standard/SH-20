@@ -60,52 +60,61 @@ fn circom_input(w: &SpendWitness) -> String {
     )
 }
 
-/// A chain an indexer can replay: block 2 mints two notes of 1,000 units of "GENE" (leaves 0 and 1);
-/// block 3 transfers them into 1,500 + 400 + 100 (anchor 2); block 4 burns 900 out of the 1,500 and
-/// the 400 (anchor 3). Field elements are decimal strings, bytes are hex.
+/// A chain an indexer can replay, made the way wallets make it (docs/SPEC-NOTES.md): in block 2 a
+/// payer mints two public notes of 1,000 "GENE" (leaves 0 and 1, opening npk alone, rho = 0); in block 3 it transfers them as
+/// 1,500 and 400 to a recipient and 100 back to itself (anchor 2); in block 4 the recipient, having
+/// found its two notes by scanning, burns 900 of them and keeps 1,000 (anchor 3). Field elements
+/// are decimal strings, bytes are hex.
 fn scenario(pk: &sh20_circuit::ProvingKey) -> String {
-    use ark_ff::UniformRand;
     use rand_core::RngCore;
     use sh20_circuit::model::{InputNote, OutputNote, Tree};
-    use sh20_circuit::wire::{self, Output};
+    use sh20_circuit::notes::{self, Sealed};
+    use sh20_circuit::wire;
 
     let rng = &mut OsRng;
     let ticker = b"GENE";
     let t = model::ticker_t(ticker).expect("ticker");
     let tf = Fr::from(t as u64);
     let d = plonk::json::dr;
-    let sealed = |leaf: Fr| {
-        let (mut pk_eph, mut ct) = ([0u8; 33], [0u8; 28]);
-        OsRng.fill_bytes(&mut pk_eph[1..]);
-        OsRng.fill_bytes(&mut ct);
-        pk_eph[0] = 0x02;
-        Output { leaf, pk_eph, ct }
+    let fresh = || {
+        let mut b = [0u8; 32];
+        OsRng.fill_bytes(&mut b);
+        b
     };
-    let leaf_of = |o: &OutputNote| model::note_leaf(&tf, &Fr::from(o.v), &o.npk, &o.rho);
+    let wallet = || notes::wallet_keys(&fresh()).expect("keys");
+    let (payer, recipient) = (wallet(), wallet());
 
-    // block 2: two public mints of 1,000 units
-    let minted: Vec<(model::NoteKeys, Fr)> = (0..2).map(|_| (fixture::random_keys(rng), Fr::rand(rng))).collect();
-    let mut leaves: Vec<Fr> = minted.iter().map(|(k, rho)| model::note_leaf(&tf, &Fr::from(1000u64), &k.npk, rho)).collect();
+    // block 2: the payer's public notes 0 and 1, of 1,000 units each
+    let minted: Vec<_> = (0..2).map(|i| notes::public_opening(&payer.ivk, &payer.address, i).expect("opening")).collect();
+    let mut leaves: Vec<Fr> = minted.iter().map(|(npk, sec)| model::note_leaf(&tf, &Fr::from(1000u64), npk, &sec.rho)).collect();
 
-    // block 3: TRANSFER 1,000 + 1,000 → 1,500 + 400 + 100, anchored at block 2
+    // block 3: TRANSFER 1,000 + 1,000 → 1,500 and 400 to the recipient, 100 of change, anchored at block 2
     let tree = Tree::new(&leaves);
-    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: minted[i].0.clone(), v: 1000, rho: minted[i].1, index: i as u64, path: tree.path(i) });
-    let owners: Vec<model::NoteKeys> = (0..3).map(|_| fixture::random_keys(rng)).collect();
-    let amounts = [1500u64, 400, 100];
-    let outputs: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: owners[k].npk, v: amounts[k], rho: Fr::rand(rng) });
+    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: notes::spend_keys(&payer, &minted[i].1).expect("keys"), v: 1000, rho: minted[i].1.rho, index: i as u64, path: tree.path(i) });
+    let pay = [(&recipient.address, 1500u64), (&recipient.address, 400), (&payer.address, 100)];
+    let sealed: Vec<(Sealed, notes::NoteSecrets, Fr)> = pay.iter().map(|(to, v)| notes::seal(to, ticker, *v, &fresh()).unwrap_or_else(|e| fail(&e))).collect();
+    let outputs: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: sealed[k].2, v: pay[k].1, rho: sealed[k].1.rho });
     let nf: [Fr; 2] = std::array::from_fn(|i| model::nullifier(&inputs[i].keys.nk, &leaves[i], i as u64));
-    let body = wire::transfer_body(2, &nf, &outputs.map(|o| sealed(leaf_of(&o))));
+    let body = wire::transfer_body(2, &nf, &std::array::from_fn(|k| sealed[k].0.into()));
     let w = model::build_spend(t, tree.root, &inputs, &outputs, 0, 0, model::body_hash(&body));
     assert_eq!(w.nf, nf);
     let transfer = wire::envelope(body, &prove(pk, &w, rng).unwrap_or_else(|e| fail(&e)));
-    leaves.extend(outputs.iter().map(leaf_of));
+    leaves.extend(sealed.iter().map(|o| o.0.leaf));
 
-    // block 4: BURN 900 out of the 1,500 and the 400, anchored at block 3
+    // block 4: the recipient scans, finds leaves 2 and 3, and burns 900 of them, anchored at block 3
+    let found: Vec<(usize, notes::Opened)> = (2..5).filter_map(|pos| notes::scan(&recipient.ivk, &recipient.address, &sealed[pos - 2].0).map(|o| (pos, o))).collect();
+    assert_eq!(found.iter().map(|(pos, o)| (*pos, o.v)).collect::<Vec<_>>(), vec![(2, 1500), (3, 400)], "the recipient finds its two notes and not the change");
     let tree = Tree::new(&leaves);
-    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: owners[i].clone(), v: amounts[i], rho: outputs[i].rho, index: 2 + i as u64, path: tree.path(2 + i) });
-    let change: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: fixture::random_keys(rng).npk, v: if k == 0 { 1000 } else { 0 }, rho: Fr::rand(rng) });
-    let nf: [Fr; 2] = std::array::from_fn(|i| model::nullifier(&inputs[i].keys.nk, &leaves[2 + i], 2 + i as u64));
-    let body = wire::burn_body(ticker, 900, 3, &nf, &change.map(|o| sealed(leaf_of(&o))));
+    let inputs: [InputNote; 2] = std::array::from_fn(|i| {
+        let (pos, o) = &found[i];
+        InputNote { keys: notes::spend_keys(&recipient, &o.secrets).expect("keys"), v: o.v, rho: o.secrets.rho, index: *pos as u64, path: tree.path(*pos) }
+    });
+    // 1,000 kept; the two unused outputs are notes of 0 sealed to the recipient itself
+    let keep = [1000u64, 0, 0];
+    let sealed: Vec<(Sealed, notes::NoteSecrets, Fr)> = keep.iter().map(|v| notes::seal(&recipient.address, ticker, *v, &fresh()).unwrap_or_else(|e| fail(&e))).collect();
+    let change: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: sealed[k].2, v: keep[k], rho: sealed[k].1.rho });
+    let nf: [Fr; 2] = std::array::from_fn(|i| model::nullifier(&inputs[i].keys.nk, &leaves[found[i].0], found[i].0 as u64));
+    let body = wire::burn_body(ticker, 900, 3, &nf, &std::array::from_fn(|k| sealed[k].0.into()));
     let w = model::build_spend(t, tree.root, &inputs, &change, 900, t, model::body_hash(&body));
     let burn = wire::envelope(body, &prove(pk, &w, rng).unwrap_or_else(|e| fail(&e)));
 
@@ -113,7 +122,7 @@ fn scenario(pk: &sh20_circuit::ProvingKey) -> String {
         r#"{{"ticker":"GENE","vkDigest":"{}","vk":"{}","mints":[{}],"transfer":"{}","burn":"{}"}}"#,
         hex::encode(pk.vk.digest()),
         hex::encode(pk.vk.to_bytes()),
-        minted.iter().map(|(k, rho)| format!(r#"{{"npk":"{}","rho":"{}"}}"#, d(&k.npk), d(rho))).collect::<Vec<_>>().join(","),
+        minted.iter().map(|(npk, _)| format!(r#"{{"npk":"{}"}}"#, d(npk))).collect::<Vec<_>>().join(","),
         hex::encode(transfer),
         hex::encode(burn),
     )

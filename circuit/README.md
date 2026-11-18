@@ -3,7 +3,7 @@
 The spend circuit of **SH-20** (`docs/SPEC-WIRE.md` §4): prover, verifier, and the measurements
 behind the choice of proof system.
 
-**Status: draft v0.2. Not audited. Not activated anywhere.**
+**Status: draft v0.3. Not audited. Not activated anywhere.**
 
 | | |
 | --- | --- |
@@ -97,7 +97,7 @@ What was done to get there, measured in Node and in headless Chrome on the lapto
 
 ## How the result is checked
 
-- `cargo test --release`: 21 tests. Model against the indexer's constants; 26 adversarial witnesses
+- `cargo test --release`: 28 tests. Model against the indexer's constants; 26 adversarial witnesses
   (inflation, wrong ticker, double-spend attempts, bad ranges, wrong or swapped signatures, aliased
   keys) rejected by the gates; proofs end to end with every public input and proof byte bound;
   every variable of the assignment pinned by at least one gate; the shipped proving key reproduced
@@ -161,6 +161,7 @@ node bench/tx-vsize.mjs
 | `src/spend.rs` | the relation, as gates |
 | `src/gadgets.rs` | Poseidon, bit decompositions, BabyJubJub, EdDSA-Poseidon, Merkle path |
 | `src/model.rs` | the reference model the gates constrain: keys, leaf, nullifier, signature, tree, witness |
+| `src/notes.rs` | the wallet model of `docs/SPEC-NOTES.md`: keys, address, sealing, scanning, public notes (not in the WebAssembly builds) |
 | `src/poseidon.rs` | Poseidon; constants generated with the Grain LFSR, as in the indexer |
 | `src/cs.rs` | constraint system |
 | `src/plonk/` | SRS, key generation, prover, verifier, transcript, encodings |

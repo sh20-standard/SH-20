@@ -1,4 +1,4 @@
-# SH-20 design — draft v0.2
+# SH-20 design — draft v0.3
 
 SH-20 is an open standard for fungible shielded tokens on Bitcoin L1: anyone deploys a ticker, the
 mint is public and paid in BTC, and transfers are private. Bitcoin only publishes and orders data;
@@ -126,6 +126,9 @@ The verifier stays cross-checked against snarkjs' PLONK verifier.
   [77ph/shielded-bitcoin](https://github.com/77ph/shielded-bitcoin) — private BTC transfers, no tokens;
   the paper leaves BTC entry and exit out of scope and nothing is deployed yet.
 - [pERC20](https://github.com/PLabs4/pERC20_) — private tokens on EVM chains, issuer-only mint.
+- [SBRC-20](https://www.sbrc20.com/) — the same idea as SH-20 (fair mints, one shielded pool for every ticker), announced in
+  September 2026. Public BRC-20-style balances first, then a shield step that reveals the ticker and the amount going in. As of
+  November 2026 its spec is a draft, its published indexer handles only the public side, and no proof system is chosen.
 
 ## Reserved for later
 
@@ -140,4 +143,6 @@ The verifier stays cross-checked against snarkjs' PLONK verifier.
 3. Tickers of 4 characters only, or also 5 to 12 (then `t` = the ticker's bytes as a big-endian number,
    still unique and below the field size, and ticker fields get a length byte).
 4. Several envelopes per transaction, so relayers can publish in batches.
-5. Exact event encoding inside the digest, frozen before activation.
+
+Decided in v0.3: the events inside the digest have a fixed byte encoding (`SPEC-WIRE.md` §6), so a second
+indexer in any language reproduces every digest; the GENESIS record commits to the profile's rules.

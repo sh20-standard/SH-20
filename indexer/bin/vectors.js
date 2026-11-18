@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Writes vectors/v0.2.json: deterministic test vectors for a second, independent
+// Writes vectors/v0.3.json: deterministic test vectors for a second, independent
 // SH-20 implementation (hashes, leaves, envelopes, and a full block scenario
 // with the digest after every block). Run: npm run vectors
 
@@ -11,13 +11,15 @@ import { NoteTree } from '../src/tree.js';
 import { noteLeaf, tickerT } from '../src/notes.js';
 import { serializeEnvelope } from '../src/codec.js';
 import { Indexer } from '../src/indexer.js';
+import { encodeEvents } from '../src/events.js';
 import { publicKey } from '../src/schnorr.js';
 
 const h = (s) => createHash('sha256').update(s).digest();
 const fr = (seed) => BigInt('0x' + h(seed).toString('hex')) % FR;
 const bytes = (seed, n) => Buffer.concat([h(seed), h(seed + '/2')]).subarray(0, n);
 const txid = (seed) => h('txid/' + seed).toString('hex');
-const op = (seed) => ({ npk: fr(seed + '/npk'), rho: fr(seed + '/rho') });
+const op = (seed) => ({ npk: fr(seed + '/npk') });
+const PROOF = Buffer.concat([Buffer.from('valid-proof'), Buffer.alloc(480 - 11)]);
 
 const push = (d) => {
   if (d.length <= 75) return Buffer.concat([Buffer.from([d.length]), d]);
@@ -37,8 +39,8 @@ const witness = (env) => {
 const spend = (seed, anchorHeight) => ({
   anchorHeight,
   nf: [fr(seed + '/nf0'), fr(seed + '/nf1')],
-  outs: [0, 1, 2].map((j) => ({ leaf: fr(`${seed}/leaf${j}`), pkEph: Buffer.concat([Buffer.from([2]), bytes(`${seed}/epk${j}`, 32)]), ct: bytes(`${seed}/ct${j}`, 28) })),
-  proof: Buffer.from('valid-proof'),
+  outs: [0, 1, 2].map((j) => ({ leaf: fr(`${seed}/leaf${j}`), pkEph: bytes(`${seed}/epk${j}`, 32), ct: bytes(`${seed}/ct${j}`, 28) })),
+  proof: PROOF,
 });
 
 const gene = {
@@ -76,7 +78,7 @@ const txs = [
 ];
 const blocks = txs.map((t, i) => ({ height: i + 1, hash: `b${i + 1}`, txs: t }));
 
-const verifier = { name: 'test', verifySpend: (a) => Buffer.from(a.proof).toString() === 'valid-proof' };
+const verifier = { name: 'test', verifySpend: (a) => Buffer.from(a.proof).equals(PROOF) };
 const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 1000n }, verifier });
 const results = blocks.map((b) => ix.applyBlock(b));
 for (const r of results) if (r.rejected.length) throw new Error(`unexpected rejection at ${r.height}: ${JSON.stringify(r.rejected)}`);
@@ -89,8 +91,8 @@ const txJson = (t) => ({
 });
 
 const out = {
-  version: 'SH-20 draft v0.2',
-  notes: 'Field elements are hex, big-endian here for readability; on the wire they are 32-byte little-endian. The scenario uses a test verifier that accepts exactly the proof bytes "valid-proof".',
+  version: 'SH-20 draft v0.3',
+  notes: 'Field elements are hex, big-endian here for readability; on the wire they are 32-byte little-endian. The scenario uses a test verifier that accepts exactly one 480-byte proof: \"valid-proof\" padded with zeros. eventsH is the byte string of SPEC-WIRE §6 whose SHA-256 enters the digest.',
   poseidon2: [
     { in: ['1', '2'], out: poseidon2(1n, 2n).toString() },
     { in: ['0', '0'], out: poseidon2(0n, 0n).toString() },
@@ -99,12 +101,12 @@ const out = {
   emptyRootDepth32: hexFr(new NoteTree().root),
   tickerT: { ticker: 'GENE', t: tickerT('GENE').toString() },
   genesis: { ticker: 'SH20', max: '21000000', lim: '1000', pre: '0', price: '0', payMode: 0, mintsFrom: 'activation height' },
-  noteLeaf: { ticker: 'SH20', t: tickerT('SH20').toString(), v: '1000', npk: hexFr(envs.mintGenesis.npk), rho: hexFr(envs.mintGenesis.rho), leaf: hexFr(noteLeaf(tickerT('SH20'), 1000n, envs.mintGenesis.npk, envs.mintGenesis.rho)) },
+  noteLeaf: { ticker: 'SH20', t: tickerT('SH20').toString(), v: '1000', npk: hexFr(envs.mintGenesis.npk), rho: '0', leaf: hexFr(noteLeaf(tickerT('SH20'), 1000n, envs.mintGenesis.npk, 0n)) },
   envelopes: Object.fromEntries(Object.entries(ser).map(([k, v]) => [k, { bytes: v.length, hex: v.toString('hex') }])),
   scenario: {
     profile: { activationHeight: 1, deployBurn: '1000', anchorWindow: 100, anchorMinDepth: 1 },
     blocks: blocks.map((b) => ({ height: b.height, txs: b.txs.map(txJson) })),
-    after: results.map((r) => ({ height: r.height, root: hexFr(r.root), digest: r.digest, events: r.events.map((e) => e.type) })),
+    after: results.map((r) => ({ height: r.height, root: hexFr(r.root), events: r.events.map((e) => e.type), eventsH: encodeEvents(r.events).toString('hex'), digest: r.digest })),
     final: {
       treeSize: ix.tree.size,
       sh20: { mints: ix.token('SH20').mints.toString(), burned: ix.token('SH20').burned.toString() },
@@ -114,5 +116,5 @@ const out = {
   },
 };
 mkdirSync(new URL('../vectors/', import.meta.url), { recursive: true });
-writeFileSync(new URL('../vectors/v0.2.json', import.meta.url), JSON.stringify(out, null, 2) + '\n');
-console.log(`wrote vectors/v0.2.json: ${Object.keys(ser).length} envelopes, ${blocks.length} blocks, final digest ${results.at(-1).digest}`);
+writeFileSync(new URL('../vectors/v0.3.json', import.meta.url), JSON.stringify(out, null, 2) + '\n');
+console.log(`wrote vectors/v0.3.json: ${Object.keys(ser).length} envelopes, ${blocks.length} blocks, final digest ${results.at(-1).digest}`);

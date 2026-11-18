@@ -94,8 +94,8 @@ test('a whole transfer: tree, nullifiers, leaves, body hash, signatures, public 
   assert.equal(sum(s.inputs), sum(s.outputs) + n(s.vPub));
   assert.deepEqual([s.root, ...nf, ...outLeaf, s.bodyHash, s.vPub, s.tPub], s.publics);
 
-  // the body is the TRANSFER envelope the indexer parses, up to proofLen
-  const envelope = Buffer.concat([Buffer.from(s.body, 'hex'), Buffer.from([1, 0]), Buffer.alloc(1)]);
+  // the body is the TRANSFER envelope the indexer parses, up to the proof
+  const envelope = Buffer.concat([Buffer.from(s.body, 'hex'), Buffer.alloc(480)]);
   const { env, body } = parseEnvelope(envelope);
   assert.equal(env.type, 'TRANSFER');
   assert.equal(env.spend.anchorHeight, s.anchorHeight);

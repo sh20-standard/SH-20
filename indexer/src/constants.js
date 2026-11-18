@@ -24,8 +24,7 @@ export const PAY_MODE = Object.freeze({ NONE: 0, BURN: 1, PAY: 2 });
 export const TREE_DEPTH = 32;
 export const N_IN = 2;
 export const N_OUT = 3;
-export const OUT_BYTES = 32 + 33 + 28; // leaf | pk_eph | ct (v u64, ticker 4, tag 16)
-export const PROOF_MAX = 4096;
+export const OUT_BYTES = 32 + 32 + 28; // leaf | pk_eph (X25519) | ct (v u64, ticker 4, tag 16)
 /** A spend proof: PLONK over BN254, 9 G1 points and 6 scalars (docs/SPEC-WIRE.md §4). */
 export const PROOF_BYTES = 480;
 /** SHA-256("sh20/v0/vk" ‖ verifying key) of the spend circuit on the Hermez setup (draft v0.1). */

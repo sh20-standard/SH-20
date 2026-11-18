@@ -5,7 +5,7 @@
 // integers below the BN254 scalar field. Layouts are in docs/SPEC-WIRE.md.
 
 import {
-  FR, MAGIC, VERSION, TYPE, TYPE_NAME, N_IN, N_OUT, PROOF_MAX, PAYSCRIPT_MAX, PAY_MODE,
+  FR, MAGIC, VERSION, TYPE, TYPE_NAME, N_IN, N_OUT, PROOF_BYTES, PAYSCRIPT_MAX, PAY_MODE,
 } from './constants.js';
 
 export class CodecError extends Error {}
@@ -104,12 +104,13 @@ class Writer {
   }
 }
 
+// A public opening is the note key alone (v0.3): public notes use rho = 0, since a fresh npk
+// already makes each of them unique and nothing about them is hidden.
 function readOpening(r) {
-  return { npk: r.fr(), rho: r.fr() };
+  return { npk: r.fr() };
 }
 function writeOpening(w, o) {
   w.fr(o.npk);
-  w.fr(o.rho);
 }
 
 function readPayScript(r, payMode) {
@@ -125,7 +126,8 @@ function readPayScript(r, payMode) {
   return script;
 }
 
-// Spend section. Returns the spend and the reader position where proof_len starts.
+// Spend section. Returns the spend and the reader position where the proof starts (v0.3:
+// pk_eph is a 32-byte X25519 key, and the proof has a fixed size, with no length field).
 function readSpend(r) {
   const anchorHeight = r.u32();
   const nf = [];
@@ -133,15 +135,12 @@ function readSpend(r) {
   const outs = [];
   for (let j = 0; j < N_OUT; j++) {
     const leaf = r.fr();
-    const pkEph = r.bytes(33);
-    if (pkEph[0] !== 0x02 && pkEph[0] !== 0x03) throw new CodecError('pk_eph is not a compressed point');
+    const pkEph = r.bytes(32);
     const ct = r.bytes(28);
     outs.push({ leaf, pkEph, ct });
   }
   const bodyEnd = r.pos;
-  const proofLen = r.u16();
-  if (proofLen === 0 || proofLen > PROOF_MAX) throw new CodecError('bad proof length');
-  const proof = r.bytes(proofLen);
+  const proof = r.bytes(PROOF_BYTES);
   return { spend: { anchorHeight, nf, outs, proof }, bodyEnd };
 }
 
@@ -151,18 +150,18 @@ function writeSpend(w, s) {
   for (const x of s.nf) w.fr(x);
   for (const o of s.outs) {
     w.fr(o.leaf);
-    if (o.pkEph.length !== 33) throw new CodecError('pk_eph must be 33 bytes');
+    if (o.pkEph.length !== 32) throw new CodecError('pk_eph must be 32 bytes');
     w.bytes(o.pkEph);
     if (o.ct.length !== 28) throw new CodecError('ct must be 28 bytes');
     w.bytes(o.ct);
   }
-  w.u16(s.proof.length);
+  if (s.proof.length !== PROOF_BYTES) throw new CodecError(`proof must be ${PROOF_BYTES} bytes`);
   w.bytes(s.proof);
 }
 
 /**
  * Parse an envelope. Returns { env, body } where `body` is the bytes covered
- * by the proof's body hash (everything before proof_len), or null when the
+ * by the proof's body hash (everything before the proof), or null when the
  * type carries no proof.
  */
 export function parseEnvelope(buf) {
