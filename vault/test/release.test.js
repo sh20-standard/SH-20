@@ -8,12 +8,15 @@ import { buildRelease } from '../release.js';
 
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 
-test('IPFS CIDs match kubo (`ipfs add -r --cid-version=1`, checked with kubo 0.32.1)', () => {
+test('IPFS CIDs match kubo (`ipfs add -r --cid-version=1`, checked with kubo 0.32.1), chunked files too', () => {
   assert.equal(ipfsCid([]), 'bafybeiczsscdsbs7ffqz55asqdf3smv6klcw3gofszvwlyarci47bgf354'); // empty folder
   const tree = [['a/x.txt', Buffer.from('hello\n')], ['a/b/empty', Buffer.alloc(0)], ['top', Buffer.from('zz')]];
   assert.equal(ipfsCid(tree), 'bafybeicx6wui6j2nt5zsoq547ypvpt622avmtgk2hrolw2cbxixayjgpbu');
   assert.equal(ipfsCid([...tree].reverse()), ipfsCid(tree), 'order of input does not matter');
-  assert.throws(() => ipfsCid([['big', Buffer.alloc(262145)]]), /larger than one IPFS chunk/);
+  // files above one 256 KiB chunk (the proving key, the prover): raw leaves under one dag-pb node
+  const big = Buffer.alloc(600000);
+  for (let i = 0; i < big.length; i++) big[i] = i % 251;
+  assert.equal(ipfsCid([['big.bin', big], ['edge.bin', Buffer.alloc(262145, 7)]]), 'bafybeiclr3t3ig4gbcrwxqntk6ght47t4s7gvp5n5mncyxak253wos4k5q');
 });
 
 test('tar is a valid ustar with fixed metadata, independent of input order', () => {

@@ -7,11 +7,13 @@ import './shim/buffer.js';
 
 export { serializeEnvelope, parseEnvelope, CodecError } from '../../indexer/src/codec.js';
 export { extractEnvelope } from '../../indexer/src/carrier.js';
-export { FR, MAGIC, PAY_MODE, DOMAIN, TREE_DEPTH, PROOF_BYTES, MINT_BATCH_MAX } from '../../indexer/src/constants.js';
+export { FR, MAGIC, PAY_MODE, DOMAIN, TREE_DEPTH, PROOF_BYTES, MINT_BATCH_MAX, SPEND_VK_DIGEST } from '../../indexer/src/constants.js';
 export { noteLeaf, tickerT, PUBLIC_RHO } from '../../indexer/src/notes.js';
 export { poseidon2 } from '../../indexer/src/poseidon.js';
 export { rootFromPath } from '../../indexer/src/tree.js';
+export { sign as schnorrSign, verify as schnorrVerify, publicKey as schnorrPublicKey, taggedHash } from '../../indexer/src/schnorr.js';
 export { HRP, encodeAddress, decodeAddress } from '../../circuit/js/address.js';
-export { walletKeys, publicOpening, scan, seal, spendKeys } from '../../circuit/js/seal.js';
-export { nullifier } from '../../circuit/js/notes.js';
+export { walletKeys, publicOpening, scan, seal, spendKeys, masterSecret } from '../../circuit/js/seal.js';
+export { nullifier, noteKeys, bodyHash } from '../../circuit/js/notes.js';
+export { sign as eddsaSign, verify as eddsaVerify } from '../../circuit/js/eddsa.js';
 export { L } from '../../circuit/js/babyjub.js';

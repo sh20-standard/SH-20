@@ -63,7 +63,7 @@ select { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-
 .grid label input, .grid label select { display: block; width: 100%; box-sizing: border-box; margin-top: 2px; }
 input { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
 label { display: block; margin: 6px 0; }
-label input[type=url], label input[type=password], label textarea { width: 100%; max-width: 420px; display: block; margin-top: 2px; }
+label input[type=url], label input[type=password], label textarea, label input.wide { width: 100%; max-width: 420px; display: block; margin-top: 2px; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
 .table-wrap { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
@@ -73,4 +73,6 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 8px 0; }
 dt { color: var(--muted); }
 dd { margin: 0; font-variant-numeric: tabular-nums; }
+.words { border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+.words ol { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 2px 14px; margin: 4px 0; padding-left: 1.6em; }
 footer { margin: 24px 0 8px; text-align: center; }

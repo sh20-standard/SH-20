@@ -1,6 +1,7 @@
-// The vault: a 32-byte seed generated on this device, never sent anywhere. It is
-// the master secret of docs/SPEC-NOTES.md §1: every key derives from it (notekeys.js),
-// so the seed alone recovers every note, public or sealed, by rescanning the indexer.
+// The vault: 12 BIP39 words generated on this device, never sent anywhere. They give the
+// master secret m of docs/SPEC-NOTES.md §1 (bip39.js), every key derives from m (notekeys.js),
+// so the words alone recover every note, public or sealed, by rescanning the indexer.
+// (A vault made before the words existed has a random m and no words: its backup file restores it.)
 // The state lives in localStorage, encrypted with AES-GCM under a PBKDF2 passphrase
 // key when a passphrase is set.
 //
@@ -9,7 +10,8 @@
 
 import { NOTE_SCHEME, wallet, publicNote, scanOutput, nullifierOf } from './notekeys.js';
 import { frHex } from './fr.js';
-import { noteLeaf, tickerT, PUBLIC_RHO } from './sh20.js';
+import { noteLeaf, tickerT, PUBLIC_RHO, masterSecret } from './sh20.js';
+import { newMnemonic, mnemonicToSeed } from './bip39.js';
 import { toHex, fromHex, toBase64, fromBase64, utf8 } from './bytes.js';
 
 export const STORAGE_KEY = 'sh20.vault.v0';
@@ -36,16 +38,18 @@ export function noteOpening(seed, index) {
 export const RESTORE_GAP = 50;
 
 export class Vault {
-  #seed;
+  #seed; // the master secret m
+  #words; // the 12 recovery words, or null for a vault made before them
   #key; // AES key, null when stored in clear
   #salt;
   #wallet = null; // keys derived from the seed, on first use
   #openings = new Map(); // index -> public opening, cached (each costs two BabyJubJub multiplications, ~170 ms)
 
-  constructor(storage, state, seed, key, salt) {
+  constructor(storage, state, seed, key, salt, words = null) {
     this.storage = storage;
-    this.state = state; // { v, network, scheme, next, notes, obsolete? } — seed kept apart, in #seed
+    this.state = state; // { v, network, scheme, next, notes, obsolete?, npks?, pending? } — secrets kept apart
     this.#seed = seed;
+    this.#words = words;
     this.#key = key;
     this.#salt = salt;
     if (state.scheme !== NOTE_SCHEME) {
@@ -61,6 +65,11 @@ export class Vault {
     return (this.#wallet ??= wallet(this.#seed));
   }
 
+  /** The keys, for building a spend (send.js); they never leave the page. */
+  get wallet() {
+    return this.#w;
+  }
+
   /** The vault's sh20 address on signet (tsh20…): payers seal notes to it. */
   get address() {
     return this.#w.addressString;
@@ -74,14 +83,29 @@ export class Vault {
     return this.#key !== null;
   }
 
+  /** A new vault with fresh recovery words (shown once to be written down: `words`). */
   static async create(storage, passphrase = '') {
+    return Vault.fromWords(storage, newMnemonic(), passphrase);
+  }
+
+  /**
+   * A vault from recovery words: new ones, or the words of a vault to restore (it then rescans
+   * every leaf to find its notes). `passphrase` encrypts the vault on this device; it is not a
+   * BIP39 passphrase (none is used).
+   */
+  static async fromWords(storage, words, passphrase = '') {
     if (Vault.exists(storage)) throw new Error('a vault already exists on this device');
-    const seed = crypto.getRandomValues(new Uint8Array(32));
+    const m = Uint8Array.from(masterSecret(await mnemonicToSeed(words)));
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const key = passphrase ? await aesKey(passphrase, salt) : null;
-    const v = new Vault(storage, { v: 0, network: 'signet', scheme: NOTE_SCHEME, next: 0, notes: [] }, seed, key, salt);
+    const v = new Vault(storage, { v: 0, network: 'signet', scheme: NOTE_SCHEME, next: 0, notes: [] }, m, key, salt, words.normalize('NFKD').trim().toLowerCase().split(/\s+/).join(' '));
     await v.save();
     return v;
+  }
+
+  /** The recovery words, or null for a vault made before them (its backup file restores it). */
+  get words() {
+    return this.#words;
   }
 
   /** Opens a stored record (or a backup text). Wrong passphrase throws. */
@@ -106,8 +130,8 @@ export class Vault {
       }
       inner = JSON.parse(new TextDecoder().decode(clear));
     }
-    const { seed, ...state } = inner;
-    return new Vault(storage, state, fromHex(seed), key, salt ?? crypto.getRandomValues(new Uint8Array(16)));
+    const { seed, words = null, ...state } = inner;
+    return new Vault(storage, state, fromHex(seed), key, salt ?? crypto.getRandomValues(new Uint8Array(16)), words);
   }
 
   /** Restores a backup file on this device (replaces nothing: fails if a vault exists). */
@@ -119,7 +143,7 @@ export class Vault {
   }
 
   async #record() {
-    const inner = { ...this.state, seed: toHex(this.#seed) };
+    const inner = { ...this.state, seed: toHex(this.#seed), ...(this.#words ? { words: this.#words } : {}) };
     if (!this.#key) return { v: 0, plain: inner };
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, this.#key, utf8(JSON.stringify(inner)));
@@ -204,6 +228,28 @@ export class Vault {
     return note;
   }
 
+  /**
+   * A spend under way (send.js pendingRecord): saved before the wallet signs the commit, since its
+   * one-time key is the only way to send the reveal or to take the commit output back.
+   */
+  async addPending(rec) {
+    const id = `spend:${Date.now()}:${(this.state.pending ?? []).length}`;
+    (this.state.pending ??= []).push({ id, ...rec });
+    for (const nid of rec.inputs ?? []) {
+      const n = this.state.notes.find((x) => x.id === nid);
+      if (n) n.status = 'spending';
+    }
+    await this.save();
+    return id;
+  }
+
+  async updatePending(id, patch) {
+    const p = (this.state.pending ?? []).find((x) => x.id === id);
+    if (!p) return;
+    Object.assign(p, patch);
+    await this.save();
+  }
+
   /** Forgets a note (a sealed output no longer in the tree: scanning finds it again wherever it is). */
   async dropNote(id) {
     this.state.notes = this.state.notes.filter((n) => n.id !== id);
@@ -239,6 +285,7 @@ export class Vault {
   lock() {
     this.#seed.fill(0);
     this.#seed = null;
+    this.#words = null;
     this.#key = null;
     this.#wallet = null;
     this.#openings.clear();

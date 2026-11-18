@@ -81,6 +81,25 @@ export function cidString(bytes) {
 }
 
 const UNIXFS_DIR = Buffer.from([0x08, 0x01]); // { Type: Directory }
+const MAX_LINKS = 174; // kubo's balanced layout: links per node
+
+/**
+ * A file as `ipfs add --cid-version=1` stores it: one raw block up to 256 KiB; above that, raw
+ * leaves of 256 KiB under one dag-pb node { Links: [{ Hash, Name: "", Tsize }], Data: UnixFS
+ * { Type: File, filesize, blocksizes } } (one level: up to 174 leaves, about 45 MB). Returns { cid, tsize }.
+ */
+function fileNode(b) {
+  if (b.length <= CHUNK) return { cid: cidBytes(RAW, b), tsize: b.length };
+  const leaves = [];
+  for (let o = 0; o < b.length; o += CHUNK) leaves.push(b.subarray(o, o + CHUNK));
+  if (leaves.length > MAX_LINKS) throw new Error('file too large for one level of the balanced layout');
+  const unixfs = Buffer.concat([Buffer.from([0x08, 0x02]), varint(3 << 3), varint(b.length), ...leaves.map((l) => Buffer.concat([varint(4 << 3), varint(l.length)]))]);
+  const node = Buffer.concat([
+    ...leaves.map((l) => field(2, Buffer.concat([field(1, cidBytes(RAW, l)), field(2, Buffer.alloc(0)), varint(3 << 3), varint(l.length)]))),
+    field(1, unixfs),
+  ]);
+  return { cid: cidBytes(DAG_PB, node), tsize: node.length + b.length };
+}
 
 /** A directory node from [{ name, cid, tsize }]; returns { cid, tsize }. */
 function dirNode(links) {
@@ -97,7 +116,6 @@ function dirNode(links) {
 export function ipfsCid(entries) {
   const tree = { files: new Map(), dirs: new Map() };
   for (const [p, b] of entries) {
-    if (b.length > CHUNK) throw new Error(`${p} is larger than one IPFS chunk: compute the CID with ipfs itself`);
     const parts = p.split('/');
     let d = tree;
     for (const seg of parts.slice(0, -1)) {
@@ -107,7 +125,7 @@ export function ipfsCid(entries) {
     d.files.set(parts.at(-1), b);
   }
   const build = (d) => dirNode([
-    ...[...d.files].map(([name, b]) => ({ name, cid: cidBytes(RAW, b), tsize: b.length })),
+    ...[...d.files].map(([name, b]) => ({ name, ...fileNode(b) })),
     ...[...d.dirs].map(([name, sub]) => ({ name, ...build(sub) })),
   ]);
   return cidString(build(tree).cid);

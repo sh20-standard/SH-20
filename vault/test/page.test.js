@@ -12,10 +12,10 @@ test('CSP allows exactly the inline import map, by hash', () => {
   const hash = createHash('sha256').update(inline[0]).digest('base64');
   const csp = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1];
   assert.ok(csp.includes(`'sha256-${hash}'`), 'CSP hash matches the import map');
-  assert.ok(!/unsafe-inline|unsafe-eval/.test(csp));
+  assert.ok(!/unsafe-inline|(?<!wasm-)unsafe-eval/.test(csp), 'no eval of strings; only WebAssembly may compile');
   // scripts: this origin, the import map hash, and the wallet extensions' own scripts; no other domain
   const scriptSrc = csp.match(/script-src ([^;]+)/)[1].trim().split(/\s+/);
-  for (const x of scriptSrc) assert.ok(["'self'", 'chrome-extension:', 'moz-extension:'].includes(x) || /^'sha256-/.test(x), `script-src ${x}`);
+  for (const x of scriptSrc) assert.ok(["'self'", "'wasm-unsafe-eval'", 'chrome-extension:', 'moz-extension:'].includes(x) || /^'sha256-/.test(x), `script-src ${x}`);
   assert.match(csp, /default-src 'self'/);
   assert.match(csp, /object-src 'none'/);
   assert.match(csp, /style-src 'self'(;|$)/);

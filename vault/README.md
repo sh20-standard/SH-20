@@ -18,16 +18,17 @@ What works today, without proofs:
   your own notes, public or sealed to your address, are found locally, and the seed alone recovers
   them after a restore;
 - the genesis token **SH20**, checked against profile constants in the vault (it has no DEPLOY);
-- a **deploy screen** that checks a new ticker's terms with the indexer's rules and shows its cost,
-  including the burn of `D` SH20 with a proof.
+- **private TRANSFER**: proved on the device by the circuit's WebAssembly prover, carried by a
+  commit transaction (signed by the wallet) and a reveal (signed by the vault);
+- **DEPLOY** of a new ticker, burning `D` SH20 with a proof (or a plain OP_RETURN when `D = 0`);
+- **12 recovery words** (BIP39) that restore the keys, the address and every note.
 
-Sending a DEPLOY with a burn, and TRANSFER, BURN, LIST, TAKE and CLAIM, are spends: they need the
-WebAssembly prover wired into the vault, which is not done yet.
+BURN, LIST, TAKE and CLAIM are not in the vault yet.
 
 ## Run
 
 ```sh
-npm test                 # 59 tests, Node ≥ 20, zero dependencies
+npm test                 # 72 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development)
 npm run release          # a verifiable release from the current commit (below)
 ```
@@ -35,8 +36,9 @@ npm run release          # a verifiable release from the current commit (below)
 Development (serves the repository root, a mock indexer API and a mock Esplora):
 
 ```sh
-node dev/serve.js        # http://localhost:8000/vault/, API on :8020
-node dev/e2e.js          # headless Chrome runs the whole SH20 mint flow with a fake UniSat
+node dev/serve.js        # http://localhost:8000/vault/, API on :8020 (not isolated: the prover runs on one thread)
+node dev/serve.js --isolate                   # with COOP/COEP: shared memory, the prover's thread pool
+node dev/e2e.js          # headless Chrome: mint, sync, TRANSFER, DEPLOY with a burn, restore from the words
 E2E_PATH=/vault/dist/vault/ node dev/e2e.js   # the same flow on the IPFS build
 E2E_LIAR=1 node dev/e2e.js                    # a lying indexer in the list: the mint is refused
 
@@ -45,11 +47,13 @@ E2E_D0=1 node dev/e2e.js                      # mints GENE, terms checked agains
 ```
 
 `dev/serve.js` serves the real indexer API (`indexer/src/api.js`) over a small demo chain of
-serialised transactions, with the reference profile (D = 1000): a DEPLOY needs a proof there, so
-the demo chain holds SH20 and two mints of it. Its mock Esplora serves those transactions and
-"mines" every broadcast one into the next block, so the e2e test checks the mint terms, that the
-indexer accepts the vault's MINT, that the vault finds the note in the tree afterwards, and that
-the deploy screen shows the burn.
+serialised transactions, with the reference profile (D = 1000) and the real PLONK verifier (from
+`vault/prover/sh20_circuit.wasm`). Its mock Esplora serves those transactions and "mines" every
+broadcast one into the next block. The e2e run mints 2,000 SH20, syncs, sends 700 privately to
+another wallet's sh20 address (proved in the page), finds its 1,300 of change by scanning, deploys
+a ticker that burns 1,000 SH20 with a proof, finds the 300 left, then erases the vault, restores
+it from the 12 words alone and requires the same address and the same notes. Measured in
+headless Chrome on a laptop: 26 s per proof on one thread, 4.7 s on the thread pool.
 
 ## Releases and IPFS hosting
 
@@ -75,6 +79,15 @@ folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
 - **Nothing from another domain:** the CSP allows scripts from the page's own origin and the import
   map (by hash), no CDN, no remote font or stylesheet; `test/page.test.js` and `test/release.test.js`
   check it. Network calls (`connect-src`) go only to the indexer and Esplora servers you configure.
+  `'wasm-unsafe-eval'` lets the page compile the prover's WebAssembly (from its own origin); it does
+  not allow `eval` of strings.
+- **The prover is in the release:** `vault/prover/*.wasm` (1.1 and 1.3 MB) and the proving key
+  `circuit/artifacts/spend.pk` (8.4 MB, checked by the module against its pinned SHA-256). The CID
+  covers them like every other file (`tools/pack.js` chunks files above 256 KiB as kubo does).
+- **Threads need isolation:** the thread pool needs shared memory, which browsers give only to pages
+  served with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy:
+  require-corp`. Public IPFS gateways do not send them, so there the vault proves on one thread
+  (about half a minute on a laptop); a host or a local node that sends them gets the pool.
 - **Why `chrome-extension:` and `moz-extension:` stay in `script-src`:** Xverse, UniSat and Leather
   inject their wallet provider into the page as a script served from their own extension, which only
   an installed extension can serve, so allowing these schemes lets the wallets work without letting
@@ -173,8 +186,56 @@ the reference indexer and requires the same verdict). It then shows what the DEP
   from serialising a placeholder spend with the indexer's codec; nothing is sealed or sent.
 - **`D = 0`**: no proof, one OP_RETURN transaction (56 bytes + `psLen`, + 32 with a team).
 
-The button stays disabled: a DEPLOY with a burn is a spend, like a transfer, and the vault does
-not prove spends yet.
+With `D > 0` the button proves the burn and sends it the way a transfer is sent (below): the spend
+takes the SH20 notes, the change and two unused outputs are sealed to the vault itself, and the
+envelope is the DEPLOY. With `D = 0` it signs one OP_RETURN transaction. A team allocation gets one
+of the vault's public note keys, found by the sync when its block comes. Before signing, the vault
+asks the indexers again for `D`, the tickers taken and the tip.
+
+## Private transfers
+
+The send panel takes a ticker, an amount and an sh20 address (`tsh20…`, checked as SPEC-NOTES §2
+requires). `src/send.js` then:
+
+1. **plans** (`src/spend.js`): one or two unspent notes of the ticker (a second, unused input of
+   0 is made up when one note pays); three outputs in random order, the recipient's, the change and
+   an unused 0, each sealed with a fresh X25519 key (`circuit/js` `seal`); the envelope laid out by
+   the indexer's codec; the body hash and an EdDSA-Poseidon signature per input (`circuit/js`); the
+   Merkle paths from the local tree, whose root is the indexer's at the synced block (the anchor;
+   the vault refuses a tree more than 90 blocks old, the indexers accept 100). The 3,232-byte
+   witness is packed in the order `circuit/src/model.rs` reads it;
+2. **proves** (`src/prover.js`, `src/prover-worker.js`): the circuit's WebAssembly prover, wired as
+   the phone test page wires it (`circuit/web/host.js` and `thread-worker.js`, unchanged), on a
+   thread pool when the page is cross-origin isolated, else on one thread; the proof is checked
+   against its public inputs before anything is signed;
+3. **carries** (`src/taproot.js`): a commit transaction, built by the vault and signed by the
+   wallet, pays a taproot output whose one leaf is `<E> OP_CHECKSIG OP_0 OP_IF "SH20" … OP_ENDIF`;
+   the reveal spends it by that leaf, signed by the vault with the one-time key `E`, and returns the
+   dust to the wallet. The one-time key is saved in the vault before the wallet signs, so a reveal
+   can be sent again ("Spends sent from this vault"); `E` is also the internal key, so the commit
+   output can be taken back by the key path if a reveal is never used.
+
+Sizes: an 830-byte TRANSFER envelope, a 339 vB reveal (P2TR return output), plus the commit (an
+ordinary payment). The notes spent show as spent at the next sync; the change is found by scanning.
+
+What is checked, with real proofs (`test/spend.test.js`): the public inputs the vault computes for
+the circuit's own TRANSFER and BURN of `indexer/test/fixtures/plonk-scenario.json` verify with the
+pinned verifying key; a TRANSFER the vault builds, proves and reveals is accepted by the reference
+indexer with the pinned PLONK verifier, the recipient's scan finds its note and the vault its
+change; and a DEPLOY that burns 1,000 SH20 is accepted the same way. Taproot (tweak, leaf hash,
+control block, signature message) is checked against the BIP341 vectors (`test/taproot.test.js`).
+
+## Recovery words
+
+A new vault gets 12 BIP39 words (128 bits of entropy), shown once on creation and again on
+request. They give the master secret of SPEC-NOTES §1: `m` = the first 32 bytes of
+HMAC-SHA512("sh20/v0/seed", BIP39 seed), with the BIP39 seed from PBKDF2-HMAC-SHA512 (2,048 rounds,
+no BIP39 passphrase). Restoring from the words on an empty page derives the same keys and address
+and rescans every leaf: public notes by their keys, sealed ones by opening them. A phrase with a
+mistyped word or a wrong checksum is refused, never turned into other keys. `src/bip39.js`, with the
+English list in `src/bip39-english.js` (checked against its SHA-256) and the BIP39 vectors
+(`test/bip39.test.js`). The device passphrase only encrypts the vault in this browser; it is not
+part of the words.
 
 ## Private sync: tree, paths and spends on the device
 
@@ -208,18 +269,18 @@ which it then keeps in its encrypted state; opening someone else's sealed output
 
 ## Note keys and the sh20 address
 
-`src/notekeys.js` is the only place that turns the seed into keys, and it computes nothing of its
-own: it calls `circuit/js` (`walletKeys`, `publicOpening`, `scan`, `encodeAddress`, `nullifier`), the
-wallet reference that the circuit's Rust model checks. The vault's 32-byte seed is the master
-secret `m` of `docs/SPEC-NOTES.md` §1. From it come `ask`, `nsk` and the viewing key `ivk`, the
+`src/notekeys.js` is the only place that turns the master secret into keys, and it computes nothing
+of its own: it calls `circuit/js` (`walletKeys`, `publicOpening`, `scan`, `encodeAddress`,
+`nullifier`), the wallet reference that the circuit's Rust model checks. The master secret `m` of
+`docs/SPEC-NOTES.md` §1 comes from the recovery words. From it come `ask`, `nsk` and the viewing key `ivk`, the
 address `tsh20…` (bech32m of `IVK ‖ A ‖ N`, shown in the vault section), the public notes of §5
 (from `ivk` and a counter) and the per-note keys of sealed notes.
 `test/keys.test.js` derives the three wallets of `circuit/js/vectors.json` from their `m` and requires
 every key, address, public note, sealed output and nullifier of the vectors.
 
 A vault made before v0.3 (scheme `provisional-0`) keeps its old notes aside in the backup and starts
-its counter again: those notes cannot exist on a v0.3 chain. The vault does not take a BIP39
-mnemonic yet (SPEC-NOTES §1 allows one); its seed is random and kept in the backup file.
+its counter again: those notes cannot exist on a v0.3 chain. A vault made before the recovery words
+has a random `m` and no words: its backup file restores it.
 
 ## Indexer API
 
@@ -264,8 +325,14 @@ refuse, sealed outputs, public notes, a whole spend) through that exact setup (n
 | Path | What |
 | --- | --- |
 | `index.html`, `style.css` | the page |
-| `src/app.js` | UI: vault, wallet, tickers, mint, deploy, notes, settings |
-| `src/keys.js` | seed, encrypted storage, backup, the vault's notes (public and received) |
+| `src/app.js` | UI: vault, wallet, tickers, mint, deploy, notes, send, settings |
+| `src/keys.js` | master secret, recovery words, encrypted storage, backup, the vault's notes, spends under way |
+| `src/bip39.js`, `src/bip39-english.js` | the 12 recovery words |
+| `src/send.js` | a TRANSFER or a DEPLOY with a burn, end to end: plan, prove, commit and reveal |
+| `src/spend.js` | inputs, dummy inputs, sealed outputs, body, signatures and the prover's witness |
+| `src/prover.js`, `src/prover-worker.js` | the WebAssembly prover, threads or one thread (circuit/web/host.js) |
+| `src/taproot.js` | the witness carrier: commit output, reveal, BIP341 signature message |
+| `prover/`, `tools/prover.sh` | the two prover modules, built from `circuit/` with remapped paths |
 | `src/notekeys.js` | note keys, address, scanning, nullifiers: `circuit/js`, nothing of its own |
 | `src/sync.js`, `src/tree.js`, `src/cache.js` | private sync: local tree, paths, spends, IndexedDB cache |
 | `src/mint.js` | MINT pre-flight checks, coin selection, transaction and PSBT |
@@ -289,8 +356,9 @@ refuse, sealed outputs, public notes, a whole spend) through that exact setup (n
   November 2026), and the flow is tested with a fake UniSat only. A first signet mint with each
   real wallet is the next step.
 - A real signet broadcast, and the vault against `follow.js` on a live chain.
-- Receiving a real sealed note: scanning is tested on the vectors and on a spend made with the
-  indexer's mock verifier; the vault cannot send one itself yet.
+- A real phone: the prover was measured in headless Chrome on a laptop only (26 s on one thread,
+  4.7 s on the pool); it needs about 230 MB.
+- Real wallets signing a commit: tested with the fake UniSat, which signs any P2TR input.
 
 ## License
 

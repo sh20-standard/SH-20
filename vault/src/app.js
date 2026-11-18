@@ -13,7 +13,9 @@ import { frHex } from './fr.js';
 import { Sync } from './sync.js';
 import { defaultCache } from './cache.js';
 import { PAY_MODE, PUBLIC_RHO, MINT_BATCH_MAX, noteLeaf, tickerT } from './sh20.js';
-import { toHex } from './bytes.js';
+import { toHex, fromHex } from './bytes.js';
+import { loadProver } from './prover.js';
+import { planTransfer, planDeployBurn, proveSpend, planCarrier, revealFor, pendingRecord, planFromPending, buildPlainDeploy } from './send.js';
 
 if (window.top !== window.self) {
   document.documentElement.textContent = 'The SH-20 vault refuses to run inside a frame.';
@@ -59,7 +61,14 @@ const explorerTx = (id) => settings.esplora.replace(/\/api\/?$/, '') + '/tx/' + 
 
 // ---- state ----------------------------------------------------------------------
 
-const st = { vault: null, wallet: null, tokens: [], status: null, tip: null, sync: null, profiles: [] };
+const st = { vault: null, wallet: null, tokens: [], status: null, tip: null, sync: null, profiles: [], results: {} };
+
+/** Shows `nodes` in the panel `id` and keeps them there across renders. */
+function result(id, ...nodes) {
+  st.results[id] = nodes.flat().filter(Boolean);
+  $(id)?.replaceChildren(...st.results[id]);
+}
+const resultBox = (id) => h('div', { id }, ...(st.results[id] ?? []));
 
 // ---- DOM helpers ----------------------------------------------------------------
 
@@ -129,9 +138,13 @@ function renderVault() {
       v.state.obsolete?.length ? h('p', { class: 'muted' }, `${v.state.obsolete.length} note(s) made with the provisional keys of draft v0.2 are kept aside in the backup: they cannot exist on a v0.3 chain.`) : null,
       h('div', { class: 'row' },
         h('button', { type: 'button', class: 'secondary', onclick: () => navigator.clipboard?.writeText(v.address).catch(report) }, 'Copy address'),
+        v.words ? h('button', { type: 'button', class: 'secondary', onclick: () => { st.showWords = !st.showWords; renderVault(); } }, st.showWords ? 'Hide recovery words' : 'Show recovery words') : null,
         h('button', { type: 'button', class: 'secondary', onclick: downloadBackup }, 'Download backup'),
-        h('button', { type: 'button', class: 'secondary', onclick: () => { v.lock(); st.vault = null; renderAll(); } }, 'Lock')),
-      h('p', { class: 'muted' }, 'The backup holds the seed (encrypted if you set a passphrase). A new version of this page on IPFS has a new origin and an empty storage: restore the backup there.'));
+        h('button', { type: 'button', class: 'secondary', onclick: () => { v.lock(); st.vault = null; st.showWords = false; renderAll(); } }, 'Lock')),
+      st.showWords && v.words ? wordsBox(v.words) : null,
+      h('p', { class: 'muted' }, v.words
+        ? 'The 12 recovery words restore everything (keys, notes, address) in any wallet that follows SPEC-NOTES. Write them on paper; anyone who reads them owns your notes. A new version of this page on IPFS has a new origin and an empty storage: restore there from the words or the backup.'
+        : 'This vault was made before recovery words existed: only its backup file restores it (encrypted if you set a passphrase).'));
     return;
   }
   if (Vault.exists(localStorage)) {
@@ -157,6 +170,7 @@ function renderVault() {
     busy(create, async () => {
       if (!pass.value && !confirm('Create the vault without a passphrase? Anyone using this browser profile could read it.')) return;
       st.vault = await Vault.create(localStorage, pass.value);
+      st.showWords = true; // shown once on creation, to be written down
       navigator.storage?.persist?.().catch(() => {});
       renderAll();
     })();
@@ -170,10 +184,28 @@ function renderVault() {
     renderAll();
     syncNotes({ full: true }).catch(report); // a restored vault looks for its notes in every leaf
   }));
+  const words = h('textarea', { rows: '2', name: 'words', spellcheck: 'false', autocomplete: 'off', placeholder: '12 recovery words' });
+  const wpass = h('input', { type: 'password', placeholder: 'new passphrase for this device', autocomplete: 'new-password' });
+  const fromWords = h('button', { type: 'button', class: 'secondary' }, 'Restore from words');
+  fromWords.addEventListener('click', busy(fromWords, async () => {
+    st.vault = await Vault.fromWords(localStorage, words.value, wpass.value);
+    words.value = '';
+    renderAll();
+    syncNotes({ full: true }).catch(report); // looks for its notes in every leaf
+  }));
   fill('vault-body',
-    h('p', {}, 'No vault on this device. The seed is generated here and never leaves it.'),
+    h('p', {}, 'No vault on this device. Its 12 recovery words are generated here and never leave it.'),
     form,
+    h('p', { class: 'muted' }, 'Or restore one:'),
+    h('label', {}, 'From its recovery words', words),
+    h('div', { class: 'row' }, wpass, fromWords),
     h('div', { class: 'row' }, file, rpass, restore));
+}
+
+function wordsBox(words) {
+  return h('div', { class: 'words' },
+    h('p', {}, h('strong', {}, 'Recovery words. '), 'Write them down in this order and keep them offline.'),
+    h('ol', { id: 'words' }, words.split(' ').map((w) => h('li', { class: 'mono' }, w))));
 }
 
 function downloadBackup() {
@@ -406,11 +438,9 @@ function deployBurn() {
   return { D: ps[0].deployBurn, agreed: ps.length };
 }
 
-function renderDeploy() {
-  const H = chainHeight();
+/** The DEPLOY terms the form holds now, as deploy-plan.js reads them. */
+function currentTerms() {
   const f = deployForm;
-  if (!f.start && H !== null) f.start = String(H + 12);
-  if (!f.unlock && f.start) f.unlock = f.start;
   let payScript = new Uint8Array(0);
   let payProblem = null;
   if (f.payMode === '2' && f.payTo.trim()) {
@@ -425,6 +455,15 @@ function renderDeploy() {
     start: heightField(f.start), end: heightField(f.end), unlock: heightField(f.unlock),
     payMode: Number(f.payMode), price: f.payMode === '0' ? 0n : bigField(f.price), payScript,
   };
+  return { d, payProblem };
+}
+
+function renderDeploy() {
+  const H = chainHeight();
+  const f = deployForm;
+  if (!f.start && H !== null) f.start = String(H + 12);
+  if (!f.unlock && f.start) f.unlock = f.start;
+  const { d, payProblem } = currentTerms();
   const { D, why, agreed } = deployBurn();
   const plan = planDeploy(d, {
     nextHeight: H === null ? null : H + 1,
@@ -477,10 +516,204 @@ function renderDeploy() {
         ? `${units(plan.bytes)} bytes in a tapscript witness (commit and reveal transactions, ≈ ${Math.ceil(plan.bytes / 4)} vB for the envelope)`
         : `${plan.bytes} bytes in one OP_RETURN transaction`)] : null),
     plan.problems.map((p) => h('div', { class: 'warn' }, p)),
-    h('button', { type: 'button', disabled: true }, 'Sign and broadcast'),
-    h('p', { class: 'muted' }, plan.proof
-      ? 'Not yet: a DEPLOY that burns SH20 is a spend, like a transfer, and this vault does not prove spends yet.'
-      : 'Sending a DEPLOY is not in this version of the vault.'));
+    deployButton(d, plan, D),
+    resultBox('deploy-out'));
+}
+
+function deployButton(d, plan, D) {
+  const need = [];
+  if (plan.problems.length || plan.bytes === null) need.push('fix the terms');
+  if (D === null) need.push('agree on D');
+  if (!st.vault) need.push('unlock the vault');
+  if (!st.wallet) need.push('connect a wallet');
+  if (D > 0n && !plan.inputs?.pick) need.push('hold enough unspent SH20');
+  const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: '2', class: 'narrow', name: 'deploy-fee' });
+  const b = h('button', { type: 'button', disabled: need.length > 0, name: 'deploy' }, D > 0n ? `Prove the burn of ${units(D)} SH20, sign and broadcast` : 'Sign and broadcast');
+  b.addEventListener('click', busy(b, () => sendDeploy(d, D, Number(fee.value))));
+  return [h('div', { class: 'row' }, h('label', {}, 'Fee rate (sat/vB) ', fee), b),
+    need.length ? h('p', { class: 'muted' }, `First ${need.join(', ')}.`) : null,
+    h('p', { class: 'muted' }, D > 0n
+      ? 'The burn is a spend: the vault proves it on this device (about half a minute on one thread), then your wallet signs the commit transaction and the vault the reveal that carries it.'
+      : 'One OP_RETURN transaction. A DEPLOY rejected by the indexers (a ticker taken in the same block) is not refunded.')];
+}
+
+const termsKey = (d) => JSON.stringify(d, (_, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v));
+
+async function sendDeploy(shown, D, feeRate) {
+  const out = 'deploy-out';
+  await refresh(); // D, the tickers taken and the tip, now
+  if (String(deployBurn().D) !== String(D)) throw new Error('D changed: check again');
+  const tip = await esplora.tipHeight();
+  const plan = planDeploy(shown, { nextHeight: tip + 1, taken: st.tokens.map((t) => t.ticker), deployBurn: D, notes: st.vault.state.notes });
+  if (plan.problems.length) throw new Error(plan.problems.join('; '));
+  if (termsKey(currentTerms().d) !== termsKey(shown)) throw new Error('the terms changed: check them again');
+  if (!confirm(`Deploy ${shown.ticker}${D > 0n ? `, burning ${units(D)} SH20` : ''}? The terms are public and final.`)) return;
+  // the team note, if any, is a public note of this vault, created at block `unlock`
+  const team = shown.pre > 0n ? { npk: (await st.vault.reserveNote()).npk } : null;
+  if (D === 0n) {
+    const m = buildPlainDeploy({ d: shown, team, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip });
+    const done = await signFunded(m);
+    const id = await esplora.broadcast(done.hex);
+    result(out, h('p', { class: 'ok' }, `DEPLOY of ${shown.ticker} broadcast (${done.vsize} vB).`), txLink(id));
+    return;
+  }
+  const s = await getSyncer();
+  await carry({
+    kind: 'DEPLOY', out, feeRate, tip,
+    plan: () => planDeployBurn({ vault: st.vault, sync: s, tip, d: shown, D, team }),
+    label: `DEPLOY of ${shown.ticker}, burning ${units(D)} SH20`,
+  });
+}
+
+// ---- spends: proved here; the wallet signs the commit, the vault the reveal --------------------
+
+const txLink = (id) => h('p', {}, h('a', { href: explorerTx(id), target: '_blank', rel: 'noopener noreferrer', class: 'mono' }, id));
+
+async function walletUtxos() {
+  const w = st.wallet;
+  let utxos = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
+  if (!utxos) utxos = await esplora.utxos(w.address);
+  if (!utxos.length) throw new Error(`no UTXO at ${w.address}; get signet coins from a faucet first`);
+  return utxos;
+}
+
+/** Has the wallet sign a PSBT the vault built, and checks it signed exactly that transaction. */
+async function signFunded(m) {
+  const w = st.wallet;
+  if (m.fee > MAX_FEE_SATS && !confirm(`The network fee is ${sats(m.fee)}, which is unusually high. Sign anyway?`)) throw new Error('not signed');
+  const signed = await w.adapter.signPsbt(m.psbt, m.inputIndexes, w.address);
+  const done = finalizePsbt(signed);
+  if (!sameUnsignedTx(done.tx, m.tx)) throw new Error('the wallet changed the transaction; nothing was sent');
+  return done;
+}
+
+/**
+ * A proof-carrying spend: plan (witness), prove, commit (wallet), reveal (vault), broadcast both.
+ * The one-time key is saved before the wallet signs, so the reveal can always be sent again.
+ */
+async function carry(args) {
+  try {
+    await carryOnce(args);
+  } catch (e) {
+    result(args.out, h('p', { class: 'err' }, e.message || String(e)));
+    throw e;
+  }
+}
+
+async function carryOnce({ kind, out, feeRate, tip, plan, label }) {
+  const status = (t) => result(out, h('p', { class: 'muted' }, t));
+  status('Building the spend: note keys, sealed outputs, signatures…');
+  await new Promise((r) => setTimeout(r, 30));
+  const built = plan();
+  const prover = await loadProver({ onStatus: status });
+  status(`Proving on ${prover.threads} thread${prover.threads > 1 ? 's' : ''}… keep this tab open.`);
+  const t0 = performance.now();
+  const envelope = await proveSpend(prover, built);
+  const proveS = ((performance.now() - t0) / 1000).toFixed(1);
+  const cp = planCarrier({ envelope, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip });
+  const draft = revealFor(cp, '00'.repeat(32));
+  if (!confirm(`${label}: proved in ${proveS} s. Commit ≈ ${cp.commit.vsizeEstimate} vB, reveal ${draft.vsize} vB, network fees ≈ ${sats(cp.commit.fee + draft.fee)}. Sign the commit with ${st.wallet.adapter.name}?`)) {
+    status('Not sent.');
+    return;
+  }
+  const pid = await st.vault.addPending(pendingRecord(kind, cp, envelope, built.inputs));
+  const done = await signFunded(cp.commit);
+  const reveal = revealFor(cp, done.txid);
+  await st.vault.updatePending(pid, { commitTxid: done.txid, commitHex: done.hex, revealHex: reveal.hex, revealTxid: reveal.txid, status: 'signed' });
+  await esplora.broadcast(done.hex);
+  await st.vault.updatePending(pid, { status: 'commit broadcast' });
+  await esplora.broadcast(reveal.hex);
+  await st.vault.updatePending(pid, { status: 'broadcast' });
+  renderAll();
+  result(out,
+    h('p', { class: 'ok' }, `${label}: broadcast. Proved in ${proveS} s; ${envelope.length}-byte envelope; reveal ${reveal.vsize} vB.`),
+    h('p', { class: 'muted' }, 'Commit, then reveal:'), txLink(done.txid), txLink(reveal.txid),
+    h('p', { class: 'muted' }, 'Sync after the next block: the notes spent show their block, and the change shows as a received note.'));
+}
+
+// ---- send ------------------------------------------------------------------------
+
+const sendForm = { ticker: '', amount: '', to: '', fee: '2' };
+
+function balances() {
+  const out = new Map();
+  for (const n of st.vault?.state.notes ?? []) {
+    if (n.status !== 'in tree' || n.spent !== 'no' || BigInt(n.v) === 0n) continue;
+    out.set(n.ticker, (out.get(n.ticker) ?? 0n) + BigInt(n.v));
+  }
+  return out;
+}
+
+function renderSend() {
+  if (!st.vault) {
+    fill('send-body', h('p', { class: 'muted' }, 'Unlock the vault to send.'));
+    fill('pending-body');
+    return;
+  }
+  const bal = balances();
+  const f = sendForm;
+  if (!bal.has(f.ticker)) f.ticker = [...bal.keys()][0] ?? '';
+  const ticker = h('select', { name: 'ticker' }, [...bal].map(([t, v]) => h('option', { value: t, selected: t === f.ticker }, `${t} (${units(v)})`)));
+  ticker.addEventListener('change', () => { f.ticker = ticker.value; });
+  const input = (key, attrs) => {
+    const el = h('input', { value: f[key], spellcheck: 'false', autocomplete: 'off', ...attrs });
+    el.addEventListener('input', () => { f[key] = el.value; });
+    return el;
+  };
+  const out = resultBox('send-out');
+  const need = [];
+  if (!bal.size) need.push('hold a note that is in the tree and known unspent (sync)');
+  if (!st.wallet) need.push('connect a wallet (it pays the network fees)');
+  const b = h('button', { type: 'button', disabled: need.length > 0, name: 'send' }, 'Prove and send');
+  b.addEventListener('click', busy(b, () => sendTransfer('send-out')));
+  fill('send-body',
+    h('p', { class: 'muted' }, 'A private TRANSFER, proved on this device: the amount, the ticker, the sender and the recipient stay hidden. Your Bitcoin wallet pays the network fees.'),
+    h('div', { class: 'grid' },
+      h('label', {}, 'Ticker ', ticker),
+      h('label', {}, 'Amount ', input('amount', { inputmode: 'numeric', name: 'amount' })),
+      h('label', {}, 'Fee rate (sat/vB) ', input('fee', { type: 'number', min: '0.1', step: '0.1', name: 'fee' }))),
+    h('label', {}, 'To (an sh20 address, tsh20…) ', input('to', { name: 'to', class: 'wide' })),
+    h('div', { class: 'row' }, b),
+    need.length ? h('p', { class: 'muted' }, `First ${need.join(' and ')}.`) : null,
+    out);
+  renderPending();
+}
+
+async function sendTransfer(out) {
+  const f = sendForm;
+  if (!/^[0-9]{1,20}$/.test(f.amount.trim())) throw new Error('the amount is a whole number of units');
+  const amount = BigInt(f.amount.trim());
+  const s = await getSyncer();
+  const tip = await esplora.tipHeight();
+  await carry({
+    kind: 'TRANSFER', out, feeRate: Number(f.fee), tip,
+    plan: () => planTransfer({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount, to: f.to }),
+    label: `TRANSFER of ${units(amount)} ${f.ticker}`,
+  });
+}
+
+/** Spends whose reveal may still need sending: their one-time key is in the vault. */
+function renderPending() {
+  const open = (st.vault?.state.pending ?? []).filter((p) => p.status !== 'prepared');
+  if (!open.length) return fill('pending-body');
+  fill('pending-body', h('h3', {}, 'Spends sent from this vault'), h('div', { class: 'table-wrap' }, h('table', {},
+    h('thead', {}, h('tr', {}, ['What', 'Status', 'Commit', 'Reveal', ''].map((x) => h('th', {}, x)))),
+    h('tbody', {}, open.map((p) => {
+      const again = h('button', { type: 'button', class: 'small secondary', disabled: !p.commitHex }, 'Broadcast again');
+      again.addEventListener('click', busy(again, async () => {
+        // the same signed transactions; a reveal is signed again only if it was never made
+        const reveal = p.revealHex ? { hex: p.revealHex, txid: p.revealTxid } : revealFor(planFromPending(p), p.commitTxid);
+        try { await esplora.broadcast(p.commitHex); } catch (e) { if (!/already|known|exists|conflict/i.test(e.message)) throw e; }
+        await esplora.broadcast(reveal.hex);
+        await st.vault.updatePending(p.id, { status: 'broadcast', revealHex: reveal.hex, revealTxid: reveal.txid });
+        renderPending();
+      }));
+      return h('tr', {},
+        h('td', {}, p.kind), h('td', {}, p.status),
+        h('td', { class: 'mono' }, p.commitTxid ? short(p.commitTxid) : '—'),
+        h('td', { class: 'mono' }, p.revealTxid ? short(p.revealTxid) : '—'),
+        h('td', {}, again));
+    })))));
 }
 
 // ---- notes -----------------------------------------------------------------------
@@ -552,7 +785,7 @@ async function matchNotes(pub) {
       const txid = n.txid ? { txid: n.txid } : {};
       const here = v.state.notes.find((x) => x.pos === n.pos);
       if (here) {
-        if (here.leaf === leaf && here.status !== 'in tree') {
+        if (here.leaf === leaf && here.status !== 'in tree' && here.status !== 'spending') {
           await v.updateNote(here.id, { status: 'in tree', ...txid });
           found++;
         }
@@ -634,6 +867,7 @@ function renderAll() {
   renderTokens();
   renderDeploy();
   renderNotes();
+  renderSend();
 }
 
 staticWarnings();
