@@ -111,10 +111,11 @@ profile constants (activation height, `D`).
 The relation, the proof system, the verifier and a prover that runs in a browser exist, and a recent iPhone proves in
 under 6 s. What is still unknown is how long a mid-range phone takes.
 
-1. **Phones.** One recent phone is measured (`circuit/README.md`, "On a phone"). Open: no mid-range phone and no Android
-   phone has been tried, and the phases of a proof on a phone are not recorded (six threads are 2.7 times faster than one
-   there, four are 2.1 times). `circuit/web/README.md` says how to serve the page and what to send back; the page has a
-   thread sweep and a key-loading diagnosis for that.
+1. **Phones.** One recent phone is measured (`circuit/README.md`, "On a phone"), with the phases of a proof from 1 to 6
+   threads: none falls behind (six threads are 2.7 times faster than one, and every phase gains 2.5 to 2.9 times), which points at the phone's mix
+   of fast and slow cores rather than at the prover. Open: no mid-range phone and no Android phone has been tried, and one
+   lead for the next sweep is noted in `circuit/README.md` ("Next"). `circuit/web/README.md` says how to serve the page and
+   what to send back; the page has a thread sweep and a key-loading diagnosis for that.
 2. **Act on them.** If memory fails (the prover needs about 230 MB), hold less: the wire evaluations and the key file are
    kept longer than needed. If time is the problem, see 3.
 3. **Fewer gates.** A 2^16 domain (65,536 gates) would halve the proving time. Sparse Poseidon partial rounds, 2-bit windows
