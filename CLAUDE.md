@@ -35,57 +35,73 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `docs/SPEC-WIRE.md` | wire format and acceptance rules, draft v0.1 (normative for the indexer) |
 | `indexer/` | reference indexer, Node ≥ 20, zero dependencies |
 | `indexer/vectors/v0.1.json` | deterministic vectors for a second implementation |
+| `circuit/` | the spend circuit: PLONK prover and verifier in Rust, WebAssembly build, measurements ([`circuit/README.md`](circuit/README.md)) |
+| `circuit/circom/` | the same relation in circom, used only to cross-check the Rust circuit |
 
 ```sh
 cd indexer
-npm test            # 27 tests
+npm test            # 32 tests (4 need the verifier module below and are skipped without it)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
+
+cd circuit
+cargo test --release    # 15 tests; uses build/hermez-pot18-2p17.srs when present (see circuit/README.md)
+./build-wasm.sh         # prover and verifier as one WebAssembly module, no imports
 ```
 
 ## Status (draft v0.1)
 
 Done in `indexer/`:
 - Strict codec for the 7 envelope types (DEPLOY, MINT, TRANSFER, BURN, LIST, TAKE, CLAIM).
-- Two carriers: OP_RETURN (small proof-less envelopes, one transaction) and a tapscript witness on input 0 (proof-carrying envelopes, ~2.4 KB).
+- Two carriers: OP_RETURN (small proof-less envelopes, one transaction) and a tapscript witness on input 0 (proof-carrying envelopes, 835 bytes for a TRANSFER).
 - State machine: tickers, mints with payment checks, team unlocks, the shared Poseidon tree (depth 32), nullifiers, listings (ACTIVE → SOLD / CANCELLED / CLOSED → CLAIMED), per-block undo log for reorgs, running digest.
 - Poseidon over BN254 written from scratch (constants generated with the Grain LFSR, matches circomlib's `poseidon([1,2])`), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
-- Proof verification is an interface (`verifier.verifySpend`). **The default verifier rejects every spend**, so TRANSFER, BURN, LIST and non-genesis DEPLOY are not accepted yet.
+- Proof verification is an interface (`verifier.verifySpend`). **The default verifier still rejects every spend.**
+  `src/adapters/plonk.js` is the real one: the WebAssembly build of `circuit/`, keyed by the pinned verifying-key digest.
+  `test/plonk.test.js` replays a chain with a real TRANSFER and a real BURN.
 
-Not done: the spend circuit and its pinned verifier, the `ct` sealing format, a live chain follower
-(Bitcoin Core RPC / Esplora), the browser vault, a relayer, a second independent indexer, the
-profile constants (activation height, `D`), the canonical event encoding inside the digest.
+Done in `circuit/` (2026-11-18):
+- The proof system was chosen by measurement: **PLONK-KZG on the Hermez `pot18` setup, 480-byte proofs**.
+  Halo2 (2,080 bytes as Tacit lays it out, 800 at the very least), fflonk (608 bytes, and it needs more powers than `pot18` holds)
+  and snarkjs' own PLONK prover (73–80 s) were measured and set aside. Table and method: `circuit/README.md`.
+- The relation of `docs/SPEC-WIRE.md` §4 as 86,232 PLONK gates (domain 2^17), with its reference model, a prover, a verifier,
+  deterministic key generation and the pinned digest `da847145…a302492d`.
+- Measured on an M1 Pro laptop: proving 1.6 s (10 threads), 8.6 s (1 thread), 22 s as single-thread WebAssembly in Node;
+  verification 1.5 ms; TRANSFER reveal transaction 340 vB.
+- Checks: 26 adversarial witnesses, every variable pinned by a gate, snarkjs' verifier accepts the proofs,
+  circomlib's statement of the relation accepts the witnesses.
 
-## Next task: the spend circuit
+Not done: an audit; proving on a real phone and in a browser, WebAssembly threads, the memory peak (425 MB); the `ct` sealing
+format; a live chain follower (Bitcoin Core RPC / Esplora); the browser vault; a relayer; a second independent indexer; the
+profile constants (activation height, `D`); the canonical event encoding inside the digest.
 
-**Base:** Tacit's Bitcoin shielded pool (MIT, `https://github.com/z0r0z/tacit`):
-- `contracts/sp1/confidential/btc-pool-halo2/` — Rust, PSE `halo2_proofs` v0.3.0, KZG + SHPLONK, BLAKE2b transcript, `k = 13`, Hermez `pot18` SRS, 2,080-byte proofs.
-- `dapp/circuits/btc-pool/spend.circom` — the relation it implements.
-- `contracts/sp1/confidential/DESIGN-btc-shielded-pool.md` and `…-security.md` — design and analysis.
+## Next task: the circuit on a phone
+
+The relation, the proof system and the verifier exist. What decides whether they are usable is still open:
+
+1. **Measure on real devices.** Load `sh20_circuit.wasm` in a browser page (keys: `sh20_keygen`, then `sh20_prove`; the ABI is
+   in `circuit/src/ffi.rs`) on a recent phone and a mid-range one. Add a threaded build (rayon over Web Workers, needs
+   cross-origin isolation). Laptop figures are not phone figures.
+2. **Memory.** The module peaks at 425 MB. Compute the quotient in four cosets of size n and the selector evaluations on the
+   fly; the target is about 150 MB.
+3. **Halve the proving time** by fitting the 2^16 domain (65,536 gates): sparse Poseidon partial rounds, 2-bit windows for
+   fixed-base multiplication, bitwise comparisons against constants instead of second range checks. That is estimated to
+   reach about 66,600 gates; the rest needs a rule change the maintainer must take (two outputs instead of three would do it).
+4. **Keep it honest.** Any change to the gates changes the verifying-key digest: update `circuit/src/lib.rs` (`VK_DIGEST`),
+   `circuit/artifacts/spend.vk`, `indexer/src/constants.js`, `docs/SPEC-WIRE.md` §4 and regenerate
+   `indexer/test/fixtures/plonk-scenario.json` (`sh20-circuit scenario`). The circom relation must keep accepting the Rust
+   witnesses (`circuit/bench/circom-check.mjs`) and snarkjs' verifier the proofs (`circuit/bench/cross-verify.mjs`).
+5. The soundness-critical code is `circuit/src/gadgets.rs`, `circuit/src/spend.rs` and `circuit/src/plonk/verifier.rs`.
+   It is new and unaudited. Do not weaken a check to save gates without the maintainer.
+
+Where the relation comes from: Tacit's Bitcoin shielded pool (MIT, `https://github.com/z0r0z/tacit`),
+`dapp/circuits/btc-pool/spend.circom` and `contracts/sp1/confidential/btc-pool-halo2/`. SH-20 changed the ticker to a private `t`
+(one for the five notes, tied to `tPub` by `vPub × (t − tPub) = 0`), the leaf formula, the public inputs, and dropped the
+transparent boundary and the empty slots. Kept: note keys, the nullifier, EdDSA-Poseidon over `bodyHash`.
 Keep Tacit's MIT copyright notice in any file derived from it.
 
-**What must change** (target statement: `docs/SPEC-WIRE.md` §4):
-1. **Private ticker.** Tacit makes `asset_f` a public input. SH-20 has one private `t` shared by all
-   five notes (2 inputs, 3 outputs), a public `tPub`, and the constraint `vPub × (t − tPub) = 0`.
-2. **Leaf formula** must equal `indexer/src/notes.js`:
-   `leaf = H(H(H(TAG_LEAF, t), v), H(npk, rho))`, `H` = circomlib Poseidon with 2 inputs,
-   `TAG_LEAF = SHA256("sh20/v0/leaf") mod r`. Tacit's leaf is `Poseidon(asset_f, v, npk, rho)`: different.
-3. **Public inputs**, in this order: `root, nf0, nf1, leaf0, leaf1, leaf2, bodyHash, vPub, tPub`,
-   with `bodyHash = SHA256("sh20/v0/body" ‖ body) mod r` (`body` = envelope bytes before `proofLen`).
-4. **Conservation** `v_in0 + v_in1 = v_out0 + v_out1 + v_out2 + vPub`, every value range-checked to 64 bits.
-   An input with `v = 0` is a dummy and skips membership.
-5. **Keep from Tacit:** note keys (`npk` from tweaked BabyJubJub spend and nullifier keys),
-   nullifier `Poseidon(nk_note, leaf, leaf_index)`, EdDSA-Poseidon authorization over `bodyHash`.
-6. **Drop from Tacit:** the transparent boundary (cross-curve sigma, Bulletproofs+, shield/exit, `depC`/`exitC`).
-   SH-20 has no transparent layer: value enters as proof-less public notes and leaves through `vPub`.
-
-**Deliverables:** `circuit/` crate with prover and verifier; adversarial-witness tests (wrong `t`,
-inflation, double spend, bad range, wrong signature); a WASM prover for the browser; a native
-verifier the indexer can call as `verifySpend`; the pinned verifying-key hash; measured proof size,
-proving time (laptop and phone) and transaction vsize. Update `docs/SPEC-WIRE.md` if anything differs.
-
-After that: wire the verifier into the indexer, specify `ct` sealing, a chain follower, the browser vault
-(keys on device, PSBTs signed by Xverse / UniSat / Leather), a public signet run, an audit.
+After that: `ct` sealing, a chain follower, the browser vault (keys on device, PSBTs signed by Xverse / UniSat / Leather),
+a public signet run, an audit.
 
 ## Cost budget — keep it light
 
@@ -95,14 +111,18 @@ Keep only what the protocol needs; add nothing that costs bytes without a clear 
 
 | Action | Today (v0.1) | Target |
 | --- | --- | --- |
-| MINT (proof-less, OP_RETURN) | 74-byte envelope, ~200–240 vB transaction | ~165 vB |
-| TRANSFER, alone | 2,435-byte envelope (2,080-byte Halo2 proof), ~800 vB + commit | ≤ ~350 vB |
+| MINT (proof-less, OP_RETURN) | 74-byte envelope, 196 vB with one input and one change output | ~165 vB |
+| TRANSFER, alone | 835-byte envelope (480-byte PLONK proof), 340 vB + commit | ≤ ~350 vB |
 | TRANSFER, in a relayer batch | not supported yet | ≤ ~150 vB per transfer |
 
+Sizes are computed from serialized envelopes by `circuit/bench/tx-vsize.mjs` (a P2TR payment comes out at 154 vB by the same
+count); nothing has been broadcast yet. The batch target is out of reach of lever 1 alone: a spend section is 829 bytes, 207 vB
+of witness even when every other byte is shared, so it needs levers 3 and 5 and probably one proof for several transfers.
+
 Levers, biggest first. Measure each one and keep every hard requirement above:
-1. **Proof size.** Try PLONK or fflonk with KZG on the same public Hermez setup (universal, so still no
-   ceremony; snarkjs-style PLONK proofs are roughly 0.5–0.8 KB, to verify), or a tighter Halo2 circuit,
-   against Tacit's 2,080 bytes. Pick the smallest that needs no project-run ceremony and proves on a phone in reasonable time.
+1. **Proof size.** Done: PLONK with KZG on the same public Hermez setup, 480 bytes, against Tacit's 2,080
+   (fflonk and tighter Halo2 layouts were measured too: `circuit/README.md`). Still to confirm: that it proves on a phone in
+   reasonable time.
 2. **Batching.** Allow several envelopes in one witness transaction so relayers share the commit/reveal overhead.
 3. **Arity.** 2 inputs / 2 outputs instead of 3 outputs if wallets do not need the third (−93 bytes).
 4. **Mint bytes.** Drop `rho` from public openings if the security review agrees (a fresh `npk` already
@@ -128,4 +148,6 @@ SH-20's edge: ticker hidden, unique tickers, private by default from the mint, B
 ## Open decisions (ask the maintainer)
 
 Final name and 4-byte magic · value of `D` (genesis burn per DEPLOY) or no burn · ticker length (4 only, or 5–12) ·
-genesis team allocation (zero or small) · several envelopes per transaction · exact event encoding in the digest.
+genesis team allocation (zero or small) · several envelopes per transaction · exact event encoding in the digest ·
+two outputs instead of three (−93 bytes, and it lets the circuit fit a domain half the size) ·
+dropping `proofLen` now that a proof is always 480 bytes (−2 bytes, a format change).

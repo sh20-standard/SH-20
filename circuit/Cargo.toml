@@ -1,0 +1,45 @@
+[package]
+name = "sh20-circuit"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "SH-20 spend circuit: PLONK (KZG, BN254) prover and verifier on the public Hermez setup"
+publish = false
+
+# Standalone crate.
+#   cargo test --release                       model, gadgets, proofs, adversarial witnesses
+#   cargo run --release --bin sh20-circuit     srs | keygen | prove | verify | bench
+[workspace]
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = ["parallel"]
+parallel = ["dep:rayon", "ark-ff/parallel", "ark-ec/parallel", "ark-poly/parallel", "ark-std/parallel"]
+
+[dependencies]
+ark-bn254 = { version = "0.5", default-features = false, features = ["curve"] }
+ark-ff = { version = "0.5", default-features = false }
+ark-ec = { version = "0.5", default-features = false }
+ark-poly = { version = "0.5", default-features = false }
+ark-std = { version = "0.5", default-features = false, features = ["std"] }
+num-bigint = "0.4"
+num-traits = "0.2"
+sha2 = "0.10"
+sha3 = "0.10"
+blake2 = "0.10"
+hex = "0.4"
+rayon = { version = "1", optional = true }
+
+# the operating system's randomness, for the command line and the tests; a wasm host passes a seed
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[profile.test]
+opt-level = 3

@@ -11,8 +11,9 @@ No soft fork, no sidechain, no admin key.
 | Design | [`docs/DESIGN.md`](docs/DESIGN.md) |
 | Wire format and rules | [`docs/SPEC-WIRE.md`](docs/SPEC-WIRE.md) |
 | Reference indexer | [`indexer/`](indexer/) — Node ≥ 20, no dependencies, `npm test` |
+| Spend circuit | [`circuit/`](circuit/) — PLONK on the public Hermez setup, 480-byte proofs, `cargo test --release` |
 | Contributor handoff | [`CLAUDE.md`](CLAUDE.md) |
 
-Next milestone: the spend circuit (Halo2-KZG on the public Hermez setup), then a public signet run.
+Next milestone: the spend circuit on real phones and in a browser wallet, then a public signet run.
 
 MIT License.

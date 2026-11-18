@@ -38,7 +38,7 @@ After activation nothing depends on the team.
 | --- | --- | --- |
 | Rules | Nobody: frozen, version `0x00` | Frozen spec and test vectors |
 | Activation | A block height written in the spec | Height fixed in advance |
-| Proof parameters | Nobody: public Hermez setup, key hash in the spec | Halo2-KZG, so no ceremony |
+| Proof parameters | Nobody: public Hermez setup, key hash in the spec | PLONK-KZG: keys derived from the circuit and the setup, so no ceremony |
 | Indexer | Anyone, with their own node | Free code, two implementations with the same digest |
 | Wallet | The user, on their device | Static page on IPFS and a CLI; proofs computed locally |
 | Relayers | Anyone, paid inside the pool; optional | Relayer code; self-publishing always works |
@@ -67,24 +67,40 @@ audits and public signet tests happen before activation.
 
 ## Proof engine
 
-| Criterion | 77ph (Groth16) | Tacit (Halo2-KZG) — chosen |
-| --- | --- | --- |
-| Setup | New ceremony needed for a modified circuit | None: public Hermez `pot18` reused |
-| Proof size | 192 bytes | 2,080 bytes |
-| Notes per proof | 2 in, 2 out | 2 in, 3 out |
-| Proving time (published) | ~1.5 s (16 threads) | 12–15 s (browser, 1 thread); 17–24 s (Node) |
-| Transfer on signet (published) | 825–892 vB OP_RETURN; 447 vB witness | 805.5 vB for a relayed payment |
-| License | Apache 2.0 | MIT |
+PLONK with KZG commitments over BN254, on the public Hermez `pot18` powers of tau. Proofs are 480 bytes
+and the keys are a deterministic function of the circuit and that setup: no ceremony, no secret.
 
-An open standard without an admin should not rest on a ceremony run by its own authors. Proving
-time only affects transfers, burns and listings, never the mint. Figures are as published by the
-projects, not re-measured here.
+An open standard without an admin should not rest on a ceremony run by its own authors, which rules
+out Groth16 (192-byte proofs, but a new ceremony for every change to the circuit). Among the systems
+that reuse a universal public setup, each option was measured on the SH-20 relation before choosing
+(method and reproduction: [`circuit/README.md`](../circuit/README.md); one laptop, 10 threads):
+
+| Option | Proof | Proving time | TRANSFER reveal |
+| --- | --- | --- | --- |
+| Halo2-KZG, Tacit's layout | 2,080 bytes | 1.1–1.4 s | 743 vB |
+| Halo2-KZG, tightest layouts | 800 to about 1,000 bytes | 0.5–2.5 s | 421–469 vB |
+| fflonk (snarkjs) | 608 bytes | 122–146 s; needs more powers than `pot18` holds | 372 vB |
+| PLONK (snarkjs) | 480 bytes | 73–80 s | 340 vB |
+| **PLONK, native prover (chosen)** | **480 bytes** | **1.5–1.6 s** | **340 vB** |
+
+PLONK's linearisation keeps the proof at 9 group elements and 6 scalars whatever the circuit; Halo2
+opens every column, so its proof cannot go below about 800 bytes here. snarkjs' prover was the
+obstacle, not the protocol: `circuit/` implements the same protocol in Rust, and snarkjs' verifier
+accepts its proofs, which gives the standard two independent verifiers.
+
+The price is proving work: 8.6 s on one thread against 2.8 s for Tacit's Halo2 circuit, and 22 s in
+single-thread WebAssembly. Proving time only affects transfers, burns and listings, never the mint.
+It has not been measured on a phone yet.
+
+The relation follows Tacit's shielded pool (MIT) with the ticker made private, SH-20's note leaf and no
+transparent boundary. Notes per proof: 2 in, 3 out.
 
 ## Security, privacy, limits
 
-- **Main risk:** a circuit bug that accepts a bad proof would allow counterfeiting. Counterfeits are
-  invisible in transfers and would only show if a ticker's public outflows exceeded its minted supply.
-  Hence an audit, a public signet run and a bug bounty before activation.
+- **Main risk:** a bug in the circuit or in the verifier that accepts a bad proof would allow counterfeiting.
+  Counterfeits are invisible in transfers and would only show if a ticker's public outflows exceeded its
+  minted supply. The circuit and its PLONK verifier are new code: hence an audit, a public signet run and a
+  bug bounty before activation.
 - **Still visible:** mints, listings, burns and purchases; the BTC inputs paying fees (mitigated by
   relayers, fresh addresses, delayed publication); timing.
 - **Anonymity at launch** is small and grows with every mint, purchase and ticker.
