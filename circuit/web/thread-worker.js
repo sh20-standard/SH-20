@@ -12,6 +12,7 @@ self.onmessage = ({ data: { module, memory, nextTid, tid, startArg } }) => {
     random: (chunk) => crypto.getRandomValues(chunk),
   });
   const { exports } = new WebAssembly.Instance(module, imports);
-  // runs for as long as the thread lives
+  // runs for as long as the thread lives; a pool that is replaced ends its threads
   exports.wasi_thread_start(tid, startArg);
+  self.close();
 };

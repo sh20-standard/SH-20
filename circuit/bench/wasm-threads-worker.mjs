@@ -29,6 +29,7 @@ if (role === 'thread') {
   api.loadKey(workerData.key);
   const keyLoad = secs(t);
   const times = [];
+  const phases = [];
   let witness;
   let proof;
   for (let i = 0; i < workerData.runs; i++) {
@@ -36,6 +37,7 @@ if (role === 'thread') {
     t = performance.now();
     proof = api.prove(witness, seed());
     times.push(secs(t));
+    phases.push(api.timings());
     if (!proof) throw new Error('prove failed');
   }
   const publics = witness.slice(0, 9 * 32);
@@ -44,5 +46,5 @@ if (role === 'thread') {
   const verifyMs = +(performance.now() - t).toFixed(1);
   publics[7 * 32] ^= 1;
   if (!ok || api.verify(publics, proof)) throw new Error('verification mismatch');
-  parentPort.postMessage({ result: { threads, key_load_s: keyLoad, prove_s: times, verify_ms: verifyMs, wasm_memory_mb: Math.round(api.memoryBytes() / 2 ** 20), vk_digest: api.vkDigest() } });
+  parentPort.postMessage({ result: { threads, key_load_s: keyLoad, prove_s: times, phases, verify_ms: verifyMs, wasm_memory_mb: Math.round(api.memoryBytes() / 2 ** 20), vk_digest: api.vkDigest() } });
 }

@@ -4,6 +4,9 @@
 //
 //   node check.mjs [--runs 1] [--threads 4]
 //   node check.mjs --url https://host/path/      the page as served somewhere else (a tunnel, a static host)
+//   node check.mjs --url … --sweep               the thread sweep, with the time of each phase
+//   node check.mjs --url … --keyload             key loading on one thread, from cold starts
+//   node check.mjs --url … --query 'order=2,1&passes=1'   more parameters for the page
 //
 //   headers           the server sends COOP/COEP                      → threaded prover
 //   service worker    no headers, secure context: sw.js adds them     → threaded prover
@@ -22,6 +25,7 @@ const args = process.argv.slice(2);
 const flag = (name, def) => (args.includes(name) ? args[args.indexOf(name) + 1] : def);
 const runs = flag('--runs', '1');
 const threads = flag('--threads', '4');
+const query = flag('--query', ''); // more of the page's parameters, as `a=1&b=2`
 const chromePath = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const here = fileURLToPath(new URL('.', import.meta.url));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -89,8 +93,14 @@ const lan = Object.values(networkInterfaces()).flat().find((i) => i && i.family 
 // name, port, isolated, host, what the page is asked for, what it should end up running
 const cases = given
   ? [
-      ['all cores', null, null, null, 'threads', 'threads'],
-      ['one thread', null, null, null, 'single', 'single'],
+      ...(args.includes('--sweep')
+        ? [['sweep', null, null, null, 'sweep', 'sweep']]
+        : args.includes('--keyload')
+          ? [['key loading', null, null, null, 'keyload', 'keyload']]
+          : [
+            ['all cores', null, null, null, 'threads', 'threads'],
+            ['one thread', null, null, null, 'single', 'single'],
+          ]),
     ]
   : [
       ['headers', 8471, true, 'localhost', 'threads', 'threads'],
@@ -106,8 +116,22 @@ try {
   await sleep(400);
   for (const [name, port, , host, auto, expected] of cases) {
     const base = given ? given.replace(/\/?$/, '/') : `http://${host}:${port}/`;
-    const r = await browser.open(`${base}?auto=${auto}&runs=${runs}&threads=${threads}`);
+    const r = await browser.open(`${base}?auto=${auto}&runs=${runs}&threads=${threads}${query ? `&${query}` : ''}`, auto === 'sweep' || auto === 'keyload' ? 900000 : undefined);
+    if (r.mode === 'keyload') {
+      const ok = r.mode === expected && r.runs.length === r.variants.length && r.runs.every((x) => x.key_load_ms > 0 && x.prove_ms.length === r.proofs);
+      failed ||= !ok;
+      console.log(`${ok ? 'ok  ' : 'FAIL'} ${name.padEnd(15)} ${r.runs.length} cold starts on one thread`);
+      for (const g of r.growth) console.log(`       memory grown to ${g.total_mb} MB in ${g.grows} step${g.grows > 1 ? 's' : ''}${g.shared ? ', shared' : ''}: ${(g.ms / 1000).toFixed(2)} s`);
+      for (const x of r.runs) console.log(`       ${x.variant.padEnd(9)} key ${(x.key_load_ms / 1000).toFixed(2)} s, again ${(x.key_reload_ms / 1000).toFixed(2)} s${x.reserved_mb ? `, ${x.reserved_mb} MB reserved in ${x.reserve_ms} ms` : ''}; proof ${x.prove_ms.map((v) => (v / 1000).toFixed(2)).join(' / ') || '–'} s; ${x.memory_mb_start} → ${x.memory_mb_key} → ${x.memory_mb_end} MB`);
+      continue;
+    }
     const ok = !r.error && r.mode === expected && r.proof_bytes === 480;
+    if (r.mode === 'sweep') {
+      failed ||= !ok;
+      console.log(`${ok ? 'ok  ' : 'FAIL'} ${name.padEnd(15)} sweep, ${r.runs.length} proofs`);
+      for (const x of r.runs) console.log(`       ${x.threads} thr, pass ${x.pass}: proof ${(x.prove_ms / 1000).toFixed(2)} s = msm ${(x.msm_ms / 1000).toFixed(2)} + fft ${(x.fft_ms / 1000).toFixed(2)} + rest ${((x.prove_ms - x.msm_ms - x.fft_ms) / 1000).toFixed(2)}; key ${(x.key_load_ms / 1000).toFixed(2)} s; ${x.memory_mb} MB`);
+      continue;
+    }
     failed ||= !ok;
     console.log(
       `${ok ? 'ok  ' : 'FAIL'} ${name.padEnd(15)} ` +

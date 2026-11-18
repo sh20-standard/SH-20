@@ -66,12 +66,17 @@ pub fn load_key(bytes: &[u8]) -> Result<ProvingKey, String> {
 
 /// Proves a spend. Fails, naming the violated rule, if the witness does not satisfy the relation.
 pub fn prove(pk: &ProvingKey, w: &SpendWitness, rng: &mut impl RngCore) -> Result<[u8; PROOF_BYTES], String> {
+    prove_timed(pk, w, rng).map(|(proof, _)| proof)
+}
+
+/// `prove`, also reporting where the time went (`plonk::Timings`, in seconds).
+pub fn prove_timed(pk: &ProvingKey, w: &SpendWitness, rng: &mut impl RngCore) -> Result<([u8; PROOF_BYTES], plonk::Timings), String> {
     let cs = spend::synthesize(w);
     if let Some((gate, tag)) = cs.unsatisfied() {
         return Err(format!("witness rejected: {tag} (gate {gate})"));
     }
-    let proof = plonk::prove(pk, cs.values(), rng)?;
-    proof.to_bytes().ok_or_else(|| "degenerate proof".to_string())
+    let (proof, timings) = plonk::prove_timed(pk, cs.values(), rng)?;
+    Ok((proof.to_bytes().ok_or_else(|| "degenerate proof".to_string())?, timings))
 }
 
 /// Verifies a spend proof against the nine public inputs

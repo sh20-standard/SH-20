@@ -49,6 +49,11 @@
   ol#log li.error { color: var(--bad); display: block; }
   .big { font-size: 2.25rem; font-weight: 700; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
   pre { background: var(--code); border-radius: 8px; padding: 0.75rem; margin: 0.75rem 0; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+  th, td { text-align: right; padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  td.best { font-weight: 700; color: var(--accent); }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -76,6 +81,8 @@
     <div class="buttons">
       <button id="run-threads">Measure on all cores</button>
       <button id="run-single" class="secondary">Measure on one thread</button>
+      <button id="run-sweep" class="secondary">Sweep 1 to 6 threads (about 5 minutes)</button>
+      <button id="run-keyload" class="secondary">Key loading on one thread</button>
     </div>
     <p class="note">Keep the screen on and this tab in front. One proof takes from a few seconds to a minute.</p>
   </section>
@@ -89,6 +96,7 @@
     <h2>Result</h2>
     <p class="big" id="headline"></p>
     <p class="note" id="summary"></p>
+    <div class="scroll"><table id="runs-table" hidden></table></div>
     <pre id="json"></pre>
     <div class="buttons"><button id="copy" class="secondary">Copy the result</button></div>
   </section>

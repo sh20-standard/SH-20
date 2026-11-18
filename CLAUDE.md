@@ -94,9 +94,13 @@ Done in `circuit/` (2026-11-18):
 - A wallet reference in dependency-free JavaScript (`circuit/js/`): note keys and `npk`, the nullifier, the body hash, the
   EdDSA-Poseidon signature. Its vectors are written by the Rust model (`circuit/src/vectors.rs`) and a test fails if they drift.
 
-Measured on a phone (2026-11-18, iPhone 18 Pro Max, Safari, through the test page): 14.5 s per proof on 4 threads,
-31.9 s on one, 232 MB; key load 0.7 s. On the M1 Pro in Chrome: 4.5 s on 10 threads, 25.5 s on one. Four threads are only
-2.2 times faster than one on the iPhone (Safari reports 4 of its 6 cores): worth a look before the 2^16 domain.
+Measured on a phone (2026-11-19, iPhone 18 Pro Max, Safari, through the test page, on its charger, Low Power Mode off):
+5.7 s per proof on 6 threads, 7.4 s on 4, 15.5 s on one; key load under 1 s; 240 MB. On the M1 Pro in Chrome: 4.5 s on
+10 threads, 25.5 s on one. Safari reports 4 cores on that phone and 6 threads are faster, so `defaultThreads()` in
+`circuit/web/host.js` takes at least 6 on an iPhone. A first session on 2026-11-18 gave figures twice as slow (14.5 s on 4
+threads, 31.9 s on one); they did not reproduce and the code runs as fast on the laptop: Low Power Mode or heat are the
+likely causes, so note the conditions with every phone figure. Growing the memory costs nothing on the phone (224 MB in
+223 steps: 62 ms): `sh20_reserve` stays unused.
 
 Not done: an audit; a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the circuit session; its reference code and vectors are in `circuit/js`); transfers in the vault (it mints and syncs privately
 today); a relayer; a second independent indexer; the
@@ -104,18 +108,19 @@ profile constants (activation height, `D`).
 
 ## Next task: the phone figures, then the vault
 
-The relation, the proof system, the verifier and a prover that runs in a browser exist. What is still unknown is how long a
-real phone takes.
+The relation, the proof system, the verifier and a prover that runs in a browser exist, and a recent iPhone proves in
+under 6 s. What is still unknown is how long a mid-range phone takes.
 
-1. **Phones.** One recent phone is measured (`circuit/README.md`, "On a phone"). Open: four threads are only 2.2 times
-   faster than one there, the key takes 5.5 s to load in single-thread mode against 0.7 s with threads, and no mid-range
-   phone has been tried. `circuit/web/README.md` says how to serve the page and what to send back.
+1. **Phones.** One recent phone is measured (`circuit/README.md`, "On a phone"). Open: no mid-range phone and no Android
+   phone has been tried, and the phases of a proof on a phone are not recorded (six threads are 2.7 times faster than one
+   there, four are 2.1 times). `circuit/web/README.md` says how to serve the page and what to send back; the page has a
+   thread sweep and a key-loading diagnosis for that.
 2. **Act on them.** If memory fails (the prover needs about 230 MB), hold less: the wire evaluations and the key file are
    kept longer than needed. If time is the problem, see 3.
 3. **Fewer gates.** A 2^16 domain (65,536 gates) would halve the proving time. Sparse Poseidon partial rounds, 2-bit windows
    for fixed-base multiplication and bitwise comparisons against constants are estimated to reach about 66,600 gates: still
    above the limit, and the three outputs stay (maintainer, 2026-11-18). Find the last thousand gates without changing a rule,
-   or leave the domain at 2^17.
+   or leave the domain at 2^17. On hold (maintainer, 2026-11-19).
 4. **Keep it honest.** Any change to the gates changes the keys: rebuild `circuit/artifacts/spend.pk` and `spend.vk`
    (`sh20-circuit pk`, `keygen`), update `VK_DIGEST` and `PK_SHA256` in `circuit/src/lib.rs`, `indexer/src/constants.js`,
    `docs/SPEC-WIRE.md` §4, and regenerate `indexer/test/fixtures/plonk-scenario.json` (`sh20-circuit scenario`).
@@ -124,7 +129,8 @@ real phone takes.
    that gives the same bytes.
 5. The soundness-critical code is `circuit/src/gadgets.rs`, `circuit/src/spend.rs` and `circuit/src/plonk/verifier.rs`.
    It is new and unaudited. Do not weaken a check to save gates without the maintainer.
-6. The vault embeds the prover the way the test page does: `circuit/web/host.js` and the two workers. It computes note keys,
+6. The vault embeds the prover the way the test page does: `circuit/web/host.js` and the two workers, with the thread count
+   of `defaultThreads()` (not `navigator.hardwareConcurrency`, which Safari under-reports on an iPhone). It computes note keys,
    nullifiers and signatures as `circuit/js/` does, and checks itself against `circuit/js/vectors.json`.
 
 Where the relation comes from: Tacit's Bitcoin shielded pool (MIT, `https://github.com/z0r0z/tacit`),
