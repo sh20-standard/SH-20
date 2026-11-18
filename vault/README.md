@@ -19,7 +19,7 @@ TRANSFER, BURN, LIST, TAKE and CLAIM wait for the spend circuit.
 ## Run
 
 ```sh
-npm test                 # 29 tests, Node ≥ 20, zero dependencies
+npm test                 # 34 tests, Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ = the site to publish
 ipfs add -r --cid-version=1 dist
 ```
@@ -30,6 +30,7 @@ Development (serves the repository root, a mock indexer API and a mock Esplora):
 node dev/serve.js        # http://localhost:8000/vault/, API on :8020
 node dev/e2e.js          # headless Chrome runs the whole mint flow with a fake UniSat
 E2E_PATH=/vault/dist/vault/ node dev/e2e.js   # the same flow on the IPFS build
+E2E_LIAR=1 node dev/e2e.js                    # a lying indexer in the list: the mint is refused
 ```
 
 `dev/serve.js` serves the real indexer API (`indexer/src/api.js`) over a small demo chain of
@@ -76,8 +77,14 @@ vout n  change to the payer                                     only if above du
   came first, and it does **not** verify `tokenNum`: that number is not in the envelope (it is the
   DEPLOY's rank among accepted ones), so a lying indexer could pair the true terms of one token
   with the number of another, and the mint would go to that other token or be rejected. The page
-  shows the token number as unverified. Both gaps are closed only by comparing several independent
-  indexers (`digest`, `tokenNum`), which the vault does not do yet.
+  shows the token number as unverified when only one indexer answers.
+- **Several indexers** (optional, Settings, one URL per line; the first lists tickers and notes).
+  Before a mint the vault asks all of them (`src/consensus.js`) and refuses the mint if they
+  disagree on the token's fixed terms (`tokenNum`, `ticker`, `max`, `lim`, `pre`, `start`, `end`,
+  `unlock`, `price`, `payMode`, `payScript`, `deployTxid`, `deployHeight`), if one does not know the
+  ticker, or if two at the same height report different `digest`s. Indexers a block apart are
+  retried, then compared on terms only, with a warning. An unreachable indexer, or a single one,
+  only warns.
 - After signing, the vault checks that the wallet did not change the transaction, records the
   note, then broadcasts through Esplora. Xverse and Leather return partial signatures and UniSat
   finalizes; `btc.finalizePsbt` handles both.
@@ -136,6 +143,7 @@ repository layout (`dist/vault/` and `dist/indexer/src/`) so the relative import
 | `src/npk.js` | **provisional** `npk` derivation, isolated |
 | `src/mint.js` | MINT pre-flight checks, coin selection, transaction and PSBT |
 | `src/deploy.js` | checks the indexer's mint terms against the DEPLOY transaction |
+| `src/consensus.js` | cross-checks several indexers before a mint |
 | `src/btc.js` | addresses, transactions, PSBT v0, finalization, size estimates |
 | `src/wallets.js` | Xverse, UniSat, Leather adapters (injected providers, no SDK) |
 | `src/api.js` | indexer API and Esplora clients |

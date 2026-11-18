@@ -6,6 +6,7 @@ import { WALLETS } from './wallets.js';
 import { IndexerApi, Esplora } from './api.js';
 import { buildMint, mintProblems, mintsLeft } from './mint.js';
 import { verifyDeploy } from './deploy.js';
+import { crossCheck, TERMS } from './consensus.js';
 import { finalizePsbt, sameUnsignedTx, scriptType, addressToScript } from './btc.js';
 import { frHex } from './fr.js';
 import { NPK_SCHEME } from './npk.js';
@@ -20,7 +21,9 @@ if (window.top !== window.self) {
 // ---- settings -----------------------------------------------------------------
 
 const SETTINGS_KEY = 'sh20.vault.settings';
+// `indexer` holds one or more URLs (one per line, or comma-separated); the first is the primary.
 const DEFAULTS = { indexer: 'http://127.0.0.1:8020', esplora: 'https://mempool.space/signet/api' }; // 8020: indexer/bin/follow.js
+const urlList = (s) => [...new Set(s.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean))];
 
 // Servers given in the URL (?indexer=…&esplora=…) are never applied silently: a
 // link could point the vault at a lying indexer (wrong payScript or price) or
@@ -47,7 +50,8 @@ function loadSettings() {
 
 let settings = loadSettings();
 const MAX_FEE_SATS = 20000n; // above this, ask before signing
-let indexer = new IndexerApi(settings.indexer);
+let indexers = urlList(settings.indexer).map((u) => new IndexerApi(u));
+let indexer = indexers[0]; // primary: lists tokens and notes
 let esplora = new Esplora(settings.esplora);
 const explorerTx = (id) => settings.esplora.replace(/\/api\/?$/, '') + '/tx/' + id;
 
@@ -212,11 +216,12 @@ async function refresh() {
       wrongNet ? h('span', { class: 'err' }, `Indexer follows ${status.network}, not signet. `) : null,
       `Indexer at block ${status.height ?? '?'}`,
       status.digest ? ` · digest ${short(String(status.digest))}` : '',
-      status.verifier === 'reject-all' ? ' · spends not verified yet' : '');
+      status.verifier === 'reject-all' ? ' · spends not verified yet' : '',
+      ` · ${indexers.length} indexer${indexers.length > 1 ? 's' : ''} configured`);
     if (wrongNet) st.tokens = [];
   } catch (e) {
     st.tokens = [];
-    fill('indexer-status', h('span', { class: 'err' }, `Indexer unreachable (${settings.indexer}): ${e.message}`));
+    fill('indexer-status', h('span', { class: 'err' }, `Indexer unreachable (${indexer.base}): ${e.message}`));
   }
   try {
     st.tip = await esplora.tipHeight();
@@ -264,15 +269,23 @@ async function openMint(ticker) {
   fill('mint-body', h('p', { class: 'muted' }, 'Loading…'));
   $('mint').scrollIntoView({ behavior: 'smooth' });
   try {
-    const token = await indexer.token(ticker);
-    renderMint(token, await esplora.feeRate());
+    const check = await crossCheck(indexers, ticker);
+    renderMint(check, await esplora.feeRate());
   } catch (e) {
     fill('mint-body', h('p', { class: 'err' }, e.message));
   }
 }
 
-function renderMint(token, defaultFee) {
-  const need = [];
+function checkNotes(check) {
+  return [
+    ...check.problems.map((p) => h('div', { class: 'warn err' }, `Mint refused: ${p}`)),
+    ...check.warnings.map((w) => h('div', { class: 'warn' }, w)),
+  ];
+}
+
+function renderMint(check, defaultFee) {
+  const token = check.token;
+  const need = check.problems.length ? ['resolve the indexer disagreement'] : [];
   if (!st.vault) need.push('unlock the vault');
   if (!st.wallet) need.push('connect a wallet');
   const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: String(defaultFee), class: 'narrow' });
@@ -285,12 +298,18 @@ function renderMint(token, defaultFee) {
       h('dt', {}, 'Price'), h('dd', {}, payText(token)),
       h('dt', {}, 'Mints left'), h('dd', {}, units(mintsLeft(token))),
       h('dt', {}, 'Window'), h('dd', {}, `block ${token.start} to ${token.end || 'no end'}`)),
+    checkNotes(check),
     h('div', { class: 'row' }, h('label', {}, 'Fee rate (sat/vB) ', fee), prep),
     need.length ? h('p', { class: 'muted' }, `First ${need.join(' and ')}.`) : null,
     out);
 }
 
-async function prepareMint(token, feeRate, out) {
+async function prepareMint(shown, feeRate, out) {
+  // ask every indexer again: the terms signed must be the ones shown, agreed on, and on chain
+  const check = await crossCheck(indexers, shown.ticker);
+  if (check.problems.length) throw new Error(`mint refused: ${check.problems.join('; ')}`);
+  const token = check.token;
+  if (TERMS.some((k) => String(token[k]) !== String(shown[k]))) throw new Error('the token terms changed since they were shown; open the mint again');
   await verifyDeploy(esplora, token); // the mint terms come from the chain, not from the indexer alone
   const tip = await esplora.tipHeight();
   const w = st.wallet;
@@ -311,8 +330,11 @@ async function prepareMint(token, feeRate, out) {
       h('dt', {}, 'Mint price'), h('dd', {}, sats(m.price)),
       h('dt', {}, 'Total'), h('dd', {}, h('strong', {}, sats(m.fee + m.price))),
       h('dt', {}, 'Terms'), h('dd', {}, 'price, payment, window and supply checked against the DEPLOY transaction on chain'),
-      h('dt', {}, 'Token number'), h('dd', {}, h('span', { class: 'err' }, `#${token.tokenNum}, from the indexer only (not verified)`)),
+      h('dt', {}, 'Token number'), h('dd', {}, check.agreed > 1
+        ? `#${token.tokenNum}, agreed by ${check.agreed} indexers`
+        : h('span', { class: 'err' }, `#${token.tokenNum}, from one indexer only (not cross-checked)`)),
       h('dt', {}, 'Envelope'), h('dd', {}, h('code', {}, toHex(m.envelope)))),
+    checkNotes(check),
     h('p', { class: 'muted' }, 'A mint rejected by the indexers (for example sold out by a mint in the same block) is not refunded.'),
     sign);
 }
@@ -406,15 +428,19 @@ async function scanNotes() {
 
 function initSettings() {
   const f = $('settings-form');
-  f.indexer.value = settings.indexer;
+  f.indexer.value = urlList(settings.indexer).join('\n');
   f.esplora.value = settings.esplora;
   f.addEventListener('submit', (ev) => {
     ev.preventDefault();
-    settings = { indexer: f.indexer.value.trim(), esplora: f.esplora.value.trim() };
+    const list = urlList(f.indexer.value);
+    const bad = [...list, f.esplora.value.trim()].filter((u) => !/^https?:\/\/[^/\s]+/.test(u));
+    if (!list.length || bad.length) return report(new Error(`not an http(s) URL: ${bad.join(', ') || '(no indexer)'}`));
+    settings = { indexer: list.join('\n'), esplora: f.esplora.value.trim() };
     urlServers = null;
     staticWarnings();
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-    indexer = new IndexerApi(settings.indexer);
+    indexers = urlList(settings.indexer).map((u) => new IndexerApi(u));
+    indexer = indexers[0];
     esplora = new Esplora(settings.esplora);
     refresh();
   });

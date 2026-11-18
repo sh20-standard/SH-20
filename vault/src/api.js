@@ -9,7 +9,7 @@ export const MAX_FEE_RATE = 200; // sat/vB, cap on a server's suggestion
 
 async function getJson(url) {
   const r = await fetch(url, { headers: { accept: 'application/json' } });
-  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  if (!r.ok) throw Object.assign(new Error(`${url}: HTTP ${r.status}`), { status: r.status });
   return r.json();
 }
 

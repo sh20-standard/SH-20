@@ -57,9 +57,10 @@ button.secondary { background: transparent; color: var(--accent); }
 button.small { padding: 1px 8px; font-size: 0.8rem; font-weight: 400; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 input.narrow { width: 6em; }
+textarea { font: 0.85rem var(--mono); padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); resize: vertical; }
 input { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
 label { display: block; margin: 6px 0; }
-label input[type=url], label input[type=password] { width: 100%; max-width: 420px; display: block; margin-top: 2px; }
+label input[type=url], label input[type=password], label textarea { width: 100%; max-width: 420px; display: block; margin-top: 2px; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
 .table-wrap { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }

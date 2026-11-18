@@ -13,7 +13,10 @@ import { join } from 'node:path';
 
 const CHROME = process.argv[2] || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 // E2E_PATH=/vault/dist/vault/ runs the same flow on the IPFS build.
-const PAGE = `http://localhost:8000${process.env.E2E_PATH || '/vault/'}?indexer=http://127.0.0.1:8020&esplora=http://127.0.0.1:8020/esplora`;
+// E2E_LIAR=1 adds the lying indexer (:8031) and expects the mint to be refused.
+const LIAR = !!process.env.E2E_LIAR;
+const INDEXERS = ['http://127.0.0.1:8020', 'http://127.0.0.1:8030', ...(LIAR ? ['http://127.0.0.1:8031'] : [])].join(',');
+const PAGE = `http://localhost:8000${process.env.E2E_PATH || '/vault/'}?indexer=${INDEXERS}&esplora=http://127.0.0.1:8020/esplora`;
 const PORT = 9333;
 
 // Runs in the page before any of its scripts.
@@ -132,9 +135,20 @@ async function main() {
 
   await click('#tokens-body button', 'Mint');
   await waitFor(`[...document.querySelectorAll('#mint-body button')].some((b) => b.textContent.includes('Prepare'))`, 'mint panel');
+  if (LIAR) {
+    await waitFor(`document.querySelector('#mint-body').innerText.includes('Mint refused')`, 'refusal');
+    const refused = await evaluate(`document.querySelector('#mint-body .err').innerText`);
+    if (!/payScript/.test(refused)) throw new Error('refused for the wrong reason: ' + refused);
+    if (!(await evaluate(`[...document.querySelectorAll('#mint-body button')].find((b) => b.textContent.includes('Prepare')).disabled`))) throw new Error('Prepare still enabled');
+    step(refused);
+    ws.close();
+    console.log('\nOK: the lying indexer blocked the mint');
+    return;
+  }
   await click('#mint-body button', 'Prepare');
   await waitFor(`[...document.querySelectorAll('#mint-body button')].some((b) => b.textContent.includes('Sign with'))`, 'prepared tx');
   if (!(await evaluate(`document.querySelector('#mint-body').innerText.includes('checked against the DEPLOY')`))) throw new Error('deploy check not shown');
+  if (!(await evaluate(`document.querySelector('#mint-body').innerText.includes('agreed by 2 indexers')`))) throw new Error('cross-check not shown');
   step('prepared: ' + (await evaluate(`document.querySelector('#mint-body div dl').innerText.replace(/\\n/g, ' | ')`)));
   await click('#mint-body button', 'Sign with');
   await waitFor(`document.querySelector('#mint-body').innerText.includes('Broadcast:')`, 'broadcast');

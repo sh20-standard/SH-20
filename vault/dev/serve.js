@@ -1,13 +1,14 @@
 // Development only. Serves the repository root (open http://localhost:8000/vault/)
-// and the real indexer API (indexer/src/api.js) on :8020, over the reference
-// indexer fed with a small demo chain.
+// and the real indexer API (indexer/src/api.js) on :8020 and again on :8030 (two
+// agreeing indexers), over the reference indexer fed with a small demo chain.
+// :8031 is a lying indexer: same answers, except its own payScript for every token.
 //
 // It also mocks an Esplora server under :8020/esplora: one UTXO for any address,
 // raw transactions and their status, and POST /tx mines the transaction in the
 // next block of the demo chain, so the whole mint flow runs without a real
 // wallet or signet coins (see e2e.js).
 //
-//   node vault/dev/serve.js [--port 8000] [--api-port 8020]
+//   node vault/dev/serve.js [--port 8000] [--api-port 8020] [--api-port2 8030] [--liar-port 8031]
 
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -24,6 +25,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const arg = (k, d) => (process.argv.includes(k) ? process.argv[process.argv.indexOf(k) + 1] : d);
 const STATIC_PORT = Number(arg('--port', 8000));
 const API_PORT = Number(arg('--api-port', 8020));
+const API_PORT2 = Number(arg('--api-port2', 8030)); // a second, agreeing indexer
+const LIAR_PORT = Number(arg('--liar-port', 8031)); // a lying indexer
 
 const idx = new Indexer({ profile: { activationHeight: 1 } });
 const api = apiHandler(idx, { network: 'signet' });
@@ -76,13 +79,35 @@ async function esplora(req, path, res) {
   return text(404, 'not found');
 }
 
-createServer((req, res) => {
+const serveApi = (handler) => (req, res) => {
   const { pathname } = new URL(req.url, 'http://x');
   if (pathname.startsWith('/esplora/')) {
     return esplora(req, pathname.slice('/esplora'.length), res).catch((e) => res.writeHead(400).end(String(e.message)));
   }
-  return api(req, res);
-}).listen(API_PORT, '127.0.0.1');
+  return handler(req, res);
+};
+
+// Rewrites payScript in token answers, as a dishonest indexer would.
+const ATTACKER = '0014' + 'ee'.repeat(20);
+const liar = (req, res) => {
+  const fake = {
+    writeHead: (code, headers) => { fake.code = code; fake.headers = headers; return fake; },
+    end(body) {
+      let out = body;
+      if (/^\/tokens?(\/|$)/.test(new URL(req.url, 'http://x').pathname) && fake.code === 200) {
+        const j = JSON.parse(body);
+        const lie = (t) => ({ ...t, payMode: 2, payScript: ATTACKER });
+        out = JSON.stringify(Array.isArray(j) ? j.map(lie) : lie(j));
+      }
+      res.writeHead(fake.code, fake.headers).end(out);
+    },
+  };
+  api(req, fake);
+};
+
+createServer(serveApi(api)).listen(API_PORT, '127.0.0.1');
+createServer(serveApi(api)).listen(API_PORT2, '127.0.0.1');
+createServer(serveApi(liar)).listen(LIAR_PORT, '127.0.0.1');
 
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
 createServer(async (req, res) => {
@@ -100,4 +125,4 @@ createServer(async (req, res) => {
 }).listen(STATIC_PORT, '127.0.0.1');
 
 console.log(`vault http://localhost:${STATIC_PORT}/vault/`);
-console.log(`indexer API http://127.0.0.1:${API_PORT}, mock Esplora at /esplora (demo chain, height ${idx.height})`);
+console.log(`indexer API http://127.0.0.1:${API_PORT} and :${API_PORT2}, lying indexer :${LIAR_PORT}, mock Esplora at /esplora (demo chain, height ${idx.height})`);

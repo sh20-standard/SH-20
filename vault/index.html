@@ -48,11 +48,12 @@
   <section id="settings">
     <h2>Settings</h2>
     <form id="settings-form">
-      <label>Indexer API <input name="indexer" type="url" required></label>
+      <label>Indexer APIs, one per line (the first lists tickers and notes; all are compared before a mint)
+        <textarea name="indexer" rows="3" required spellcheck="false"></textarea></label>
       <label>Esplora API <input name="esplora" type="url" required></label>
       <button type="submit">Save</button>
     </form>
-    <p class="muted">Any honest SH-20 indexer and any Esplora server work. Nothing secret is ever sent to them.</p>
+    <p class="muted">Any honest SH-20 indexer and any Esplora server work. Nothing secret is ever sent to them. Several independent indexers let the vault refuse a mint when they disagree; with one, it is trusted for the token number and the order of DEPLOYs.</p>
   </section>
 </main>
 
