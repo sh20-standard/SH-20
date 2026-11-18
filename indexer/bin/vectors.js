@@ -41,36 +41,38 @@ const spend = (seed, anchorHeight) => ({
   proof: Buffer.from('valid-proof'),
 });
 
-const genesis = {
-  type: 'DEPLOY', ticker: 'GENE', max: 21000000n, lim: 1000n, pre: 1000000n, start: 2, end: 0, unlock: 4,
-  price: 1000n, payMode: 1, payScript: Buffer.alloc(0), team: op('team'), spend: null,
+const gene = {
+  type: 'DEPLOY', ticker: 'GENE', max: 21000000n, lim: 1000n, pre: 1000000n, start: 5, end: 0, unlock: 6,
+  price: 1000n, payMode: 1, payScript: Buffer.alloc(0), team: op('team'), spend: spend('deploy-gene', 3),
 };
 const pay = Buffer.concat([Buffer.from([0x00, 0x14]), bytes('pay', 20)]);
 const lockKey = publicKey(h('lock-secret'));
 const lockScript = Buffer.concat([Buffer.from([0x51, 0x20]), lockKey]);
 const envs = {
-  deployGenesis: genesis,
-  mint: { type: 'MINT', ticker: 'GENE', ...op('mint1') },
-  transfer: { type: 'TRANSFER', spend: spend('transfer', 2) },
-  list: { type: 'LIST', ticker: 'GENE', amount: 1000n, price: 5000n, lockVout: 0, payScript: pay, spend: spend('list', 2) },
+  mintGenesis: { type: 'MINT', ticker: 'SH20', ...op('mint1') },
+  transfer: { type: 'TRANSFER', spend: spend('transfer', 1) },
+  list: { type: 'LIST', ticker: 'SH20', amount: 1000n, price: 5000n, lockVout: 0, payScript: pay, spend: spend('list', 1) },
   take: { type: 'TAKE', ...op('buyer') },
-  deploySecond: { ...genesis, ticker: 'SEC2', pre: 0n, team: null, start: 7, unlock: 7, spend: spend('deploy2', 4) },
-  burn: { type: 'BURN', ticker: 'GENE', vPub: 10n, spend: spend('burn', 5) },
+  deployWithTeam: gene,
+  deployNoTeam: { ...gene, ticker: 'SEC2', pre: 0n, team: null, start: 7, unlock: 7, spend: spend('deploy2', 4) },
+  burn: { type: 'BURN', ticker: 'SH20', vPub: 10n, spend: spend('burn', 5) },
+  mintPaid: { type: 'MINT', ticker: 'GENE', ...op('mint2') },
 };
 const ser = Object.fromEntries(Object.entries(envs).map(([k, v]) => [k, serializeEnvelope(v)]));
 
 const input = (seed) => ({ txid: txid(seed), vout: 0, witness: [] });
 const listTxid = txid('list-tx');
 const txs = [
-  [{ txid: txid('deploy'), vin: [input('f0')], vout: [{ value: 0n, script: opReturn(ser.deployGenesis) }] }],
-  [{ txid: txid('mint1'), vin: [input('f1')], vout: [{ value: 1000n, script: opReturn(ser.mint) }] }],
+  [{ txid: txid('mint1'), vin: [input('f1')], vout: [{ value: 0n, script: opReturn(ser.mintGenesis) }] }],
   [
     { txid: listTxid, vin: [{ txid: txid('f2'), vout: 0, witness: witness(ser.list) }], vout: [{ value: 330n, script: lockScript }] },
     { txid: txid('transfer-tx'), vin: [{ txid: txid('f3'), vout: 0, witness: witness(ser.transfer) }], vout: [] },
   ],
   [{ txid: txid('take-tx'), vin: [{ txid: listTxid, vout: 0, witness: [] }, input('f4')], vout: [{ value: 0n, script: opReturn(ser.take) }, { value: 5000n, script: pay }] }],
-  [{ txid: txid('deploy2-tx'), vin: [{ txid: txid('f5'), vout: 0, witness: witness(ser.deploySecond) }], vout: [] }],
-  [{ txid: txid('burn-tx'), vin: [{ txid: txid('f6'), vout: 0, witness: witness(ser.burn) }], vout: [] }],
+  [{ txid: txid('deploy-gene-tx'), vin: [{ txid: txid('f5'), vout: 0, witness: witness(ser.deployWithTeam) }], vout: [] }],
+  [{ txid: txid('deploy2-tx'), vin: [{ txid: txid('f6'), vout: 0, witness: witness(ser.deployNoTeam) }], vout: [] }],
+  [{ txid: txid('burn-tx'), vin: [{ txid: txid('f7'), vout: 0, witness: witness(ser.burn) }], vout: [] }],
+  [{ txid: txid('mint2'), vin: [input('f8')], vout: [{ value: 1000n, script: opReturn(ser.mintPaid) }] }],
 ];
 const blocks = txs.map((t, i) => ({ height: i + 1, hash: `b${i + 1}`, txs: t }));
 
@@ -96,7 +98,8 @@ const out = {
   domainLeaf: hexFr(DOMAIN.LEAF),
   emptyRootDepth32: hexFr(new NoteTree().root),
   tickerT: { ticker: 'GENE', t: tickerT('GENE').toString() },
-  noteLeaf: { ticker: 'GENE', t: tickerT('GENE').toString(), v: '1000', npk: hexFr(envs.mint.npk), rho: hexFr(envs.mint.rho), leaf: hexFr(noteLeaf(tickerT('GENE'), 1000n, envs.mint.npk, envs.mint.rho)) },
+  genesis: { ticker: 'SH20', max: '21000000', lim: '1000', pre: '0', price: '0', payMode: 0, mintsFrom: 'activation height' },
+  noteLeaf: { ticker: 'SH20', t: tickerT('SH20').toString(), v: '1000', npk: hexFr(envs.mintGenesis.npk), rho: hexFr(envs.mintGenesis.rho), leaf: hexFr(noteLeaf(tickerT('SH20'), 1000n, envs.mintGenesis.npk, envs.mintGenesis.rho)) },
   envelopes: Object.fromEntries(Object.entries(ser).map(([k, v]) => [k, { bytes: v.length, hex: v.toString('hex') }])),
   scenario: {
     profile: { activationHeight: 1, deployBurn: '1000', anchorWindow: 100, anchorMinDepth: 1 },
@@ -104,7 +107,8 @@ const out = {
     after: results.map((r) => ({ height: r.height, root: hexFr(r.root), digest: r.digest, events: r.events.map((e) => e.type) })),
     final: {
       treeSize: ix.tree.size,
-      gene: { mints: ix.token('GENE').mints.toString(), burned: ix.token('GENE').burned.toString() },
+      sh20: { mints: ix.token('SH20').mints.toString(), burned: ix.token('SH20').burned.toString() },
+      gene: { mints: ix.token('GENE').mints.toString(), teamUnlocked: ix.notes.some((x) => x.kind === 'TEAM' && x.ticker === 'GENE') },
       listing: ix.listings.get(listTxid).state,
     },
   },

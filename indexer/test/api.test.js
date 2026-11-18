@@ -7,7 +7,7 @@ import { noteLeaf, tickerT } from '../src/notes.js';
 import { chain, deployEnv, mockVerifier, opening, spend, tx } from './helpers.js';
 
 async function withApi(fn) {
-  const ix = new Indexer({ profile: { activationHeight: 1 }, verifier: mockVerifier() });
+  const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n }, verifier: mockVerifier() });
   const c = chain(ix);
   const o = opening();
   c.block(tx({ env: deployEnv() }));
@@ -35,7 +35,8 @@ test('status, tokens and one token', () =>
     assert.equal(st.body.height, 3);
     assert.equal(st.body.leaves, 4);
     assert.equal(st.body.digest, ix.digest.toString('hex'));
-    assert.equal((await get('/tokens')).body.length, 1);
+    assert.equal(st.body.genesis, 'SH20');
+    assert.deepEqual((await get('/tokens')).body.map((x) => x.ticker), ['SH20', 'GENE']);
     const gene = (await get('/token/GENE')).body;
     assert.equal(gene.mints, '1');
     assert.equal(gene.max, '21000000');

@@ -46,5 +46,8 @@ export const DEFAULT_PROFILE = Object.freeze({
   activationHeight: 0,
   anchorWindow: 100, // W
   anchorMinDepth: 1, // K_min
-  deployBurn: 1000n, // D: genesis-token units burned by every non-genesis DEPLOY
+  deployBurn: 1000n, // D: SH20 units burned by every DEPLOY (0 = no burn, then a DEPLOY carries no spend)
+  // The genesis token is part of the profile, not a DEPLOY, so nobody can race for it.
+  // Like ORDI: 21,000,000 units, 1,000 per mint, free (network fees only), no team allocation.
+  genesis: Object.freeze({ ticker: 'SH20', max: 21000000n, lim: 1000n }),
 });

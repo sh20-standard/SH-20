@@ -56,7 +56,7 @@ Done in `indexer/`:
 - Poseidon over BN254 written from scratch (constants generated with the Grain LFSR, matches circomlib's `poseidon([1,2])`), BIP340 written from scratch (matches BIP340 vectors 0 and 1).
 - Live chain follower (Bitcoin Core RPC or Esplora, reorgs with 288 blocks of undo) and a read-only HTTP API with a per-leaf note log for wallets (`docs/API.md`).
 - Explorer (`explorer/index.html`): a block explorer in one static page with no dependency; reads any indexer; demo data built from real indexer output.
-- Proof verification is an interface (`verifier.verifySpend`). **The default verifier rejects every spend**, so TRANSFER, BURN, LIST and non-genesis DEPLOY are not accepted yet.
+- Proof verification is an interface (`verifier.verifySpend`). **The default verifier rejects every spend**, so TRANSFER, BURN, LIST and DEPLOY (when `D > 0`) are not accepted yet.
 
 Not done: the spend circuit and its pinned verifier, the `ct` sealing format, the browser vault, a relayer, a second independent indexer, the
 profile constants (activation height, `D`), the canonical event encoding inside the digest.
@@ -135,5 +135,8 @@ SH-20's edge: ticker hidden, unique tickers, private by default from the mint, B
 
 ## Open decisions (ask the maintainer)
 
-Final name and 4-byte magic · value of `D` (genesis burn per DEPLOY) or no burn · ticker length (4 only, or 5–12) ·
-genesis team allocation (zero or small) · several envelopes per transaction · exact event encoding in the digest.
+Final name and 4-byte magic · value of `D` (SH20 burned per DEPLOY) or no burn · ticker length (4 only, or 5–12) ·
+several envelopes per transaction · exact event encoding in the digest.
+
+Decided by the maintainer: the genesis token is **SH20**, fixed in the activation profile (no DEPLOY, no race):
+21,000,000 max, 1,000 per mint, free mint (network fees only), no team allocation.

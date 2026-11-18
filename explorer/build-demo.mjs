@@ -67,32 +67,30 @@ const deploy = (seed, env) => ({ txid: txid(seed), env, carrier: env.spend ? 'wi
 const mintTx = (seed, ticker, payOut) => ({ txid: txid(seed), env: { type: 'MINT', ticker, ...op(seed) }, ...payOut });
 const spendTx = (seed, env) => ({ txid: txid(seed), env, carrier: 'witness' });
 
-at(A + 1, deploy('deploy-gene', {
-  type: 'DEPLOY', ticker: 'GENE', max: 21000000n, lim: 1000n, pre: 0n, start: A + 3, end: 0, unlock: A + 3,
-  price: 1000n, payMode: 1, payScript: Buffer.alloc(0), team: null, spend: null,
-}));
-for (let i = 0; i < 6; i++) at(A + 3, mintTx(`gene-mint-${i}`, 'GENE', { burnSats: 1000n }));
-at(A + 3, mintTx('gene-mint-unpaid', 'GENE', { burnSats: 400n }));
-for (let i = 6; i < 11; i++) at(A + 4, mintTx(`gene-mint-${i}`, 'GENE', { burnSats: 1000n }));
+// SH20, the genesis token, exists from block A (activation profile): free mints, network fees only.
+for (let i = 0; i < 6; i++) at(A + 1, mintTx(`sh20-mint-${i}`, 'SH20', { burnSats: 0n }));
+for (let i = 6; i < 11; i++) at(A + 3, mintTx(`sh20-mint-${i}`, 'SH20', { burnSats: 0n }));
+for (let i = 11; i < 14; i++) at(A + 4, mintTx(`sh20-mint-${i}`, 'SH20', { burnSats: 0n }));
 at(A + 6, spendTx('transfer-1', { type: 'TRANSFER', spend: spend('transfer-1', A + 4) }), spendTx('transfer-2', { type: 'TRANSFER', spend: spend('transfer-2', A + 5) }));
 at(A + 7, deploy('deploy-nova', {
   type: 'DEPLOY', ticker: 'NOVA', max: 10000000n, lim: 500n, pre: 500000n, start: A + 10, end: 0, unlock: A + 4320,
   price: 2500n, payMode: 2, payScript: novaPay, team: op('nova-team'), spend: spend('deploy-nova', A + 6),
 }));
 for (let i = 0; i < 8; i++) at(A + 10, mintTx(`nova-mint-${i}`, 'NOVA', { vout: [{ value: 2500n, script: novaPay }] }));
+at(A + 10, mintTx('nova-mint-unpaid', 'NOVA', { vout: [{ value: 1000n, script: novaPay }] }));
 at(A + 10, mintTx('kiln-mint-too-early', 'KILN', { burnSats: 0n }));
-const listGene = spendTx('list-gene', {
-  type: 'LIST', ticker: 'GENE', amount: 2000n, price: 60000n, lockVout: 0, payScript: p2wpkh('gene-seller'), spend: spend('list-gene', A + 10),
+const listGene = spendTx('list-sh20', {
+  type: 'LIST', ticker: 'SH20', amount: 2000n, price: 60000n, lockVout: 0, payScript: p2wpkh('sh20-seller'), spend: spend('list-sh20', A + 10),
 });
 listGene.lock = [{ value: 330n, script: p2tr(sellerKey) }];
 at(A + 11, spendTx('transfer-3', { type: 'TRANSFER', spend: spend('transfer-3', A + 9) }), spendTx('transfer-4', { type: 'TRANSFER', spend: spend('transfer-4', A + 10) }), listGene);
-at(A + 12, { txid: txid('take-gene'), env: { type: 'TAKE', ...op('gene-buyer') }, spendsLock: listGene.txid, vout: [{ value: 60000n, script: p2wpkh('gene-seller') }] });
+at(A + 12, { txid: txid('take-sh20'), env: { type: 'TAKE', ...op('sh20-buyer') }, spendsLock: listGene.txid, vout: [{ value: 60000n, script: p2wpkh('sh20-seller') }] });
 at(A + 13, deploy('deploy-kiln', {
   type: 'DEPLOY', ticker: 'KILN', max: 1000000n, lim: 100n, pre: 0n, start: A + 16, end: A + 2016, unlock: A + 16,
   price: 0n, payMode: 0, payScript: Buffer.alloc(0), team: null, spend: spend('deploy-kiln', A + 12),
 }));
 for (let i = 0; i < 4; i++) at(A + 16, mintTx(`kiln-mint-${i}`, 'KILN', { burnSats: 0n }));
-at(A + 16, spendTx('burn-gene', { type: 'BURN', ticker: 'GENE', vPub: 300n, spend: spend('burn-gene', A + 15) }));
+at(A + 16, spendTx('burn-sh20', { type: 'BURN', ticker: 'SH20', vPub: 300n, spend: spend('burn-sh20', A + 15) }));
 const listNova = spendTx('list-nova', {
   type: 'LIST', ticker: 'NOVA', amount: 1000n, price: 25000n, lockVout: 0, payScript: p2wpkh('nova-seller'), spend: spend('list-nova', A + 16),
 });

@@ -39,7 +39,7 @@ class MemorySource {
   }
 }
 
-const make = () => new Indexer({ profile: { activationHeight: 1 }, verifier: mockVerifier() });
+const make = () => new Indexer({ profile: { activationHeight: 1, deployBurn: 0n }, verifier: mockVerifier() });
 const replay = (list) => {
   const ix = make();
   for (const b of list) ix.applyBlock(b);

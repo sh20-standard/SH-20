@@ -83,12 +83,16 @@ private `t`; every `v` and `vPub` fits in 64 bits; `v_in0 + v_in1 = v_out0 + v_o
 
 Block `H`, profile constants `W = 100`, `K_min = 1`, `D` (deploy burn), activation height `A`. Nothing before `A` is read.
 
+**Genesis token** (part of the profile, not a DEPLOY, so nobody can race for it): ticker `SH20`, `max = 21,000,000`,
+`lim = 1,000`, `pre = 0` (no team allocation), payMode 0 and `price = 0` (free mint, network fees only),
+`start = A`, `end = 0`. It exists from block `A` on; a DEPLOY of `SH20` is rejected like any taken ticker.
+
 **Every spend**: `H − W ≤ anchorHeight ≤ H − K_min`; root known (`anchorHeight < A` uses the empty root); nullifiers
 non-zero, distinct, never seen; output leaves non-zero; room in the tree; proof valid. Effect: record nullifiers, append the 3 leaves.
 
 | Type | Accepted when | Effect |
 | --- | --- | --- |
-| DEPLOY | ticker never deployed; `max > 0`, `lim > 0`, `pre < max`, `(max − pre) mod lim = 0`; `start > H`; `end = 0` or `end ≥ start`; `unlock ≥ start`; payMode 0 ⇔ `price = 0`. First accepted DEPLOY = genesis and has no spend; every later one has a spend with `vPub = D`, `tPub = t(genesis)` | token recorded under its ticker; `burned[genesis] += D`; team note scheduled for block `unlock` |
+| DEPLOY | ticker never deployed; `max > 0`, `lim > 0`, `pre < max`, `(max − pre) mod lim = 0`; `start > H`; `end = 0` or `end ≥ start`; `unlock ≥ start`; payMode 0 ⇔ `price = 0`. If `D > 0`: a spend with `vPub = D`, `tPub = t("SH20")`; if `D = 0`: no spend | token recorded under its ticker; `burned[SH20] += D`; team note scheduled for block `unlock` |
 | MINT | `ticker` deployed; `start ≤ H`; `end = 0` or `H ≤ end`; mints `< (max − pre) / lim`; paid in the same tx: payMode 1 = OP_RETURN outputs carry ≥ `price` sats, payMode 2 = outputs to `payScript` total ≥ `price` | leaf `(t, lim, npk, rho)`; mints + 1 |
 | TRANSFER | spend with `vPub = tPub = 0` | — |
 | BURN | `ticker` deployed; `vPub > 0`; spend with `tPub = t(ticker)` | `burned[ticker] += vPub` |
@@ -100,7 +104,7 @@ A rejected envelope changes nothing; sats it paid are not returned.
 
 ## 6. Block processing and digest
 
-1. If `H ≥ A`: append team notes whose `unlock = H` (by ticker, in byte order), then for each transaction in block order:
+1. If `H ≥ A`: in the first block read (`H = A`), create the genesis token (event `GENESIS`); append team notes whose `unlock = H` (by ticker, in byte order), then for each transaction in block order:
    note the ACTIVE listings whose lock it spends; apply its envelope; set any of those still ACTIVE to CLOSED.
 2. Record `R[H]`.
 3. `digest_H = SHA256(digest_{H−1} ‖ u32le(H) ‖ R[H] (32, LE) ‖ SHA256(events_H))`, `digest_start = SHA256("sh20-v0")`,

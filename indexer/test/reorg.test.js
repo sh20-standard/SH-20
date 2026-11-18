@@ -13,7 +13,7 @@ function scenario() {
     vout: [{ value: 330n, script: p2tr(publicKey(randomBytes(32))) }],
   });
   const blocks = [
-    [tx({ env: deployEnv({ pre: 1000000n, team: opening(), unlock: 4 }) })],
+    [tx({ env: deployEnv({ pre: 1000000n, team: opening(), unlock: 4, spend: spend(0) }), carrier: 'witness' })],
     [tx({ env: { type: 'MINT', ticker: 'GENE', ...opening() }, burnSats: 1000n }), tx({ env: { type: 'MINT', ticker: 'GENE', ...opening() }, burnSats: 1000n })],
     [list, tx({ env: { type: 'TRANSFER', spend: spend(2) }, carrier: 'witness' })],
     [tx({ env: { type: 'TAKE', ...opening() }, vin: [{ txid: list.txid, vout: 0, witness: [] }], vout: [{ value: 5000n, script: pay }] })],
@@ -23,7 +23,7 @@ function scenario() {
   return blocks.map((txs, i) => ({ height: i + 1, hash: `b${i + 1}`, txs }));
 }
 
-const make = () => new Indexer({ profile: { activationHeight: 1 }, verifier: mockVerifier() });
+const make = () => new Indexer({ profile: { activationHeight: 1, deployBurn: 1000n }, verifier: mockVerifier() });
 
 test('two independent indexers reach the same digest at every height', () => {
   const blocks = scenario();
@@ -52,6 +52,7 @@ test('rollback restores the exact state, and replay gives the same digests', () 
   assert.deepEqual([ix.tree.size, ix.nullifiers.size, ix.listings.get(blocks[2].txs[0].txid).state], sizes);
   assert.equal(ix.token('SEC2'), null);
   assert.equal(ix.token('GENE').burned, 0n);
+  assert.equal(ix.token('SH20').burned, 1000n);
   assert.deepEqual([...ix.history.keys()], [...fresh.history.keys()]);
   assert.equal(ix.txIndex.size, fresh.txIndex.size);
   assert.ok(blocks.slice(3).every((b) => b.txs.every((t) => !ix.txIndex.has(t.txid))));
