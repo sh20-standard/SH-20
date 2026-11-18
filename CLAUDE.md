@@ -139,7 +139,7 @@ Keep only what the protocol needs; add nothing that costs bytes without a clear 
 
 | Action | Today (v0.3) | Target |
 | --- | --- | --- |
-| MINT (proof-less, OP_RETURN) | 74-byte envelope, 196 vB with one input and one change output | ~165 vB |
+| MINT (proof-less, OP_RETURN) | 42-byte envelope (v0.3), about 164 vB with one input and one change output | ~165 vB |
 | TRANSFER, alone | 830-byte envelope (480-byte PLONK proof), about 339 vB + commit | ≤ ~350 vB |
 | TRANSFER, in a relayer batch | not supported yet | ≤ ~150 vB per transfer |
 
@@ -153,8 +153,9 @@ Levers, biggest first. Measure each one and keep every hard requirement above:
    reasonable time.
 2. **Batching.** Allow several envelopes in one witness transaction so relayers share the commit/reveal overhead.
 3. **Arity.** Decided: three outputs stay. The third pays a relayer in tokens.
-4. **Mint bytes.** Drop `rho` from public openings if the security review agrees (a fresh `npk` already
-   makes each public leaf unique), and consider a batch mint (k mints in one envelope, paying k × price).
+4. **Mint bytes.** Done in v0.3: public openings are `npk` alone, public notes use `rho = 0` (74 → 42 bytes, about 32 vB less
+   per mint); to confirm in the review of `docs/SPEC-NOTES.md`. Still open: a batch mint (k mints in one envelope, paying
+   k × price), a fairness question for the maintainer, since it makes bulk minting cheaper too.
 5. **Small fields.** Done in v0.3: 32-byte X25519 `pk_eph`, no `proofLen`. `ct` stays 28 bytes (amount, ticker, 16-byte tag).
 6. **Never** put proof-carrying envelopes in OP_RETURN (four times the witness rate).
 

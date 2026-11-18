@@ -17,7 +17,7 @@ const h = (s) => createHash('sha256').update(s).digest();
 const fr = (seed) => BigInt('0x' + h(seed).toString('hex')) % FR;
 const bytes = (seed, n) => Buffer.concat([h(seed), h(seed + '/2')]).subarray(0, n);
 const txid = (seed) => h('txid/' + seed).toString('hex');
-const op = (seed) => ({ npk: fr(seed + '/npk'), rho: fr(seed + '/rho') });
+const op = (seed) => ({ npk: fr(seed + '/npk') });
 const PROOF = Buffer.concat([Buffer.from('valid-proof'), Buffer.alloc(480 - 11)]);
 
 const push = (d) => {
@@ -100,7 +100,7 @@ const out = {
   emptyRootDepth32: hexFr(new NoteTree().root),
   tickerT: { ticker: 'GENE', t: tickerT('GENE').toString() },
   genesis: { ticker: 'SH20', max: '21000000', lim: '1000', pre: '0', price: '0', payMode: 0, mintsFrom: 'activation height' },
-  noteLeaf: { ticker: 'SH20', t: tickerT('SH20').toString(), v: '1000', npk: hexFr(envs.mintGenesis.npk), rho: hexFr(envs.mintGenesis.rho), leaf: hexFr(noteLeaf(tickerT('SH20'), 1000n, envs.mintGenesis.npk, envs.mintGenesis.rho)) },
+  noteLeaf: { ticker: 'SH20', t: tickerT('SH20').toString(), v: '1000', npk: hexFr(envs.mintGenesis.npk), rho: '0', leaf: hexFr(noteLeaf(tickerT('SH20'), 1000n, envs.mintGenesis.npk, 0n)) },
   envelopes: Object.fromEntries(Object.entries(ser).map(([k, v]) => [k, { bytes: v.length, hex: v.toString('hex') }])),
   scenario: {
     profile: { activationHeight: 1, deployBurn: '1000', anchorWindow: 100, anchorMinDepth: 1 },

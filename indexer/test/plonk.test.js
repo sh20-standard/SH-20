@@ -36,7 +36,7 @@ function setup() {
   const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n }, verifier: plonkVerifier({ wasm, vk }) });
   const c = chain(ix);
   c.block(tx({ env: deployEnv() }));
-  c.block(...fixture.mints.map((m) => tx({ env: { type: 'MINT', ticker: fixture.ticker, npk: BigInt(m.npk), rho: BigInt(m.rho) }, burnSats: 1000n })));
+  c.block(...fixture.mints.map((m) => tx({ env: { type: 'MINT', ticker: fixture.ticker, npk: BigInt(m.npk) }, burnSats: 1000n })));
   return { ix, c };
 }
 const spendTx = (env) => tx({ env, carrier: 'witness' });

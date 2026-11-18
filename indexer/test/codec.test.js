@@ -24,9 +24,9 @@ test('every type round-trips byte for byte', () => {
 });
 
 test('sizes of the proof-less envelopes', () => {
-  assert.equal(serializeEnvelope({ type: 'MINT', ticker: 'GENE', ...opening() }).length, 74);
-  assert.equal(serializeEnvelope({ type: 'TAKE', ...opening() }).length, 70);
-  assert.equal(serializeEnvelope({ type: 'CLAIM', listTxid: '00'.repeat(32), ...opening(), sig: Buffer.alloc(64) }).length, 166);
+  assert.equal(serializeEnvelope({ type: 'MINT', ticker: 'GENE', ...opening() }).length, 42);
+  assert.equal(serializeEnvelope({ type: 'TAKE', ...opening() }).length, 38);
+  assert.equal(serializeEnvelope({ type: 'CLAIM', listTxid: '00'.repeat(32), ...opening(), sig: Buffer.alloc(64) }).length, 134);
   assert.equal(serializeEnvelope(deployEnv()).length, 6 + 4 + 8 * 3 + 4 * 3 + 8 + 1 + 1);
 });
 
@@ -72,7 +72,7 @@ test('strict parsing rejects malformed envelopes', () => {
     assert.throws(() => parseEnvelope(buf), (e) => e instanceof CodecError && e.message.includes(reason.replace(' in MINT', '')), reason);
   }
   // A field element at or above the BN254 modulus is non-canonical.
-  const mint = serializeEnvelope({ type: 'MINT', ticker: 'GENE', npk: fr(), rho: fr() });
+  const mint = serializeEnvelope({ type: 'MINT', ticker: 'GENE', npk: fr() });
   const big = Buffer.from(mint);
   big.fill(0xff, 10, 42);
   assert.throws(() => parseEnvelope(big), /non-canonical field element/);
@@ -88,7 +88,7 @@ test('carrier rules: one envelope per transaction', () => {
   assert.match(extractEnvelope(twoOpReturns).error, /more than one/);
   const both = { txid: 'a', vin: [{ txid: 'b', vout: 0, witness: witnessFor(bytes) }], vout: [{ value: 0n, script: opReturn(bytes) }] };
   assert.match(extractEnvelope(both).error, /more than one/);
-  const nonMinimal = Buffer.concat([Buffer.from([0x6a, 0x4c, bytes.length]), bytes]); // PUSHDATA1 for a 74-byte push
+  const nonMinimal = Buffer.concat([Buffer.from([0x6a, 0x4c, bytes.length]), bytes]); // PUSHDATA1 for a 42-byte push
   assert.match(extractEnvelope({ txid: 'a', vin: [], vout: [{ value: 0n, script: nonMinimal }] }).error, /minimal push/);
   assert.ok(extractEnvelope({ txid: 'a', vin: [], vout: [{ value: 0n, script: opReturn(Buffer.from('hello')) }] }).none);
 });

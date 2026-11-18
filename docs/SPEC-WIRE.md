@@ -5,7 +5,8 @@ Status: draft. Nothing here is activated on any network. This file is normative 
 
 Changes from v0.2: `pk_eph` is a 32-byte X25519 public key (was a 33-byte secp256k1 point), so wallets can scan with
 the native X25519 of WebCrypto; the spend section loses `proofLen`, since the proof always has 480 bytes. A TRANSFER is
-830 bytes. Sealing and scanning are specified for wallets in [`SPEC-NOTES.md`](SPEC-NOTES.md).
+830 bytes. A public opening is `npk` alone and public notes use `rho = 0` (a fresh `npk` already makes each one unique,
+and nothing in a public note is hidden): a MINT is 42 bytes instead of 74, about 32 vB less per mint. Sealing and scanning are specified for wallets in [`SPEC-NOTES.md`](SPEC-NOTES.md).
 
 Changes from v0.1: tokens are named by their ticker everywhere. MINT, BURN and LIST carry `ticker(4)`
 instead of an indexer-assigned `tokenNum(4)` (same size), and the asset id inside notes and proofs is
@@ -30,11 +31,12 @@ leaf     = H( H( H(TAG_LEAF, t), v ), H(npk, rho) )
 ```
 
 - `t` = `tickerT(ticker)` = the ticker's 4 ASCII bytes read as a big-endian u32 (`"GENE"` = `0x47454e45`),
-  `v` = amount (u64), `npk` = note public key, `rho` = random field element.
+  `v` = amount (u64), `npk` = note public key, `rho` = a field element (derived for sealed notes, `SPEC-NOTES.md` §3;
+  `0` for public notes).
 - `t = 0` is reserved for native BTC; no valid ticker maps to it (the smallest is `"0000"` = `0x30303030`).
 - One append-only tree for every ticker: depth 32, nodes `H(left, right)`, empty leaf `0`,
   `Z[0] = 0`, `Z[i+1] = H(Z[i], Z[i])`. `R[h]` = root after block `h`.
-- A **public opening** is `npk (32) ‖ rho (32)` = 64 bytes. For public notes the indexer computes the leaf.
+- A **public opening** is `npk` (32 bytes). For public notes the indexer computes the leaf with `rho = 0`.
 
 ## 3. Carriers
 
@@ -55,13 +57,13 @@ After parsing, re-serialising must give the same bytes; trailing bytes are rejec
 
 | Type | Code | Body after the header | Bytes |
 | --- | --- | --- | --- |
-| DEPLOY | 0x01 | `ticker(4) max(8) lim(8) pre(8) start(4) end(4) unlock(4) price(8) payMode(1) psLen(1) payScript(psLen) [team opening(64) if pre > 0] [spend if bytes remain]` | 120 with a team opening; + 824 with a spend |
-| MINT | 0x02 | `ticker(4) opening(64)` | 74 |
+| DEPLOY | 0x01 | `ticker(4) max(8) lim(8) pre(8) start(4) end(4) unlock(4) price(8) payMode(1) psLen(1) payScript(psLen) [team opening(32) if pre > 0] [spend if bytes remain]` | 88 with a team opening; + 824 with a spend |
+| MINT | 0x02 | `ticker(4) opening(32)` | 42 |
 | TRANSFER | 0x03 | `spend` | 830 |
 | BURN | 0x04 | `ticker(4) vPub(8) spend` | 842 |
 | LIST | 0x05 | `ticker(4) amount(8) price(8) lockVout(1) psLen(1) payScript(psLen) spend` | 852 + payScript |
-| TAKE | 0x06 | `opening(64)` | 70 |
-| CLAIM | 0x07 | `listTxid(32) opening(64) sig(64)` | 166 |
+| TAKE | 0x06 | `opening(32)` | 38 |
+| CLAIM | 0x07 | `listTxid(32) opening(32) sig(64)` | 134 |
 
 - `ticker`: 4 ASCII characters `[A-Z0-9]`, in every type that carries one; anything else is rejected. `payMode`: 0 none, 1 burn, 2 pay to `payScript`.
   `payScript` (≤ 34 bytes) is present only with payMode 2. `listTxid`: txid in display (RPC) byte order.
@@ -129,12 +131,12 @@ non-zero, distinct, never seen; output leaves non-zero; room in the tree; proof 
 | Type | Accepted when | Effect |
 | --- | --- | --- |
 | DEPLOY | ticker never deployed; `max > 0`, `lim > 0`, `pre < max`, `(max − pre) mod lim = 0`; `start > H`; `end = 0` or `end ≥ start`; `unlock ≥ start`; payMode 0 ⇔ `price = 0`. If `D > 0`: a spend with `vPub = D`, `tPub = t("SH20")`; if `D = 0`: no spend | token recorded under its ticker; `burned[SH20] += D`; team note scheduled for block `unlock` |
-| MINT | `ticker` deployed; `start ≤ H`; `end = 0` or `H ≤ end`; mints `< (max − pre) / lim`; paid in the same tx: payMode 1 = OP_RETURN outputs carry ≥ `price` sats, payMode 2 = outputs to `payScript` total ≥ `price` | leaf `(t, lim, npk, rho)`; mints + 1 |
+| MINT | `ticker` deployed; `start ≤ H`; `end = 0` or `H ≤ end`; mints `< (max − pre) / lim`; paid in the same tx: payMode 1 = OP_RETURN outputs carry ≥ `price` sats, payMode 2 = outputs to `payScript` total ≥ `price` | leaf `(t, lim, npk, 0)`; mints + 1 |
 | TRANSFER | spend with `vPub = tPub = 0` | — |
 | BURN | `ticker` deployed; `vPub > 0`; spend with `tPub = t(ticker)` | `burned[ticker] += vPub` |
 | LIST | `ticker` deployed; `amount > 0`, `price > 0`; output `lockVout` is P2TR with ≥ 330 sats; spend with `vPub = amount`, `tPub = t(ticker)` | listing ACTIVE, lock = `(txid, lockVout)` |
-| TAKE | the tx spends the lock of an ACTIVE listing (first in input order) | leaf `(t, amount, npk, rho)`; SOLD if outputs to `payScript` total ≥ `price`, else CANCELLED |
-| CLAIM | listing is CLOSED; BIP340 signature by the lock's output key over `SHA256("sh20/v0/claim" ‖ listTxid ‖ npk ‖ rho)` | leaf `(t, amount, npk, rho)`; CLAIMED |
+| TAKE | the tx spends the lock of an ACTIVE listing (first in input order) | leaf `(t, amount, npk, 0)`; SOLD if outputs to `payScript` total ≥ `price`, else CANCELLED |
+| CLAIM | listing is CLOSED; BIP340 signature by the lock's output key over `SHA256("sh20/v0/claim" ‖ listTxid ‖ npk)` | leaf `(t, amount, npk, 0)`; CLAIMED |
 
 A rejected envelope changes nothing; sats it paid are not returned.
 

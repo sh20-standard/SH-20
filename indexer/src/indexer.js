@@ -13,7 +13,7 @@ import { DEFAULT_PROFILE, DOMAIN, FR, MIN_LOCK_SATS, PAY_MODE, N_OUT } from './c
 import { extractEnvelope } from './carrier.js';
 import { parseEnvelope, CodecError } from './codec.js';
 import { NoteTree } from './tree.js';
-import { noteLeaf, frToBytes, tickerT } from './notes.js';
+import { noteLeaf, frToBytes, tickerT, PUBLIC_RHO } from './notes.js';
 import { verify as schnorrVerify } from './schnorr.js';
 
 export class Reject extends Error {}
@@ -50,7 +50,7 @@ export class Indexer {
     this.roots = new Map(); // height -> root after that block
     this.listings = new Map(); // LIST txid -> listing
     this.locks = new Map(); // "txid:vout" -> LIST txid
-    this.teamQueue = new Map(); // unlock height -> [{ ticker, v, npk, rho }]
+    this.teamQueue = new Map(); // unlock height -> [{ ticker, v, npk }]
     this.height = null;
     this.digest = sha256(Buffer.from(DOMAIN.DIGEST, 'utf8'));
     this.frames = [];
@@ -104,7 +104,7 @@ export class Indexer {
       if (!this.meta.has('genesis')) events.push(this._installGenesis(block.height));
       const unlocks = (this.teamQueue.get(block.height) || []).slice().sort((a, b) => (a.ticker < b.ticker ? -1 : a.ticker > b.ticker ? 1 : 0));
       for (const u of unlocks) {
-        const pos = this._append(noteLeaf(tickerT(u.ticker), u.v, u.npk, u.rho), { kind: 'TEAM', ticker: u.ticker, v: u.v, npk: hexFr(u.npk), rho: hexFr(u.rho) });
+        const pos = this._append(noteLeaf(tickerT(u.ticker), u.v, u.npk, PUBLIC_RHO), { kind: 'TEAM', ticker: u.ticker, v: u.v, npk: hexFr(u.npk) });
         events.push({ type: 'TEAM_UNLOCK', ticker: u.ticker, v: u.v, pos });
       }
       for (const tx of block.txs) this._applyTx(tx, block.height, events, rejected);
@@ -316,7 +316,7 @@ export class Indexer {
       payScript: env.payScript.toString('hex'), mints: 0n, burned: 0n, deployTxid: tx.txid, deployHeight: H,
     });
     if (pre > 0n) {
-      const queue = (this.teamQueue.get(unlock) || []).concat([{ ticker: env.ticker, v: pre, npk: env.team.npk, rho: env.team.rho }]);
+      const queue = (this.teamQueue.get(unlock) || []).concat([{ ticker: env.ticker, v: pre, npk: env.team.npk }]);
       this._set(this.teamQueue, unlock, queue);
     }
     return { type: 'DEPLOY', ticker: env.ticker, ...(commit ? { burn: commit } : {}) };
@@ -329,7 +329,7 @@ export class Indexer {
     if (t.mints >= (t.max - t.pre) / t.lim) throw new Reject('sold out');
     if (!this._paid(tx, t.payMode, t.price, Buffer.from(t.payScript, 'hex'))) throw new Reject('mint not paid');
     this._roomFor(1);
-    const pos = this._append(noteLeaf(t.t, t.lim, env.npk, env.rho), { kind: 'MINT', ticker: t.ticker, v: t.lim, npk: hexFr(env.npk), rho: hexFr(env.rho) });
+    const pos = this._append(noteLeaf(t.t, t.lim, env.npk, PUBLIC_RHO), { kind: 'MINT', ticker: t.ticker, v: t.lim, npk: hexFr(env.npk) });
     this._set(this.tokens, t.ticker, { ...t, mints: t.mints + 1n });
     return { type: 'MINT', ticker: t.ticker, v: t.lim, pos };
   }
@@ -368,7 +368,7 @@ export class Indexer {
     const l = this.listings.get(id);
     this._roomFor(1);
     const sold = this._paid(tx, PAY_MODE.PAY, l.price, Buffer.from(l.payScript, 'hex'));
-    const pos = this._append(noteLeaf(tickerT(l.ticker), l.amount, env.npk, env.rho), { kind: 'TAKE', ticker: l.ticker, v: l.amount, npk: hexFr(env.npk), rho: hexFr(env.rho) });
+    const pos = this._append(noteLeaf(tickerT(l.ticker), l.amount, env.npk, PUBLIC_RHO), { kind: 'TAKE', ticker: l.ticker, v: l.amount, npk: hexFr(env.npk) });
     this._set(this.listings, id, { ...l, state: sold ? 'SOLD' : 'CANCELLED', takeTxid: tx.txid });
     return { type: 'TAKE', listTxid: id, outcome: sold ? 'SOLD' : 'CANCELLED', pos };
   }
@@ -377,10 +377,10 @@ export class Indexer {
     const l = this.listings.get(env.listTxid);
     if (!l) throw new Reject('unknown listing');
     if (l.state !== 'CLOSED') throw new Reject('listing is not CLOSED');
-    const msg = sha256(Buffer.from(DOMAIN.CLAIM, 'utf8'), Buffer.from(env.listTxid, 'hex'), frToBytes(env.npk), frToBytes(env.rho));
+    const msg = Indexer.claimMessage(env.listTxid, env.npk);
     if (!schnorrVerify(Buffer.from(l.lockKey, 'hex'), msg, env.sig)) throw new Reject('bad CLAIM signature');
     this._roomFor(1);
-    const pos = this._append(noteLeaf(tickerT(l.ticker), l.amount, env.npk, env.rho), { kind: 'CLAIM', ticker: l.ticker, v: l.amount, npk: hexFr(env.npk), rho: hexFr(env.rho) });
+    const pos = this._append(noteLeaf(tickerT(l.ticker), l.amount, env.npk, PUBLIC_RHO), { kind: 'CLAIM', ticker: l.ticker, v: l.amount, npk: hexFr(env.npk) });
     this._set(this.listings, l.listTxid, { ...l, state: 'CLAIMED' });
     return { type: 'CLAIM', listTxid: l.listTxid, pos };
   }
@@ -392,7 +392,7 @@ export class Indexer {
   }
 
   /** Message a seller signs with the lock key to CLAIM a CLOSED listing. */
-  static claimMessage(listTxid, npk, rho) {
-    return sha256(Buffer.from(DOMAIN.CLAIM, 'utf8'), Buffer.from(listTxid, 'hex'), frToBytes(npk), frToBytes(rho));
+  static claimMessage(listTxid, npk) {
+    return sha256(Buffer.from(DOMAIN.CLAIM, 'utf8'), Buffer.from(listTxid, 'hex'), frToBytes(npk));
   }
 }
