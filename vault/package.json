@@ -1,0 +1,13 @@
+{
+  "name": "sh20-vault",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SH-20 browser vault: static page, keys on the device, PSBTs signed by Xverse / UniSat / Leather (draft v0.1, signet)",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test 'test/*.test.js'",
+    "build": "node build.js"
+  },
+  "engines": { "node": ">=20" }
+}
