@@ -25,6 +25,11 @@ test('every type round-trips byte for byte', () => {
 
 test('sizes of the proof-less envelopes', () => {
   assert.equal(serializeEnvelope({ type: 'MINT', ticker: 'GENE', ...opening() }).length, 42);
+  assert.equal(serializeEnvelope({ type: 'MINT', ticker: 'GENE', ...opening(), k: 1 }).length, 42);
+  const batch = serializeEnvelope({ type: 'MINT', ticker: 'GENE', ...opening(), k: 10 });
+  assert.equal(batch.length, 43);
+  assert.equal(parseEnvelope(batch).env.k, 10);
+  for (const k of [0, 11, 2.5]) assert.throws(() => serializeEnvelope({ type: 'MINT', ticker: 'GENE', ...opening(), k }), /mint count must be 1 to 10/);
   assert.equal(serializeEnvelope({ type: 'TAKE', ...opening() }).length, 38);
   assert.equal(serializeEnvelope({ type: 'CLAIM', listTxid: '00'.repeat(32), ...opening(), sig: Buffer.alloc(64) }).length, 134);
   assert.equal(serializeEnvelope(deployEnv()).length, 6 + 4 + 8 * 3 + 4 * 3 + 8 + 1 + 1);
@@ -66,7 +71,9 @@ test('strict parsing rejects malformed envelopes', () => {
   cases['bad ticker in MINT'] = Buffer.concat([mintBytes.subarray(0, 6), Buffer.from('GEN\0'), mintBytes.subarray(10)]);
   assert.throws(() => serializeEnvelope({ type: 'MINT', ticker: 'gene', ...opening() }), /bad ticker/);
   assert.throws(() => serializeEnvelope({ type: 'MINT', tokenNum: 1, ...opening() }), /bad ticker/);
-  assert.throws(() => parseEnvelope(Buffer.concat([mintBytes, Buffer.from([0])])), /trailing bytes/);
+  // A batch MINT ends with its count, 2 to 10; one mint is written without the byte, and nothing follows the count.
+  for (const k of [0, 1, 11, 255]) assert.throws(() => parseEnvelope(Buffer.concat([mintBytes, Buffer.from([k])])), /mint count must be 2 to 10/, `k = ${k}`);
+  assert.throws(() => parseEnvelope(Buffer.concat([mintBytes, Buffer.from([2, 0])])), /trailing bytes/);
   assert.throws(() => parseEnvelope(mintBytes.subarray(0, mintBytes.length - 1)), /truncated/);
   for (const [reason, buf] of Object.entries(cases)) {
     assert.throws(() => parseEnvelope(buf), (e) => e instanceof CodecError && e.message.includes(reason.replace(' in MINT', '')), reason);

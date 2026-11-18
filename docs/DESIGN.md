@@ -59,8 +59,11 @@ audits and public signet tests happen before activation.
 - **Proposed rule:** every DEPLOY burns `D` SH20, so the whole meta consumes SH20 supply after its
   mint-out (`D = 0` turns the burn off). The trade-off: deployers must buy genesis first, which
   slows spam but also adoption. The alternative is the plain BRC-20 model with no burn.
-- **MINT** creates a public note of exactly `lim` units, with no proof, in one OP_RETURN transaction.
-  All mints of a ticker are identical. A rejected mint is not refunded.
+- **MINT** creates a public note of `lim` units, with no proof, in one OP_RETURN transaction. One more byte, `k`
+  (2 to 10), mints `k` at once: one note of `k × lim` for `k × price`, in about 165 vB instead of `k × 164`. ORDI and Runes
+  allow one mint per transaction; ten keeps a batch at 10,000 SH20, so taking the whole genesis supply still needs 2,100
+  transactions (maintainer, 2026-11-19). Near the end, a batch gets what is left and pays only for that, as the last BRC-20
+  mint does. A rejected mint is not refunded.
 - **TRANSFER** spends two notes and creates three, inside the pool; only nullifiers and new leaves are published.
 - **BURN** spends notes and publishes the amount and ticker that leave.
 - **Trading:** LIST moves an amount into a public escrow and creates a P2TR lock output. The seller

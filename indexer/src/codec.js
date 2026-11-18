@@ -5,7 +5,7 @@
 // integers below the BN254 scalar field. Layouts are in docs/SPEC-WIRE.md.
 
 import {
-  FR, MAGIC, VERSION, TYPE, TYPE_NAME, N_IN, N_OUT, PROOF_BYTES, PAYSCRIPT_MAX, PAY_MODE,
+  FR, MAGIC, VERSION, TYPE, TYPE_NAME, N_IN, N_OUT, PROOF_BYTES, PAYSCRIPT_MAX, PAY_MODE, MINT_BATCH_MAX,
 } from './constants.js';
 
 export class CodecError extends Error {}
@@ -198,9 +198,15 @@ export function parseEnvelope(buf) {
       env = { type: name, ticker, max, lim, pre, start, end, unlock, price, payMode, payScript, team, spend };
       break;
     }
-    case TYPE.MINT:
-      env = { type: name, ticker: readTicker(r), ...readOpening(r) };
+    case TYPE.MINT: {
+      // k mints at once: a trailing count byte, 2 to MINT_BATCH_MAX. One mint is written without it.
+      env = { type: name, ticker: readTicker(r), ...readOpening(r), k: 1 };
+      if (r.remaining() > 0) {
+        env.k = r.u8();
+        if (env.k < 2 || env.k > MINT_BATCH_MAX) throw new CodecError(`mint count must be 2 to ${MINT_BATCH_MAX}`);
+      }
       break;
+    }
     case TYPE.TRANSFER: {
       const res = readSpend(r);
       env = { type: name, spend: res.spend };
@@ -262,10 +268,14 @@ export function serializeEnvelope(env) {
       if (BigInt(env.pre) > 0n) writeOpening(w, env.team);
       if (env.spend) writeSpend(w, env.spend);
       break;
-    case TYPE.MINT:
+    case TYPE.MINT: {
       writeTicker(w, env.ticker);
       writeOpening(w, env);
+      const k = env.k ?? 1;
+      if (!Number.isInteger(k) || k < 1 || k > MINT_BATCH_MAX) throw new CodecError(`mint count must be 1 to ${MINT_BATCH_MAX}`);
+      if (k > 1) w.u8(k);
       break;
+    }
     case TYPE.TRANSFER:
       writeSpend(w, env.spend);
       break;

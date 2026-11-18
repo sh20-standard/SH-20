@@ -9,6 +9,7 @@ the native X25519 of WebCrypto; the spend section loses `proofLen`, since the pr
 and nothing in a public note is hidden): a MINT is 42 bytes instead of 74, about 32 vB less per mint. Sealing and scanning are specified for wallets in [`SPEC-NOTES.md`](SPEC-NOTES.md).
 The events inside the digest have an exact byte encoding (§6) instead of JSON, and the GENESIS record commits to the
 profile's rules, so a second implementation in any language can reproduce every digest.
+A MINT may carry a count `k` (2 to 10) as one more byte: one note of `k × lim` for `k × price` (§5).
 
 Changes from v0.1: tokens are named by their ticker everywhere. MINT, BURN and LIST carry `ticker(4)`
 instead of an indexer-assigned `tokenNum(4)` (same size), and the asset id inside notes and proofs is
@@ -60,7 +61,7 @@ After parsing, re-serialising must give the same bytes; trailing bytes are rejec
 | Type | Code | Body after the header | Bytes |
 | --- | --- | --- | --- |
 | DEPLOY | 0x01 | `ticker(4) max(8) lim(8) pre(8) start(4) end(4) unlock(4) price(8) payMode(1) psLen(1) payScript(psLen) [team opening(32) if pre > 0] [spend if bytes remain]` | 88 with a team opening; + 824 with a spend |
-| MINT | 0x02 | `ticker(4) opening(32)` | 42 |
+| MINT | 0x02 | `ticker(4) opening(32) [k(1)]` | 42, or 43 with `k` |
 | TRANSFER | 0x03 | `spend` | 830 |
 | BURN | 0x04 | `ticker(4) vPub(8) spend` | 842 |
 | LIST | 0x05 | `ticker(4) amount(8) price(8) lockVout(1) psLen(1) payScript(psLen) spend` | 852 + payScript |
@@ -69,6 +70,8 @@ After parsing, re-serialising must give the same bytes; trailing bytes are rejec
 
 - `ticker`: 4 ASCII characters `[A-Z0-9]`, in every type that carries one; anything else is rejected. `payMode`: 0 none, 1 burn, 2 pay to `payScript`.
   `payScript` (≤ 34 bytes) is present only with payMode 2. `listTxid`: txid in display (RPC) byte order.
+- `k`: the number of mints in one MINT, 2 to 10 (`MINT_BATCH_MAX`); a single mint is written without the byte, so `k = 0`,
+  `k = 1` and `k > 10` are rejected.
 
 **Spend section**
 
@@ -133,7 +136,7 @@ non-zero, distinct, never seen; output leaves non-zero; room in the tree; proof 
 | Type | Accepted when | Effect |
 | --- | --- | --- |
 | DEPLOY | ticker never deployed; `max > 0`, `lim > 0`, `pre < max`, `(max − pre) mod lim = 0`; `start > H`; `end = 0` or `end ≥ start`; `unlock ≥ start`; payMode 0 ⇔ `price = 0`. If `D > 0`: a spend with `vPub = D`, `tPub = t("SH20")`; if `D = 0`: no spend | token recorded under its ticker; `burned[SH20] += D`; team note scheduled for block `unlock` |
-| MINT | `ticker` deployed; `start ≤ H`; `end = 0` or `H ≤ end`; mints `< (max − pre) / lim`; paid in the same tx: payMode 1 = OP_RETURN outputs carry ≥ `price` sats, payMode 2 = outputs to `payScript` total ≥ `price` | leaf `(t, lim, npk, 0)`; mints + 1 |
+| MINT | `ticker` deployed; `start ≤ H`; `end = 0` or `H ≤ end`; `left = (max − pre) / lim − mints > 0`; with `m = min(k, left)` (`k = 1` without the byte), paid in the same tx: payMode 1 = OP_RETURN outputs carry ≥ `m × price` sats, payMode 2 = outputs to `payScript` total ≥ `m × price` | one leaf `(t, m × lim, npk, 0)`; mints + `m` |
 | TRANSFER | spend with `vPub = tPub = 0` | — |
 | BURN | `ticker` deployed; `vPub > 0`; spend with `tPub = t(ticker)` | `burned[ticker] += vPub` |
 | LIST | `ticker` deployed; `amount > 0`, `price > 0`; output `lockVout` is P2TR with ≥ 330 sats; spend with `vPub = amount`, `tPub = t(ticker)` | listing ACTIVE, lock = `(txid, lockVout)` |
@@ -161,7 +164,7 @@ concatenation parses one way only.
 | Event | Code | Payload | Record |
 | --- | --- | --- | ---: |
 | DEPLOY | 0x01 | `ticker` ‖ `0x00`, or `ticker` ‖ `0x01` ‖ `spent` (the burn of `D` when `D > 0`) | 38 / 114 |
-| MINT | 0x02 | `ticker` ‖ `v`(u64) ‖ `pos` | 49 |
+| MINT | 0x02 | `ticker` ‖ `v`(u64, = `m × lim`) ‖ `pos` | 49 |
 | TRANSFER | 0x03 | `spent` | 109 |
 | BURN | 0x04 | `ticker` ‖ `vPub`(u64) ‖ `spent` | 121 |
 | LIST | 0x05 | `ticker` ‖ `amount`(u64) ‖ `price`(u64) ‖ `spent` | 129 |

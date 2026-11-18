@@ -323,12 +323,16 @@ export class Indexer {
     const t = this._token(env.ticker);
     if (H < t.start) throw new Reject('mint not open yet');
     if (t.end !== 0 && H > t.end) throw new Reject('mint closed');
-    if (t.mints >= (t.max - t.pre) / t.lim) throw new Reject('sold out');
-    if (!this._paid(tx, t.payMode, t.price, Buffer.from(t.payScript, 'hex'))) throw new Reject('mint not paid');
+    const left = (t.max - t.pre) / t.lim - t.mints;
+    if (left <= 0n) throw new Reject('sold out');
+    // A batch near the end gets what is left, and pays only for that.
+    const k = BigInt(env.k ?? 1) < left ? BigInt(env.k ?? 1) : left;
+    if (!this._paid(tx, t.payMode, t.price * k, Buffer.from(t.payScript, 'hex'))) throw new Reject('mint not paid');
     this._roomFor(1);
-    const pos = this._append(noteLeaf(t.t, t.lim, env.npk, PUBLIC_RHO), { kind: 'MINT', ticker: t.ticker, v: t.lim, npk: hexFr(env.npk) });
-    this._set(this.tokens, t.ticker, { ...t, mints: t.mints + 1n });
-    return { type: 'MINT', ticker: t.ticker, v: t.lim, pos };
+    const v = t.lim * k;
+    const pos = this._append(noteLeaf(t.t, v, env.npk, PUBLIC_RHO), { kind: 'MINT', ticker: t.ticker, v, npk: hexFr(env.npk) });
+    this._set(this.tokens, t.ticker, { ...t, mints: t.mints + k });
+    return { type: 'MINT', ticker: t.ticker, v, pos };
   }
 
   _burn(env, body, H) {
