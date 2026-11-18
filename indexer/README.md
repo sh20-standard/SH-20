@@ -18,7 +18,7 @@ Node 20 or newer, no dependencies.
 
 ```sh
 (cd ../circuit && ./build-wasm.sh)   # optional: the spend verifier; the 4 tests that need it are skipped without it
-npm test                  # 44 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, API, real proofs
+npm test                  # 45 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, API, real proofs
 npm run vectors           # regenerates vectors/v0.2.json (deterministic)
 node bin/replay.js <dir>  # replays a folder of `bitcoin-cli getblock <hash> 2` JSON files
 node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser U --rpcpass P --activation H   # live, own node
@@ -31,7 +31,7 @@ The live follower serves a read-only JSON API for wallets: see [`docs/API.md`](.
 
 | Path | What |
 | --- | --- |
-| `src/poseidon.js` | Poseidon over BN254, circomlib-compatible; constants generated in place with the Grain LFSR |
+| `src/poseidon.js` | Poseidon over BN254 for 2 to 5 inputs, circomlib-compatible; constants generated in place with the Grain LFSR |
 | `src/schnorr.js` | BIP340 sign and verify (checked against the BIP340 vectors) |
 | `src/codec.js` | strict envelope parser and serialiser |
 | `src/carrier.js` | finds the envelope in a transaction (OP_RETURN or tapscript witness) |

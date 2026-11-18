@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { poseidon2, POSEIDON2_VECTOR_1_2 } from '../src/poseidon.js';
+import { readFileSync } from 'node:fs';
+import { P, poseidon, poseidon2, POSEIDON2_VECTOR_1_2 } from '../src/poseidon.js';
 import { publicKey, sign, verify } from '../src/schnorr.js';
 import { NoteTree, rootFromPath } from '../src/tree.js';
 
@@ -8,6 +9,24 @@ const H = (x) => Buffer.from(x, 'hex');
 
 test('Poseidon matches the circomlib vector poseidon([1, 2])', () => {
   assert.equal(poseidon2(1n, 2n), POSEIDON2_VECTOR_1_2);
+});
+
+test('Poseidon with 2 to 5 inputs matches circomlibjs', () => {
+  // written from circomlibjs by circuit/bench/poseidon-vectors.mjs
+  const { vectors } = JSON.parse(readFileSync(new URL('./fixtures/poseidon-circomlibjs.json', import.meta.url), 'utf8'));
+  const counting = (n) => vectors.find((v) => v.inputs.join() === Array.from({ length: n }, (_, i) => i + 1).join());
+  for (const n of [2, 3, 4, 5]) assert.ok(counting(n), `poseidon([1..${n}]) is among the vectors`);
+  assert.equal(BigInt(counting(2).hash), POSEIDON2_VECTOR_1_2);
+  for (const { inputs, hash } of vectors) {
+    assert.equal(poseidon(inputs.map(BigInt)).toString(), hash, `${inputs.length} inputs`);
+    if (inputs.length === 2) assert.equal(poseidon2(BigInt(inputs[0]), BigInt(inputs[1])).toString(), hash);
+  }
+  // inputs are taken modulo the field, as poseidon2 always did
+  assert.equal(poseidon([P + 1n, 2n, -1n]), poseidon([1n, 2n, P - 1n]));
+  assert.equal(poseidon2(1, 2), POSEIDON2_VECTOR_1_2);
+  // only the widths circomlib is used with here
+  for (const bad of [[], [1n], [1n, 2n, 3n, 4n, 5n, 6n]]) assert.throws(() => poseidon(bad), /not supported/);
+  assert.throws(() => poseidon(1n, 2n), /array/);
 });
 
 test('BIP340 test vectors 0 and 1 (sign and verify)', () => {

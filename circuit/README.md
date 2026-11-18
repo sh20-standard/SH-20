@@ -116,6 +116,7 @@ node bench/tx-vsize.mjs
 | `src/ffi.rs` | C ABI for WebAssembly and native callers |
 | `circom/` | the same relation in circom, for cross-checks only |
 | `bench/` | measurement scripts |
+| `js/` | what a wallet computes for a spend, in dependency-free JavaScript, with vectors written by `src/vectors.rs` |
 
 ## Next
 

@@ -16,6 +16,7 @@ pub mod model;
 pub mod plonk;
 pub mod poseidon;
 pub mod spend;
+pub mod vectors;
 pub mod wire;
 
 pub use ark_bn254::Fr;
