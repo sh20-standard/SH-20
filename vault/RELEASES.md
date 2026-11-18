@@ -18,6 +18,13 @@ The CID is the fingerprint of what IPFS serves: open `https://<cid>.ipfs.dweb.li
 better a local IPFS node (`ipfs get <cid>` checks every block against the CID).
 A public gateway is trusted to serve the right blocks; a local node or a verifying client is not.
 
+## 0.2.0
+
+- Source commit: `f8122d7dbb154df189ca883c8c35ce4917299a5e`
+- Package: `sh20-vault-0.2.0.tar`, 122368 bytes, 24 files
+- SHA-256: `392c0fd7e0bb796637e6c6b891e4149fbdbc4e27315fb22e80e8e69369f0e436`
+- IPFS CID: `bafybeigfj45xzun5mek5zvqeby6bs76ukwkslx7ifa7ipzdoylfl4pnavi`
+
 ## 0.1.0
 
 - Source commit: `cb0dee33c5b118b0da1d09cd4e12c5273d9fdb88`
