@@ -5,8 +5,9 @@ import { Vault } from './keys.js';
 import { WALLETS } from './wallets.js';
 import { IndexerApi, Esplora } from './api.js';
 import { buildMint, mintProblems, mintsLeft } from './mint.js';
-import { verifyDeploy } from './deploy.js';
-import { crossCheck, TERMS } from './consensus.js';
+import { verifyMintTerms } from './deploy.js';
+import { planDeploy } from './deploy-plan.js';
+import { crossCheck, TERMS, profileOf } from './consensus.js';
 import { finalizePsbt, sameUnsignedTx, scriptType, addressToScript } from './btc.js';
 import { frHex } from './fr.js';
 import { NPK_SCHEME } from './npk.js';
@@ -59,7 +60,7 @@ const explorerTx = (id) => settings.esplora.replace(/\/api\/?$/, '') + '/tx/' + 
 
 // ---- state ----------------------------------------------------------------------
 
-const st = { vault: null, wallet: null, tokens: [], status: null, tip: null, sync: null };
+const st = { vault: null, wallet: null, tokens: [], status: null, tip: null, sync: null, profiles: [] };
 
 // ---- DOM helpers ----------------------------------------------------------------
 
@@ -227,12 +228,17 @@ async function refresh() {
     st.tokens = [];
     fill('indexer-status', h('span', { class: 'err' }, `Indexer unreachable (${indexer.base}): ${e.message}`));
   }
+  // the other indexers' profiles (D, activation height), for the deploy screen
+  const others = await Promise.allSettled(indexers.slice(1).map((a) => a.status()));
+  st.profiles = [st.status ? { base: indexer.base, ...profileOf(st.status) } : null,
+    ...others.map((r, i) => (r.status === 'fulfilled' ? { base: indexers[i + 1].base, ...profileOf(r.value) } : null))].filter(Boolean);
   try {
     st.tip = await esplora.tipHeight();
   } catch {
     st.tip = null;
   }
   renderTokens();
+  renderDeploy();
 }
 
 function chainHeight() {
@@ -250,7 +256,7 @@ function renderTokens() {
     const b = h('button', { type: 'button', class: 'small', disabled: problems.length > 0, title: problems.join('; ') }, 'Mint');
     b.addEventListener('click', () => openMint(t.ticker));
     return h('tr', {},
-      h('td', {}, h('strong', {}, t.ticker)),
+      h('td', {}, h('strong', {}, t.ticker), t.genesis ? h('span', { class: 'muted' }, ' genesis') : null),
       h('td', { class: 'num' }, units(t.lim)),
       h('td', { class: 'num' }, `${units(t.mints)} / ${units((t.max - t.pre) / t.lim)}`),
       h('td', {}, payText(t)),
@@ -313,7 +319,8 @@ async function prepareMint(shown, feeRate, out) {
   if (check.problems.length) throw new Error(`mint refused: ${check.problems.join('; ')}`);
   const token = check.token;
   if (TERMS.some((k) => String(token[k]) !== String(shown[k]))) throw new Error('the token terms changed since they were shown; open the mint again');
-  await verifyDeploy(esplora, token); // the mint terms come from the chain, not from the indexer alone
+  // the mint terms come from the chain (the DEPLOY) or the profile (SH20), not from the indexer alone
+  const source = await verifyMintTerms(esplora, token, check.profile);
   const tip = await esplora.tipHeight();
   const w = st.wallet;
   let utxos = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
@@ -332,7 +339,9 @@ async function prepareMint(shown, feeRate, out) {
       h('dt', {}, 'Network fee'), h('dd', {}, sats(m.fee)),
       h('dt', {}, 'Mint price'), h('dd', {}, sats(m.price)),
       h('dt', {}, 'Total'), h('dd', {}, h('strong', {}, sats(m.fee + m.price))),
-      h('dt', {}, 'Terms'), h('dd', {}, 'price, payment, window and supply checked against the DEPLOY transaction on chain'),
+      h('dt', {}, 'Terms'), h('dd', {}, source === 'genesis'
+        ? `genesis token: price, payment, window and supply checked against the profile constants in this vault (start = activation block ${check.profile.activationHeight})`
+        : 'price, payment, window and supply checked against the DEPLOY transaction on chain'),
       check.agreed > 1 ? [h('dt', {}, 'Indexers'), h('dd', {}, `${check.agreed} agree on these terms`)] : null,
       h('dt', {}, 'Envelope'), h('dd', {}, h('code', {}, toHex(m.envelope)))),
     checkNotes(check),
@@ -362,6 +371,100 @@ async function signAndSend(token, m, opening, out) {
     h('p', { class: 'ok' }, `Broadcast: ${done.vsize} vB, fee ${sats(m.fee)}.`),
     h('p', {}, h('a', { href: explorerTx(id), target: '_blank', rel: 'noopener noreferrer' }, id)));
   renderAll();
+}
+
+// ---- deploy ----------------------------------------------------------------------
+
+const deployForm = { ticker: '', max: '21000000', lim: '1000', pre: '0', start: '', end: '0', unlock: '', payMode: '0', price: '0', payTo: '' };
+
+const bigField = (x) => (/^[0-9]{1,20}$/.test(x.trim()) ? BigInt(x.trim()) : null);
+const heightField = (x) => (/^[0-9]{1,10}$/.test(x.trim()) ? Number(x.trim()) : null);
+
+/** D as the configured indexers report it: one value, or null with the reason. */
+function deployBurn() {
+  const ps = st.profiles;
+  if (!ps.length) return { D: null, why: 'no indexer answered' };
+  const values = new Set(ps.map((p) => String(p.deployBurn)));
+  if (values.size > 1) return { D: null, why: `indexers disagree: ${ps.map((p) => `${p.base} ${p.deployBurn}`).join(', ')}` };
+  if (ps[0].deployBurn === null) return { D: null, why: 'the indexer does not report deployBurn' };
+  return { D: ps[0].deployBurn, agreed: ps.length };
+}
+
+function renderDeploy() {
+  const H = chainHeight();
+  const f = deployForm;
+  if (!f.start && H !== null) f.start = String(H + 12);
+  if (!f.unlock && f.start) f.unlock = f.start;
+  let payScript = new Uint8Array(0);
+  let payProblem = null;
+  if (f.payMode === '2' && f.payTo.trim()) {
+    try {
+      payScript = addressToScript(f.payTo.trim());
+    } catch {
+      payProblem = 'the payment address is not a signet address';
+    }
+  }
+  const d = {
+    ticker: f.ticker.trim().toUpperCase(), max: bigField(f.max), lim: bigField(f.lim), pre: bigField(f.pre),
+    start: heightField(f.start), end: heightField(f.end), unlock: heightField(f.unlock),
+    payMode: Number(f.payMode), price: f.payMode === '0' ? 0n : bigField(f.price), payScript,
+  };
+  const { D, why, agreed } = deployBurn();
+  const plan = planDeploy(d, {
+    nextHeight: H === null ? null : H + 1,
+    taken: st.tokens.map((t) => t.ticker),
+    deployBurn: D,
+    notes: st.vault ? st.vault.state.notes : [],
+  });
+  if (payProblem) plan.problems.push(payProblem);
+
+  const field = (key, label, attrs = {}) => {
+    const el = h('input', { value: f[key], spellcheck: 'false', autocomplete: 'off', ...attrs });
+    el.addEventListener('change', () => { f[key] = el.value; renderDeploy(); });
+    return h('label', {}, label, ' ', el);
+  };
+  const mode = h('select', {}, [['0', 'free'], ['1', 'burned (OP_RETURN)'], ['2', 'paid to an address']].map(([v, t]) => h('option', { value: v, selected: f.payMode === v }, t)));
+  mode.addEventListener('change', () => { f.payMode = mode.value; renderDeploy(); });
+
+  let burnRow;
+  let yours = null;
+  if (D === null) burnRow = h('span', { class: 'err' }, `unknown (${why}): nothing can be deployed`);
+  else if (D === 0n) burnRow = 'none: this profile has D = 0, so a DEPLOY carries no proof';
+  else {
+    burnRow = [h('strong', {}, `${units(D)} SH20`), ` burned with a proof: a spend of your SH20 notes (vPub = ${units(D)}, tPub = SH20), the change comes back to you as a shielded note`,
+      agreed > 1 ? ` · ${agreed} indexers agree on D` : ' · D as reported by one indexer'];
+    const inp = plan.inputs;
+    yours = !st.vault ? 'unlock the vault to see your SH20'
+      : !st.sync?.nullifiersKnown ? 'sync your notes first: spends of your SH20 notes are not known yet'
+      : inp.pick ? `${units(inp.total)} SH20 in ${inp.count} note(s); ${inp.pick.length === 1 ? 'one note' : 'two notes'} would pay the burn`
+      : h('span', { class: 'err' }, `${units(inp.total)} SH20 in ${inp.count} note(s): not enough, a spend takes at most two notes (mint SH20 first)`);
+  }
+
+  fill('deploy-body',
+    h('p', { class: 'muted' }, 'Pick a free 4-character ticker and its terms. The first valid DEPLOY of a ticker wins; the terms are public and final.'),
+    h('div', { class: 'grid' },
+      field('ticker', 'Ticker', { maxlength: '4', class: 'narrow', placeholder: 'ABCD' }),
+      field('max', 'Max supply', { inputmode: 'numeric' }),
+      field('lim', 'Per mint', { inputmode: 'numeric' }),
+      field('pre', 'Team allocation', { inputmode: 'numeric' }),
+      field('unlock', 'Team unlock block', { inputmode: 'numeric' }),
+      field('start', 'Mint start block', { inputmode: 'numeric' }),
+      field('end', 'Mint end block (0 = none)', { inputmode: 'numeric' }),
+      h('label', {}, 'Mint price ', mode),
+      f.payMode !== '0' ? field('price', 'Price (sats)', { inputmode: 'numeric' }) : null,
+      f.payMode === '2' ? field('payTo', 'Paid to (signet address)') : null),
+    h('dl', {},
+      h('dt', {}, 'Deploy burn'), h('dd', {}, burnRow),
+      yours ? [h('dt', {}, 'Your SH20'), h('dd', {}, yours)] : null,
+      plan.mints !== null ? [h('dt', {}, 'Public mints'), h('dd', {}, `${units(plan.mints)} × ${units(d.lim)} ${d.ticker}`)] : null,
+      plan.bytes !== null ? [h('dt', {}, 'Envelope'), h('dd', {}, plan.carrier === 'witness'
+        ? `${units(plan.bytes)} bytes in a tapscript witness (commit and reveal transactions, ≈ ${Math.ceil(plan.bytes / 4)} vB for the envelope)`
+        : `${plan.bytes} bytes in one OP_RETURN transaction`)] : null),
+    plan.problems.map((p) => h('div', { class: 'warn' }, p)),
+    h('button', { type: 'button', disabled: true }, 'Sign and broadcast'),
+    h('p', { class: 'muted' }, plan.proof
+      ? 'Not yet: a DEPLOY that burns SH20 is a spend, like a transfer. It waits for the circuit\'s reference keys and the ct sealing format; notes minted now use provisional keys the circuit cannot spend.'
+      : 'Sending a DEPLOY is not in this version of the vault.'));
 }
 
 // ---- notes -----------------------------------------------------------------------
@@ -502,6 +605,7 @@ function renderAll() {
   renderVault();
   renderWallet();
   renderTokens();
+  renderDeploy();
   renderNotes();
 }
 

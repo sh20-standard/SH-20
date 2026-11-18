@@ -58,6 +58,9 @@ button.small { padding: 1px 8px; font-size: 0.8rem; font-weight: 400; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 input.narrow { width: 6em; }
 textarea { font: 0.85rem var(--mono); padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); resize: vertical; }
+select { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0 14px; }
+.grid label input, .grid label select { display: block; width: 100%; box-sizing: border-box; margin-top: 2px; }
 input { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
 label { display: block; margin: 6px 0; }
 label input[type=url], label input[type=password], label textarea { width: 100%; max-width: 420px; display: block; margin-top: 2px; }
