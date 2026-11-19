@@ -116,6 +116,11 @@ The verifier stays cross-checked against snarkjs' PLONK verifier.
   forged notes inside the pool, and take out honest holders' share before they do, but the units in the open
   can never exceed the issued supply: honest supply holds even with a broken circuit. Zcash records the same
   counter for each of its pools since its 2018 counterfeiting bug; SH-20 enforces it.
+- **Copied envelopes:** anyone can copy an envelope from the mempool into a transaction of their own. Every field
+  that gives value to someone is in the signed body (output leaves, `payScript`, the team opening, and since v0.3 the
+  LIST's `lockKey`), so a copy only pays for what the original would have done. The LIST was the one exception: its
+  body named the lock by output index only, and a copy could have locked the listed tokens to the copier (found by
+  the clean-room indexer's review, 2026-11-19).
 - **Still visible:** mints, listings, burns and purchases; the BTC inputs paying fees (mitigated by
   relayers, fresh addresses, delayed publication); timing.
 - **Anonymity at launch** is small and grows with every mint, purchase and ticker.

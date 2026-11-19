@@ -82,7 +82,7 @@ at(A + 10, mintTx('nova-batch', 'NOVA', { vout: [{ value: 7500n, script: novaPay
 at(A + 10, mintTx('nova-mint-unpaid', 'NOVA', { vout: [{ value: 1000n, script: novaPay }] }));
 at(A + 10, mintTx('kiln-mint-too-early', 'KILN', { burnSats: 0n }));
 const listGene = spendTx('list-sh20', {
-  type: 'LIST', ticker: 'SH20', amount: 2000n, price: 60000n, lockVout: 0, payScript: p2wpkh('sh20-seller'), spend: spend('list-sh20', A + 10),
+  type: 'LIST', ticker: 'SH20', amount: 2000n, price: 60000n, lockVout: 0, lockKey: sellerKey, payScript: p2wpkh('sh20-seller'), spend: spend('list-sh20', A + 10),
 });
 listGene.lock = [{ value: 330n, script: p2tr(sellerKey) }];
 at(A + 11, spendTx('transfer-3', { type: 'TRANSFER', spend: spend('transfer-3', A + 9) }), spendTx('transfer-4', { type: 'TRANSFER', spend: spend('transfer-4', A + 10) }), listGene);
@@ -94,7 +94,7 @@ at(A + 13, deploy('deploy-kiln', {
 for (let i = 0; i < 4; i++) at(A + 16, mintTx(`kiln-mint-${i}`, 'KILN', { burnSats: 0n }));
 at(A + 16, spendTx('burn-sh20', { type: 'BURN', ticker: 'SH20', vPub: 300n, spend: spend('burn-sh20', A + 15) }));
 const listNova = spendTx('list-nova', {
-  type: 'LIST', ticker: 'NOVA', amount: 1000n, price: 25000n, lockVout: 0, payScript: p2wpkh('nova-seller'), spend: spend('list-nova', A + 16),
+  type: 'LIST', ticker: 'NOVA', amount: 1000n, price: 25000n, lockVout: 0, lockKey: sellerKey, payScript: p2wpkh('nova-seller'), spend: spend('list-nova', A + 16),
 });
 listNova.lock = [{ value: 330n, script: p2tr(sellerKey) }];
 at(A + 17, spendTx('transfer-5', { type: 'TRANSFER', spend: spend('transfer-5', A + 15) }), spendTx('transfer-6', { type: 'TRANSFER', spend: spend('transfer-6', A + 16) }), listNova);

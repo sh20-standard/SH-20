@@ -54,7 +54,7 @@ const envs = {
   mintGenesis: { type: 'MINT', ticker: 'SH20', ...op('mint1') },
   mintGenesisBatch: { type: 'MINT', ticker: 'SH20', ...op('mint0'), k: 2 },
   transfer: { type: 'TRANSFER', spend: spend('transfer', 1) },
-  list: { type: 'LIST', ticker: 'SH20', amount: 1000n, price: 5000n, lockVout: 0, payScript: pay, spend: spend('list', 1) },
+  list: { type: 'LIST', ticker: 'SH20', amount: 1000n, price: 5000n, lockVout: 0, lockKey, payScript: pay, spend: spend('list', 1) },
   take: { type: 'TAKE', ...op('buyer') },
   deployWithTeam: gene,
   deployNoTeam: { ...gene, ticker: 'SEC2', pre: 0n, team: null, start: 7, unlock: 7, spend: spend('deploy2', 4) },
@@ -74,6 +74,8 @@ const txs = [
     { txid: txid('mint0'), vin: [input('f0')], vout: [{ value: 0n, script: opReturn(ser.mintGenesisBatch) }] },
   ],
   [
+    // A copy of the seller's LIST, first in the block, with its lock output paying another key: refused.
+    { txid: txid('list-copy-tx'), vin: [{ txid: txid('fc'), vout: 0, witness: witness(ser.list) }], vout: [{ value: 330n, script: Buffer.concat([Buffer.from([0x51, 0x20]), publicKey(h('copier-secret'))]) }] },
     { txid: listTxid, vin: [{ txid: txid('f2'), vout: 0, witness: witness(ser.list) }], vout: [{ value: 330n, script: lockScript }] },
     { txid: txid('transfer-tx'), vin: [{ txid: txid('f3'), vout: 0, witness: witness(ser.transfer) }], vout: [] },
   ],
@@ -92,8 +94,11 @@ const blocks = txs.map((t, i) => ({ height: i + 1, hash: `b${i + 1}`, txs: t }))
 const verifier = { name: 'test', verifySpend: (a) => Buffer.from(a.proof).equals(PROOF) };
 const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 1000n }, verifier });
 const results = blocks.map((b) => ix.applyBlock(b));
-// The one expected rejection: the turnstile refuses to take out more SH20 than the pool holds.
-const expected = [{ height: 8, txid: txid('overburn-tx'), reason: 'more than the pool holds of this ticker' }];
+// The expected rejections: a copied LIST whose lock pays the copier, and a BURN beyond the turnstile.
+const expected = [
+  { height: 2, txid: txid('list-copy-tx'), reason: 'lock output must be P2TR to lockKey' },
+  { height: 8, txid: txid('overburn-tx'), reason: 'more than the pool holds of this ticker' },
+];
 const rejected = results.flatMap((r) => r.rejected.map((x) => ({ height: r.height, txid: x.txid, reason: x.reason })));
 if (JSON.stringify(rejected) !== JSON.stringify(expected)) throw new Error(`unexpected rejections: ${JSON.stringify(rejected)}`);
 

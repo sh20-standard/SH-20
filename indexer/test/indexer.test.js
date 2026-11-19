@@ -150,12 +150,13 @@ test('BURN reveals amount and ticker, and lowers circulating supply', () => {
 function listed() {
   const env = setup();
   const sk = randomBytes(32);
-  const lockScript = p2tr(publicKey(sk));
+  const lockKey = publicKey(sk);
+  const lockScript = p2tr(lockKey);
   const pay = p2wpkh();
   env.c.block(tx({ env: deployEnv() }));
   env.c.block(mint('GENE'));
   const listTx = tx({
-    env: { type: 'LIST', ticker: 'GENE', amount: 1000n, price: 50000n, lockVout: 0, payScript: pay, spend: spend(2) },
+    env: { type: 'LIST', ticker: 'GENE', amount: 1000n, price: 50000n, lockVout: 0, lockKey, payScript: pay, spend: spend(2) },
     carrier: 'witness',
     vout: [{ value: 330n, script: lockScript }],
   });
@@ -194,8 +195,9 @@ test('turnstile: no spend takes more of a ticker out of the pool than went in, e
   // NOPE: two mints in, then exits up to exactly what went in.
   const b3 = c.block(mint('NOPE'), mint('NOPE'));
   assert.deepEqual(reasons(b3), []);
-  const lock = { value: 330n, script: p2tr(publicKey(randomBytes(32))) };
-  const list = (amount) => tx({ env: { type: 'LIST', ticker: 'NOPE', amount, price: 1n, lockVout: 0, payScript: p2wpkh(), spend: spend(c.next - 1) }, carrier: 'witness', vout: [lock] });
+  const lockKey = publicKey(randomBytes(32));
+  const lock = { value: 330n, script: p2tr(lockKey) };
+  const list = (amount) => tx({ env: { type: 'LIST', ticker: 'NOPE', amount, price: 1n, lockVout: 0, lockKey, payScript: p2wpkh(), spend: spend(c.next - 1) }, carrier: 'witness', vout: [lock] });
   const b4 = c.block(list(2001n), list(1500n), burn('NOPE', 501n), burn('NOPE', 500n));
   assert.deepEqual(reasons(b4), ['more than the pool holds of this ticker', 'more than the pool holds of this ticker']);
   const t = ix.token('NOPE');
@@ -237,13 +239,30 @@ test('lock spent without TAKE: CLOSED, then CLAIM signed by the lock key', () =>
   assert.equal(ix.tree.leaves.at(-1), noteLeaf(G, 1000n, back.npk, 0n));
 });
 
-test('LIST needs a P2TR lock of at least 330 sats', () => {
+test('LIST needs a P2TR lock to its lockKey, of at least 330 sats', () => {
   const { c } = setup();
   c.block(tx({ env: deployEnv() }));
   c.block(mint('GENE'));
-  const list = (vout) => tx({ env: { type: 'LIST', ticker: 'GENE', amount: 10n, price: 10n, lockVout: 0, payScript: p2wpkh(), spend: spend(2) }, carrier: 'witness', vout });
-  const b = c.block(list([{ value: 329n, script: p2tr() }]), list([{ value: 1000n, script: p2wpkh() }]));
-  assert.deepEqual(reasons(b), ['lock output below 330 sats', 'lock output must be P2TR']);
+  const key = publicKey(randomBytes(32));
+  const list = (vout, lockKey = key) => tx({ env: { type: 'LIST', ticker: 'GENE', amount: 10n, price: 10n, lockVout: 0, lockKey, payScript: p2wpkh(), spend: spend(2) }, carrier: 'witness', vout });
+  const b = c.block(list([{ value: 329n, script: p2tr(key) }]), list([{ value: 1000n, script: p2wpkh() }]), list([]));
+  assert.deepEqual(reasons(b), ['lock output below 330 sats', 'lock output must be P2TR to lockKey', 'no lock output']);
+});
+
+test('a LIST copied into another transaction cannot point its lock at the copier', () => {
+  // The seller's LIST is in the mempool; a copier puts the same envelope (same proof, same body) in a
+  // transaction of its own whose output lockVout is a P2TR the copier controls, and gets it mined first.
+  const { ix, c } = setup();
+  c.block(tx({ env: deployEnv() }));
+  c.block(mint('GENE'));
+  const sellerKey = publicKey(randomBytes(32));
+  const env = { type: 'LIST', ticker: 'GENE', amount: 1000n, price: 50000n, lockVout: 0, lockKey: sellerKey, payScript: p2wpkh(), spend: spend(2) };
+  const copy = tx({ env, carrier: 'witness', vout: [{ value: 330n, script: p2tr(publicKey(randomBytes(32))) }] });
+  const seller = tx({ env, carrier: 'witness', vout: [{ value: 330n, script: p2tr(sellerKey) }] });
+  const b = c.block(copy, seller);
+  assert.deepEqual(reasons(b), ['lock output must be P2TR to lockKey']);
+  assert.equal(ix.listings.get(seller.txid).lockKey, sellerKey.toString('hex'));
+  // A copy that keeps the seller's lock key only creates a lock the seller controls: no theft.
 });
 
 test('the default verifier accepts no proof at all', () => {
