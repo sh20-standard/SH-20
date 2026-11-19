@@ -100,6 +100,18 @@ export class IndexerApi {
   async status() {
     return getJson(`${this.base}/status`);
   }
+  /** The state digest after block `height`, or null when the indexer is not there yet (404). */
+  async digest(height) {
+    if (!Number.isInteger(height) || height < 0) throw new Error('bad height');
+    try {
+      const j = await getJson(`${this.base}/digest/${height}`);
+      if (j?.height !== height || !/^[0-9a-f]{64}$/i.test(String(j.digest))) throw new Error(`${this.base}: a malformed /digest answer`);
+      return String(j.digest).toLowerCase();
+    } catch (e) {
+      if (e.status === 404) return null;
+      throw e;
+    }
+  }
   async tokens() {
     return list(await getJson(`${this.base}/tokens`), 'tokens').map(normToken);
   }

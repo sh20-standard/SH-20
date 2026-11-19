@@ -332,6 +332,9 @@ async function main() {
   await waitFor(`!document.querySelector('#scan').disabled`, 'the sync to finish', 600);
   const before = await notesText();
   step('notes: ' + before);
+  const agreement = await evaluate(`document.querySelector('#agreement')?.textContent ?? ''`);
+  if (!/^2 of 2 indexers agree on the state at block \d+\.$/.test(agreement)) throw new Error('the indexers\' agreement is not shown next to the balance: ' + agreement);
+  step('balance: ' + (await evaluate(`document.querySelector('#balance').innerText`)));
   await click('#vault-body button', 'Lock');
   await evaluate(`localStorage.removeItem('sh20.vault.v0')`);
   await send('Page.reload');

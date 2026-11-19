@@ -5,7 +5,9 @@ import { defaultCache } from '../cache.js';
 import { frHex } from '../fr.js';
 import { PUBLIC_RHO, noteLeaf, tickerT } from '../sh20.js';
 import { Sync } from '../sync.js';
-import { $, explorerTx, fill, h, indexer, report, short, st, staticWarnings, units } from './context.js';
+import { $, explorerTx, fill, h, indexer, indexers, report, short, st, staticWarnings, units } from './context.js';
+import { digestAgreement, agreementText } from '../consensus.js';
+import { balances } from './send-panel.js';
 import { processDeploys } from './deploy-panel.js';
 import { syncListings } from './market-panel.js';
 import { renderAll } from './render.js';
@@ -23,6 +25,9 @@ export function renderNotes() {
     ? [`Synced to block ${ss.height}: ${ss.leaves} leaves, rebuilt here; the root matches the indexer. `,
       ss.nullifiersKnown ? 'Spends from the full nullifier list.' : h('span', { class: 'err' }, 'This indexer has no /nullifiers yet: spends unknown.')]
     : 'Not synced yet.');
+  const a = ss?.agreement;
+  const agreement = a ? h('span', { id: 'agreement', class: a.disagree.length ? 'err' : a.agreed > 1 ? 'ok' : 'muted' }, agreementText(a)) : null;
+  const bal = [...balances()].map(([t, v]) => `${units(v)} ${t}`).join(' · ');
   if (!st.vault) {
     fill('notes-body', h('p', { class: 'muted' }, 'Unlock the vault to see your notes.'));
     return;
@@ -32,7 +37,8 @@ export function renderNotes() {
     fill('notes-body', h('p', { class: 'muted' }, 'No note yet.'));
     return;
   }
-  fill('notes-body', h('div', { class: 'table-wrap' }, h('table', {},
+  fill('notes-body', h('p', { id: 'balance' }, h('strong', {}, 'Balance: '), bal || 'nothing spendable yet', agreement ? ' — ' : null, agreement),
+    h('div', { class: 'table-wrap' }, h('table', {},
     h('thead', {}, h('tr', {}, ['Ticker', 'Amount', 'Status', 'Position', 'Merkle path', 'Spent', 'Transaction', 'Key'].map((x) => h('th', {}, x)))),
     h('tbody', {}, notes.map((n) => h('tr', {},
       h('td', {}, n.ticker),
@@ -120,7 +126,8 @@ async function checkOwned(s) {
 export async function syncNotes({ full = false } = {}) {
   const s = await getSyncer();
   const r = await s.sync(indexer, { full });
-  st.sync = { height: r.height, leaves: r.leaves, nullifiersKnown: r.nullifiersKnown };
+  // the other indexers' digest after the same block (AUDIT §8.5): shown next to the balance
+  st.sync = { height: r.height, leaves: r.leaves, nullifiersKnown: r.nullifiersKnown, agreement: await digestAgreement(indexers, r.height, r.digest) };
   let found = 0;
   if (st.vault) {
     // a scan that throws leaves the sync's notes unscanned: the next sync reads them again (AUDIT §8.6)

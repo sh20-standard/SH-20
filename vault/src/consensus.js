@@ -132,3 +132,35 @@ export async function listingCheck(apis, listTxid) {
   }
   return { listing: ref.listing, agreed: known.length, down, enough: known.length >= TAKE_QUORUM };
 }
+
+// ---- the synced state, at every sync -----------------------------------------------------------------
+
+/**
+ * What the vault shows as received comes from the primary indexer's leaves, checked against that
+ * indexer's own root: consistent with itself, not with the chain (docs/AUDIT.md §8.5). At every sync
+ * the other indexers are asked for their digest after the synced block, which commits to the whole
+ * state there. Returns { height, agreed, total, disagree, behind, down }: `agreed` counts the
+ * primary; `behind` have not reached that block yet; `down` did not answer.
+ */
+export async function digestAgreement(apis, height, digest) {
+  const want = String(digest ?? '').toLowerCase();
+  const [, ...others] = apis;
+  const settled = await Promise.allSettled(others.map((a) => a.digest(height)));
+  const out = { height, agreed: want ? 1 : 0, total: apis.length, disagree: [], behind: [], down: [] };
+  settled.forEach((s, i) => {
+    const base = others[i].base;
+    if (s.status === 'rejected') out.down.push(base);
+    else if (s.value === null) out.behind.push(base);
+    else if (want && s.value === want) out.agreed++;
+    else out.disagree.push(base);
+  });
+  return out;
+}
+
+/** One line for the page: how many indexers agree on the state the balance comes from. */
+export function agreementText(a) {
+  if (a.disagree.length) return `${a.disagree.join(', ')} ${a.disagree.length > 1 ? 'disagree' : 'disagrees'} with the primary indexer on the state at block ${a.height}: notes shown here may not exist on chain.`;
+  const extra = [a.behind.length ? `${a.behind.length} not there yet` : null, a.down.length ? `${a.down.length} unreachable` : null].filter(Boolean).join(', ');
+  if (a.total === 1) return `One indexer only: the notes shown rest on its word. Add independent indexers in Settings.`;
+  return `${a.agreed} of ${a.total} indexers agree on the state at block ${a.height}${extra ? ` (${extra})` : ''}.`;
+}
