@@ -90,3 +90,45 @@ export async function crossCheck(apis, ticker, { retries = 2, delayMs = 1500, sl
     return { token: ref.token, profile, agreed: problems.length ? 0 : ok.length, problems, warnings };
   }
 }
+
+// ---- listings, before a TAKE ---------------------------------------------------------------------
+
+/**
+ * A TAKE pays the seller's price, and only the indexers decide whether it buys anything: an
+ * envelope they rejected (a bad proof, spent nullifiers, the turnstile) still looks like a LIST on
+ * chain, with a lock and a valid offer. So a TAKE needs this many indexers reporting the listing
+ * the same way (docs/AUDIT.md §8.3).
+ */
+export const TAKE_QUORUM = 2;
+
+const listingKey = (l) => JSON.stringify(l, (_, x) => (typeof x === 'bigint' ? String(x) : x));
+
+/**
+ * Asks every indexer about `listTxid`. One that answers and does not know the listing counts
+ * against it, like one that reports other terms or another state: either refuses. An unreachable
+ * one is not counted. Returns { listing, agreed, down, enough }: `enough` when at least
+ * TAKE_QUORUM indexers agree.
+ */
+export async function listingCheck(apis, listTxid) {
+  const settled = await Promise.allSettled(apis.map((a) => a.listing(listTxid)));
+  const known = [];
+  const unknown = [];
+  const down = [];
+  settled.forEach((s, i) => {
+    const base = apis[i].base;
+    if (s.status === 'rejected') down.push(base);
+    else if (s.value) known.push({ base, listing: s.value });
+    else unknown.push(base);
+  });
+  if (!known.length) throw new Error(unknown.length ? `no indexer knows this listing (${unknown.join(', ')})` : `no indexer reachable (${down.join(', ')})`);
+  if (unknown.length) {
+    throw new Error(`${unknown.join(', ')} ${unknown.length > 1 ? 'do' : 'does'} not know this listing, which ${known.map((k) => k.base).join(', ')} ${known.length > 1 ? 'report' : 'reports'}: it may be an envelope the indexers rejected, and a TAKE of it would pay for nothing`);
+  }
+  const ref = known[0];
+  for (const k of known.slice(1)) {
+    if (listingKey(k.listing) === listingKey(ref.listing)) continue;
+    const diff = Object.keys({ ...ref.listing, ...k.listing }).filter((f) => listingKey(k.listing[f]) !== listingKey(ref.listing[f]));
+    throw new Error(`${k.base} and ${ref.base} disagree on this listing: ${diff.map((f) => `${f} ${listingKey(k.listing[f])} ≠ ${listingKey(ref.listing[f])}`).join(', ')}`);
+  }
+  return { listing: ref.listing, agreed: known.length, down, enough: known.length >= TAKE_QUORUM };
+}

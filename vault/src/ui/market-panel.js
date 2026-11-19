@@ -10,6 +10,7 @@ import { busy, esplora, fill, h, indexer, indexers, result, resultBox, sats, sho
 import { renderAll } from './render.js';
 import { sendForm } from './send-panel.js';
 import { signFunded, txLink, walletUtxos } from './spends.js';
+import { listingCheck, TAKE_QUORUM } from '../consensus.js';
 import { getSyncer } from './notes-panel.js';
 
 // ---- market: the vault's listings, and buying from an offer --------------------------------------
@@ -50,16 +51,15 @@ export async function syncListings() {
   }
 }
 
-/** A listing read from the chain and agreed on by every configured indexer (warnings if only one answers). */
+/**
+ * A listing read from the chain and reported the same way by every indexer that answers; one that
+ * answers "unknown" refuses it (consensus.js listingCheck, docs/AUDIT.md §8.3). `enough` says
+ * whether TAKE_QUORUM of them agree, which a TAKE needs.
+ */
 async function checkedListing(listTxid) {
-  const answers = await Promise.allSettled(indexers.map((a) => a.listing(listTxid)));
-  const ok = answers.filter((a) => a.status === 'fulfilled' && a.value).map((a) => a.value);
-  if (!ok.length) throw new Error('no indexer knows this listing');
-  const key = (l) => JSON.stringify(l, (_, x) => (typeof x === 'bigint' ? String(x) : x));
-  if (ok.some((l) => key(l) !== key(ok[0]))) throw new Error('the indexers disagree on this listing');
-  const indexed = ok[0];
+  const { listing: indexed, agreed, down, enough } = await listingCheck(indexers, listTxid);
   const l = listingFromChain(listTxid, await esplora.txHex(listTxid), { ...indexed, amount: String(indexed.amount), price: String(indexed.price) });
-  return { l, state: indexed.state, agreed: ok.length };
+  return { l, state: indexed.state, agreed, down, enough };
 }
 
 /**
@@ -103,7 +103,7 @@ export function renderMarket() {
   const c = marketForm.checked;
   let buy = null;
   if (c) {
-    buy = h('button', { type: 'button', disabled: !st.wallet || c.state !== 'ACTIVE', name: 'buy' }, `Buy ${units(c.l.amount)} ${c.l.ticker} for ${sats(c.l.price)}`);
+    buy = h('button', { type: 'button', disabled: !st.wallet || c.state !== 'ACTIVE' || !c.enough, name: 'buy', title: c.enough ? null : `a TAKE needs ${TAKE_QUORUM} indexers that report this listing` }, `Buy ${units(c.l.amount)} ${c.l.ticker} for ${sats(c.l.price)}`);
     buy.addEventListener('click', busy(buy, () => sendTake(c)));
   }
   fill('market-body',
@@ -117,9 +117,10 @@ export function renderMarket() {
     h('div', { class: 'row' }, check),
     c ? h('dl', {},
       h('dt', {}, 'Tokens'), h('dd', {}, `${units(c.l.amount)} ${c.l.ticker}, as a public note of this vault`),
-      h('dt', {}, 'Price'), h('dd', {}, `${sats(c.l.price)} to ${toHex(c.l.payScript)}`),
+      h('dt', {}, 'Price'), h('dd', {}, `${sats(c.l.price)} to ${payee(c.l.payScript)}`),
       h('dt', {}, 'State'), h('dd', {}, c.state),
-      h('dt', {}, 'Checked'), h('dd', {}, `the LIST on chain, the seller's signature for this price and payee${c.agreed > 1 ? `, ${c.agreed} indexers agree` : ' (one indexer: add others in Settings to cross-check)'}`)) : null,
+      h('dt', {}, 'Checked'), h('dd', {}, `the LIST on chain, the seller's signature for this price and payee, ${c.agreed} indexer${c.agreed > 1 ? 's' : ''} ${c.agreed > 1 ? 'agree' : 'knows it'}${c.down.length ? ` (${c.down.length} unreachable, not counted)` : ''}`)) : null,
+    c && !c.enough ? h('p', { class: 'warn err' }, `Not enough to buy: ${c.agreed} indexer${c.agreed > 1 ? 's' : ''} ${c.agreed > 1 ? 'report' : 'reports'} this listing, and a TAKE needs ${TAKE_QUORUM} that agree. The chain alone cannot show whether the indexers accepted the LIST; one indexer could report a listing the others rejected, and the price would be paid for nothing. Add an independent indexer in Settings.`) : null,
     buy,
     resultBox('buy-out'));
 }
@@ -176,6 +177,7 @@ async function sendFunded(m, outId, label, note) {
 async function sendTake(c) {
   const fresh = await checkedListing(c.l.listTxid); // still ACTIVE, same terms, now
   if (fresh.state !== 'ACTIVE') throw new Error(`the listing is ${fresh.state} now`);
+  if (!fresh.enough) throw new Error(`not bought: ${fresh.agreed} indexer${fresh.agreed > 1 ? 's' : ''} ${fresh.agreed > 1 ? 'report' : 'reports'} this listing, and a TAKE needs ${TAKE_QUORUM} that agree (add one in Settings)`);
   const tip = await esplora.tipHeight();
   const o = await st.vault.reserveNote(); // the tokens come as this public note
   const m = buildTake({ l: fresh.l, sig: c.sig, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: tip });

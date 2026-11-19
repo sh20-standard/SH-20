@@ -20,6 +20,7 @@ import { parseTx, serializeTx, txid as txidOf, scriptToAddress } from '../src/bt
 import { parseEnvelope, serializeEnvelope, NoteTree } from '../src/sh20.js';
 import { fromHex, toHex } from '../src/bytes.js';
 import { frHex } from '../src/fr.js';
+import { listingCheck, TAKE_QUORUM } from '../src/consensus.js';
 
 const memStorage = () => {
   const m = new Map();
@@ -205,4 +206,39 @@ test('8.2 the page signs nothing it has not vouched for or shown: offerTerms, th
   assert.match(app, /source: 'sent' \}\)/, 'a listing sent here is recorded as such');
   assert.match(app, /source: 'chain' \}\)/, 'one found again after a restore is not');
   assert.equal(scriptToAddress(fromHex('0014751e76e8199196d454941c45d1b3a323f1433bd6')), WPKH, 'the payee is shown as an address');
+});
+
+// ---- 8.3: one indexer that knew the listing was enough, and one that did not was ignored ------------
+
+const LISTED = { listTxid: 'ab'.repeat(32), ticker: 'GENE', amount: 600n, price: 5000n, payScript: '0014' + '66'.repeat(20), lock: `${'ab'.repeat(32)}:0`, lockKey: 'cd'.repeat(32), state: 'ACTIVE', height: 9 };
+const knows = (base, l = LISTED) => ({ base, listing: async () => l });
+const unknown = (base) => ({ base, listing: async () => null }); // IndexerApi.listing on a 404
+const down = (base) => ({ base, listing: async () => { throw new Error('unreachable'); } });
+
+test('8.3 an indexer that answers and does not know the listing refuses it; a TAKE needs two that agree', async () => {
+  assert.equal(TAKE_QUORUM, 2);
+  // the case of the reading: a lying indexer reports ACTIVE, the honest ones have never accepted the LIST
+  await assert.rejects(listingCheck([knows('liar'), unknown('honest')], LISTED.listTxid), /honest does not know this listing, which liar reports/);
+  await assert.rejects(listingCheck([unknown('honest'), knows('liar'), unknown('other')], LISTED.listTxid), /honest, other do not know this listing/);
+  await assert.rejects(listingCheck([unknown('a'), unknown('b')], LISTED.listTxid), /no indexer knows this listing/);
+  // other terms or another state: refused, naming what differs
+  await assert.rejects(listingCheck([knows('a'), knows('b', { ...LISTED, price: 1n })], LISTED.listTxid), /b and a disagree on this listing: price "1" ≠ "5000"/);
+  await assert.rejects(listingCheck([knows('a'), knows('b', { ...LISTED, state: 'SOLD' })], LISTED.listTxid), /state "SOLD" ≠ "ACTIVE"/);
+  // one alone is not enough for a TAKE, even when the others are only unreachable
+  const one = await listingCheck([knows('a'), down('b')], LISTED.listTxid);
+  assert.deepEqual([one.agreed, one.enough, one.down], [1, false, ['b']]);
+  assert.equal((await listingCheck([knows('a')], LISTED.listTxid)).enough, false);
+  const two = await listingCheck([knows('a'), knows('b'), down('c')], LISTED.listTxid);
+  assert.deepEqual([two.agreed, two.enough], [2, true]);
+  assert.equal(two.listing, LISTED);
+});
+
+test('8.3 the page checks the quorum before a TAKE, and says why it cannot buy', () => {
+  const app = page();
+  const take = app.slice(app.indexOf('async function sendTake('), app.indexOf('async function sendCancel('));
+  assert.ok(take.indexOf('if (!fresh.enough) throw') > 0 && take.indexOf('if (!fresh.enough) throw') < take.indexOf('buildTake('), 'checked again right before the TAKE is built');
+  const checked = app.slice(app.indexOf('async function checkedListing('), app.indexOf('/**\n * One of the vault'));
+  assert.match(checked, /listingCheck\(indexers, listTxid\)/);
+  assert.match(app, /disabled: !st\.wallet \|\| c\.state !== 'ACTIVE' \|\| !c\.enough/, 'no Buy button without the quorum');
+  assert.ok(!/one indexer: add others in Settings to cross-check/.test(app), 'the old message, which described another case');
 });
