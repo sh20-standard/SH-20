@@ -38,8 +38,10 @@ jobs:
           path: |
             ~/.cargo/registry
             indexer-rs/target
-          key: indexer-rs-${{ hashFiles('indexer-rs/Cargo.lock') }}
-      - run: rustup component add rustfmt clippy
+          key: indexer-rs-${{ hashFiles('indexer-rs/Cargo.lock', 'indexer-rs/rust-toolchain.toml') }}
+      - name: the Rust pinned in rust-toolchain.toml, with rustfmt and clippy
+        working-directory: indexer-rs
+        run: rustup toolchain install --no-self-update || rustup show
       - working-directory: indexer-rs
         run: cargo fmt --check
       - working-directory: indexer-rs
@@ -57,8 +59,10 @@ jobs:
           path: |
             ~/.cargo/registry
             circuit/target
-          key: circuit-${{ hashFiles('circuit/Cargo.lock') }}
-      - run: rustup component add rustfmt clippy
+          key: circuit-${{ hashFiles('circuit/Cargo.lock', 'circuit/rust-toolchain.toml') }}
+      - name: the Rust pinned in rust-toolchain.toml, with rustfmt and clippy
+        working-directory: circuit
+        run: rustup toolchain install --no-self-update || rustup show
       - working-directory: circuit
         run: cargo fmt --check
       - working-directory: circuit

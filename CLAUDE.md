@@ -62,7 +62,10 @@ web/build.sh            # the phone test page, in web/dist/ (see circuit/web/REA
 
 `.github/workflows/ci.yml` runs the tests of `indexer`, `indexer-rs`, `circuit`, `circuit/js` and `vault` on each push and pull request, checks that the vectors and the
 explorer's demo data regenerate byte for byte, and holds `indexer-rs` and `circuit` to `cargo fmt` and `clippy -D warnings`
-(`circuit/rustfmt.toml`: lines of 160, so that formatting moves no line `docs/AUDIT.md` cites).
+(`circuit/rustfmt.toml`: lines of 160, so that formatting moves no line `docs/AUDIT.md` cites). Both crates pin their Rust in
+`rust-toolchain.toml` (1.95.0, with rustfmt and clippy): the CI and every machine use the same compiler and the same lints.
+The pinned toolchain comes without the WebAssembly targets: `cd circuit && rustup target add wasm32-unknown-unknown
+wasm32-wasip1-threads` once, before `./build-wasm.sh` or `vault/tools/prover.sh`.
 
 ## Status (draft v0.3)
 
