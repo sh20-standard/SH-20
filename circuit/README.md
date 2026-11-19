@@ -10,9 +10,9 @@ behind the choice of proof system.
 | Proof system | PLONK over BN254 with KZG commitments (ePrint 2019/953, three wires, no custom gates) |
 | Setup | none of ours: the public Hermez `powersOfTau28_hez_final_18.ptau`, 131,078 powers of it |
 | Proof | **480 bytes** (9 G1 points, 6 scalars) |
-| Circuit | 86,232 gates, domain 2^17, 9 public inputs |
-| Verifying key | 712 bytes, digest `da847145dbc5aa847af92ce5696fbd60bd57e6fbdf0e077cc1b62a0ba302492d` |
-| Proving key | `artifacts/spend.pk`, 8.4 MB (the verifying key and the SRS powers), SHA-256 `a376301be345cdeab66a0155714fa81976102d570ee6a3223edaf64a4d9e430a`; loads in 0.2 s, 1.4 s in WebAssembly |
+| Circuit | 86,248 gates, domain 2^17, 9 public inputs |
+| Verifying key | 712 bytes, digest `f48b551776188b652259ac42ff3d064ea61e9dd0d4b48addb825085ab1237745` |
+| Proving key | `artifacts/spend.pk`, 8.4 MB (the verifying key and the SRS powers), SHA-256 `3625deb6e9512e57b530f60abab90e57e2f9648c741e187cb0b9f0fb51d4688b`; loads in 0.2 s, 1.4 s in WebAssembly |
 | Proving time, native | 1.8 s on a laptop (10 threads); 9.6 s on one thread |
 | Proving time, WebAssembly | 25 s on one thread; 13 s on 2 threads, 7.2 s on 4, 5.6 s on 6, 4.4 s on 10 |
 | Proving time, on a phone | iPhone 18 Pro Max, Safari: 5.7 s on 6 threads, 7.4 s on 4, 15.5 s on one |
@@ -158,18 +158,25 @@ What was done to get there, measured in Node and in headless Chrome on the lapto
 
 ## How the result is checked
 
-- `cargo test --release`: 28 tests. Model against the indexer's constants; 26 adversarial witnesses
+- `cargo test --release`: 35 tests. Model against the indexer's constants; 34 adversarial witnesses
   (inflation, wrong ticker, double-spend attempts, bad ranges, wrong or swapped signatures, aliased
-  keys) rejected by the gates; proofs end to end with every public input and proof byte bound;
-  every variable of the assignment pinned by at least one gate; the shipped proving key reproduced
-  by key generation.
+  keys, points off the curve) rejected by the gates; proofs end to end with every public input and
+  proof byte bound; the shipped proving key reproduced by key generation.
+- **No free variable** (`tests/constraints.rs`). Every variable of five honest assignments is moved,
+  alone, to other values: a gate breaks. Every variable the prover chooses is changed with all that
+  follows from it recomputed: a check still fails. The only exceptions are those of a dummy input,
+  which skips membership: its 32 Merkle siblings and one inverse witness. `tests/gadgets.rs` takes
+  the gadgets to their limits: points off the curve, the ends of each range, keys of small order,
+  and the second way to write a field element in 254 bits.
 - **A second verifier, both ways** (`bench/cross-check.sh`, required by the handoff). The transcript
   and key fields match snarkjs' PLONK: `snarkjs plonk verify` accepts the proofs made here and
   rejects tampered inputs, and the verifier here accepts a proof made by snarkjs' prover
   (`tests/fixtures/snarkjs/`, checked by `cargo test`) and rejects tampered ones.
 - **A second statement of the relation.** `circom/spend.circom` states the relation with circomlib's
   Poseidon, EdDSA and BabyJubJub. A witness built by the Rust model satisfies it and yields the
-  same nine public signals (`bench/circom-check.mjs`).
+  same nine public signals (`bench/circom-check.mjs`), and the two agree on every honest and every
+  adversarial witness of `src/fixture.rs`: 5 accepted by both, 34 refused by both
+  (`bench/circom-cases.mjs`).
 - **The reference indexer.** `indexer/test/plonk.test.js` replays a chain with a real TRANSFER and a
   real BURN and verifies them through the WebAssembly module.
 - **The wallet side.** `js/` restates in plain JavaScript what a wallet computes for a spend. Its
@@ -246,7 +253,7 @@ node bench/tx-vsize.mjs
    memory with it.
 2. **Memory**: 224 MB at peak. The wire evaluations and the key file are still held longer than
    needed; there is room below 200 MB.
-3. **Fewer gates**: the circuit is 86,232 gates and a 2^16 domain, which would halve the proving
+3. **Fewer gates**: the circuit is 86,248 gates and a 2^16 domain, which would halve the proving
    time, holds 65,536. Sparse Poseidon rounds, windowed fixed-base multiplication and cheaper
    comparisons should reach about 66,600 (an estimate, not yet built). That is still above the limit,
    and the three outputs stay (the third pays a relayer in tokens), so the last thousand gates have to

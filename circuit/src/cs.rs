@@ -225,6 +225,11 @@ impl Cs {
         self.tags.iter().cloned().zip(counts).filter(|(_, n)| *n > 0).collect()
     }
 
+    /// The tag gate `i` was emitted under.
+    pub fn tag_of(&self, i: usize) -> &str {
+        &self.tags[self.gate_tag[i] as usize]
+    }
+
     /// Same gates on the same wires (the assignment may differ).
     pub fn same_gates(&self, other: &Cs) -> bool {
         self.n_public == other.n_public && self.gates.len() == other.gates.len() && self.gates.iter().zip(&other.gates).all(|(a, b)| a.w == b.w && a.q == b.q)

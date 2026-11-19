@@ -54,7 +54,7 @@ npm run vectors     # regenerate the vectors (must be byte-identical across runs
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
 cd circuit
-cargo test --release    # 28 tests, with the shipped proving key (artifacts/spend.pk)
+cargo test --release    # 35 tests, with the shipped proving key (artifacts/spend.pk)
 ./build-wasm.sh         # two WebAssembly builds: one thread with no imports, and a thread pool over Web Workers
 bench/cross-check.sh    # snarkjs against our verifier, both ways (hard requirement 4)
 web/build.sh            # the phone test page, in web/dist/ (see circuit/web/README.md)
@@ -82,8 +82,8 @@ Done in `circuit/` (2026-11-18):
 - The proof system was chosen by measurement: **PLONK-KZG on the Hermez `pot18` setup, 480-byte proofs**.
   Halo2 (2,080 bytes as Tacit lays it out, 800 at the very least), fflonk (608 bytes, and it needs more powers than `pot18` holds)
   and snarkjs' own PLONK prover (73–80 s) were measured and set aside. Table and method: `circuit/README.md`.
-- The relation of `docs/SPEC-WIRE.md` §4 as 86,232 PLONK gates (domain 2^17), with its reference model, a prover, a verifier,
-  deterministic key generation and the pinned digest `da847145…a302492d`.
+- The relation of `docs/SPEC-WIRE.md` §4 as 86,248 PLONK gates (domain 2^17), with its reference model, a prover, a verifier,
+  deterministic key generation and the pinned digest `f48b5517…b1237745`.
 - Measured on an M1 Pro laptop: proving 1.8 s (10 threads), 9.6 s (1 thread); as WebAssembly 25 s on one thread,
   7.2 s on 4 threads, 4.4 s on 10; verification 1.5 ms; TRANSFER reveal transaction 340 vB.
 - The proving key is shipped (`circuit/artifacts/spend.pk`, 8.4 MB, pinned by SHA-256): it loads in 1.4 s in WebAssembly
@@ -92,8 +92,12 @@ Done in `circuit/` (2026-11-18):
   Workers on a shared memory. Prover memory: 224 MB.
 - A test page for phones (`circuit/web/`): threaded where the page is cross-origin isolated (by headers, or by its service
   worker), one thread otherwise. Checked in headless Chrome for each case.
-- Checks: 26 adversarial witnesses, every variable pinned by a gate, circomlib's statement of the relation accepts the
-  witnesses, and snarkjs both ways: its verifier accepts our proofs, our verifier accepts its proofs (`bench/cross-check.sh`).
+- Checks: 34 adversarial witnesses, refused by the Rust gates and by circomlib's statement of the relation alike; every
+  variable moved one at a time, alone and with what follows recomputed (free: only a dummy input's Merkle siblings and one
+  inverse witness); the gadgets at their limits; and snarkjs both ways: its verifier accepts our proofs, our verifier
+  accepts its proofs (`bench/cross-check.sh`).
+- Hardened before the signet (2026-11-19): `Ak` and `R8` are checked to be on the curve (16 gates, new keys, digest
+  `f48b5517…b1237745`). `docs/AUDIT.md` §6 says what that closes and what stays open.
 - A wallet reference in dependency-free JavaScript (`circuit/js/`): note keys and `npk`, the nullifier, the body hash, the
   EdDSA-Poseidon signature. Its vectors are written by the Rust model (`circuit/src/vectors.rs`) and a test fails if they drift.
 

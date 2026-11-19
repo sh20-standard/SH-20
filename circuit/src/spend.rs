@@ -14,7 +14,7 @@
 //!   * each input note is `leaf_i = H(H(H(TAG_LEAF, t), v_i), H(npk_i, rho_i))` with
 //!     `npk_i = Poseidon(Ak_i, nk_i·B8)`, and unless v_i = 0 it sits in the tree under `root` at `index_i`;
 //!   * `nf_i = Poseidon(nk_i, leaf_i, index_i)` with 0 ≤ nk_i < l, so a note has one nullifier;
-//!   * the owner of Ak_i signed `bodyHash` (EdDSA-Poseidon);
+//!   * Ak_i is a point of the curve and its owner signed `bodyHash` (EdDSA-Poseidon, with R8 on the curve);
 //!   * each output leaf is a note of the same t;
 //!   * every amount and vPub is below 2^64 and Σ v_in = Σ v_out + vPub;
 //!   * vPub·(t − tPub) = 0.

@@ -19,13 +19,15 @@ pragma circom 2.1.6;
 // still derived from nk, its leaf and its index, and it is still signed. A dummy output is a note
 // with v = 0.
 //
-// Spend authority: EdDSA-Poseidon under Ak over bodyHash. The witness holds the signature, never the
-// spend scalar, so a delegated prover can only prove the body the owner signed.
+// Spend authority: EdDSA-Poseidon under Ak over bodyHash, with Ak and R8 checked to be on the curve
+// (circomlib's verifier does not check it). The witness holds the signature, never the spend scalar,
+// so a delegated prover can only prove the body the owner signed.
 //
 //   Σ inV = Σ outV + vPub, every term < 2^64          vPub · (t − tPub) = 0
 
 include "./templates.circom";
 include "circomlib/circuits/eddsaposeidon.circom";
+include "circomlib/circuits/babyjub.circom";
 
 template Sh20Spend(depth, nIn, nOut) {
     // public (declaration order = verifier order)
@@ -60,6 +62,8 @@ template Sh20Spend(depth, nIn, nOut) {
     component tree[nIn];
     component inZero[nIn];
     component nfh[nIn];
+    component akOnCurve[nIn];
+    component r8OnCurve[nIn];
     component sig[nIn];
 
     var sumIn = 0;
@@ -96,6 +100,13 @@ template Sh20Spend(depth, nIn, nOut) {
         nfh[i].inputs[1] <== leaf[i].out;
         nfh[i].inputs[2] <== inIndex[i];
         nfh[i].out === nf[i];
+
+        akOnCurve[i] = BabyCheck();
+        akOnCurve[i].x <== inAk[i][0];
+        akOnCurve[i].y <== inAk[i][1];
+        r8OnCurve[i] = BabyCheck();
+        r8OnCurve[i].x <== sigR8[i][0];
+        r8OnCurve[i].y <== sigR8[i][1];
 
         sig[i] = EdDSAPoseidonVerifier();
         sig[i].enabled <== 1;
