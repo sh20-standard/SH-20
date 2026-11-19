@@ -118,18 +118,33 @@ Not done: an audit; a mid-range phone; an outside review of the note sealing (`d
 circuit session; its reference code and vectors are in `circuit/js`); a real wallet signing in the vault; a relayer; the
 profile constants (activation height, `D`); a public signet run.
 
-## Next task: the phone figures, then the vault
+## Next task: the clean redeploy, then the public signet
 
-The relation, the proof system, the verifier and a prover that runs in a browser exist, and a recent iPhone proves in
-under 6 s. What is still unknown is how long a mid-range phone takes.
+The protocol, two indexers that agree on every vector, a hardened circuit and a vault that mints, proves, sells and
+claims exist. What is left before people can try it, in order (review of 2026-11-19):
 
-1. **Phones.** One recent phone is measured (`circuit/README.md`, "On a phone"), with the phases of a proof from 1 to 6
-   threads: none falls behind (six threads are 2.7 times faster than one, and every phase gains 2.5 to 2.9 times), which points at the phone's mix
-   of fast and slow cores rather than at the prover. Open: no mid-range phone and no Android phone has been tried, and one
-   lead for the next sweep is noted in `circuit/README.md` ("Next"). `circuit/web/README.md` says how to serve the page and
-   what to send back; the page has a thread sweep and a key-loading diagnosis for that.
-2. **Act on them.** If memory fails (the prover needs about 230 MB), hold less: the wire evaluations and the key file are
-   kept longer than needed. If time is the problem, see 3.
+1. **Clean redeploy.** Move the repository to the project's own anonymous account, with the history rewritten: author and
+   committer `SH-20 contributors <contributors@sh20.invalid>` everywhere (the web merges of PRs carry a personal account's
+   email), and every date in UTC (a timezone is personal data).
+   Nothing public before this, and nothing pinned on IPFS from a personal machine (a pinning node announces its IP).
+2. **Public signet.** Fix the signet profile (`A`, `D`), run `indexer/bin/follow.js` and `indexer-rs`, publish the
+   explorer and the vault release, and have a real wallet (Xverse, UniSat, Leather) sign a MINT, a transfer and a sale.
+   Testers send the phone page's JSON: that is where mid-range and Android phones get measured.
+3. **Before mainnet** (each with an owner and a test):
+   - **Ticker sniping (maintainer decision).** A DEPLOY is in the mempool before it confirms; anyone can deploy the same
+     ticker with other parameters and a higher fee, and "first valid DEPLOY wins". Fix proposed: a commitment
+     `SHA256(ticker ‖ salt)` published at least `N` blocks before the DEPLOY that reveals it, the oldest revealed
+     commitment winning (as Runes does with a commitment that must be 6 blocks old).
+   - **Sender privacy: relayers.** The Bitcoin inputs that pay a transfer show who sent something; a relayer pays them
+     and is paid in tokens by the third output. Needs "several envelopes per transaction" decided.
+   - **Differential fuzzing.** Random chains (valid and broken envelopes, both carriers, lock spends, reorgs) through
+     `indexer/` and `indexer-rs/`, digests compared at every block: the vectors only cover the cases someone thought of.
+   - **Scale.** The indexer keeps its whole state in memory and replays from `A` on every restart; `/nullifiers`,
+     `/roots` and `/listings` return everything at once. Snapshots and pagination before mainnet volumes.
+   - **External audit** of the circuit, the verifier and the note sealing (`docs/AUDIT.md`).
+
+Rules that stay in force for the circuit and the vault:
+
 3. **Fewer gates.** A 2^16 domain (65,536 gates) would halve the proving time. Sparse Poseidon partial rounds, 2-bit windows
    for fixed-base multiplication and bitwise comparisons against constants are estimated to reach about 66,600 gates: still
    above the limit, and the three outputs stay (maintainer, 2026-11-18). Find the last thousand gates without changing a rule,
@@ -157,8 +172,7 @@ Where the relation comes from: Tacit's Bitcoin shielded pool (MIT, `https://gith
 transparent boundary and the empty slots. Kept: note keys, the nullifier, EdDSA-Poseidon over `bodyHash`.
 Keep Tacit's MIT copyright notice in any file derived from it.
 
-After that: `ct` sealing, the browser vault (keys on device, PSBTs signed by Xverse / UniSat / Leather),
-a public signet run, an audit.
+
 
 ## Cost budget — keep it light
 
@@ -215,7 +229,7 @@ private part that already proves and verifies, in open code.
 ## Open decisions (ask the maintainer)
 
 Final name and 4-byte magic · value of `D` (SH20 burned per DEPLOY) or no burn · ticker length (4 only, or 5–12) ·
-several envelopes per transaction.
+several envelopes per transaction · a commit-reveal DEPLOY against ticker sniping (and its delay `N`).
 
 Decided by the maintainer: the genesis token is **SH20**, fixed in the activation profile (no DEPLOY, no race):
 21,000,000 max, 1,000 per mint, free mint (network fees only), no team allocation.
