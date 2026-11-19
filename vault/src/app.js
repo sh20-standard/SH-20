@@ -18,7 +18,7 @@ import { loadProver } from './prover.js';
 import { ensureIsolation } from './isolation.js';
 import { available } from './sh20.js';
 import { planTransfer, planDeployBurn, proveSpend, planCarrier, revealFor, pendingRecord, planFromPending, buildPlainDeploy } from './send.js';
-import { poolProblem, planBurn, planList, listOutputs, signOffer, encodeOffer, decodeOffer, offerValid, listingFromChain, buildTake, buildCancel, buildClaim } from './market.js';
+import { poolProblem, claimProblem, planBurn, planList, listOutputs, signOffer, encodeOffer, decodeOffer, offerValid, listingFromChain, buildTake, buildCancel, buildClaim } from './market.js';
 
 if (window.top !== window.self) {
   document.documentElement.textContent = 'The SH-20 vault refuses to run inside a frame.';
@@ -981,8 +981,15 @@ async function syncListings() {
   for (const l of all) {
     const i = keys.get(l.lockKey);
     if (i === undefined || known.has(l.listTxid)) continue;
-    await v.addListing({ lockIndex: i, ticker: l.ticker, amount: String(l.amount), price: String(l.price), payScript: l.payScript, listTxid: l.listTxid, state: l.state });
-    if ((v.state.nextLock ?? 0) <= i) v.state.nextLock = i + 1;
+    // found again by its lock key: its terms come from the LIST on chain, not from the indexer's word
+    let chain;
+    try {
+      chain = listingFromChain(l.listTxid, await esplora.txHex(l.listTxid), { ...l, amount: String(l.amount), price: String(l.price) });
+    } catch {
+      continue;
+    }
+    if ((v.state.nextLock ?? 0) <= i) v.state.nextLock = i + 1; // before addListing saves: a lock key is never used twice
+    await v.addListing({ lockIndex: i, ticker: chain.ticker, amount: String(chain.amount), price: String(chain.price), payScript: toHex(chain.payScript), listTxid: l.listTxid, state: l.state });
   }
 }
 
@@ -1105,6 +1112,15 @@ async function sendCancel(rec) {
 }
 
 async function sendClaim(rec) {
+  // CLOSED by every configured indexer (their full lists, never a question about this listing), and on
+  // chain: the lock spent by a transaction with no TAKE. Else the CLAIM would be rejected and its fees lost.
+  const lists = await Promise.allSettled(indexers.map((a) => a.listings()));
+  const states = lists.filter((r) => r.status === 'fulfilled').map((r) => r.value.find((x) => x.listTxid === rec.listTxid)?.state ?? 'unknown');
+  if (!states.length || states.some((s) => s !== 'CLOSED')) throw new Error(`not claimed: the indexers say ${[...new Set(states)].join(', ') || 'nothing'}, not CLOSED everywhere`);
+  const { l } = await ownListing(rec);
+  const out = await esplora.outspend(l.listTxid, l.lockVout);
+  const problem = claimProblem(l, out.spent && out.txid ? await esplora.txHex(out.txid) : null);
+  if (problem) throw new Error(`not claimed: ${problem}`);
   const o = await st.vault.reserveNote();
   const m = buildClaim({ listTxid: rec.listTxid, lockSecret: (await st.vault.lockOutput(rec.lockIndex)).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: await esplora.tipHeight() });
   await sendFunded(m, 'listing-out', `CLAIM of ${units(rec.amount)} ${rec.ticker}`, { index: o.index, ticker: rec.ticker, v: BigInt(rec.amount) });

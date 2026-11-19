@@ -15,7 +15,7 @@ import { proveSpend, planCarrier, revealFor } from '../src/send.js';
 import { withProof } from '../src/spend.js';
 import {
   planBurn, planList, listOutputs, signOffer, encodeOffer, decodeOffer, offerValid, listingFromChain,
-  buildTake, buildCancel, buildClaim, claimMessage, LOCK_SATS, cancelChangeScript,
+  buildTake, buildCancel, buildClaim, claimMessage, claimProblem, LOCK_SATS, cancelChangeScript,
 } from '../src/market.js';
 import { addressToScript, serializeTx } from '../src/btc.js';
 import { fromHex, toHex } from '../src/bytes.js';
@@ -139,6 +139,7 @@ test('the seller cancels with a TAKE of its own: the tokens come back as its pub
   const r = c.block(ixTx(fakeSigned(t.tx), 'e1'.repeat(32)));
   assert.deepEqual(r.rejected, []);
   assert.equal(r.events[0].outcome, 'CANCELLED');
+  assert.match(claimProblem(l, toHex(serializeTx(fakeSigned(t.tx)))), /spent by a TAKE/, 'no CLAIM after a TAKE');
   assert.equal(ix.tree.leaves[r.events[0].pos], noteLeaf(GENE, 600n, npk, 0n));
   assert.ok(serializeTx(t.tx).length > 0);
 });
@@ -146,9 +147,15 @@ test('the seller cancels with a TAKE of its own: the tokens come back as its pub
 test('a lock spent with no TAKE closes the listing; the seller CLAIMs it back with the lock key', async () => {
   const { ix, c, seller } = await setup(mockVerifier());
   const { lock, reveal } = await list(ix, c, seller, fakeProve);
+  const l = listingFromChain(reveal.txid, reveal.hex);
+  assert.match(claimProblem(l, null), /not spent/, 'an unspent lock: nothing to claim');
   // the lock spent by a transaction that carries no envelope
-  const r1 = c.block({ txid: 'f1'.repeat(32), vin: [{ txid: reveal.txid, vout: 0, witness: [Buffer.alloc(64)] }], vout: [{ value: 0n, script: Buffer.from(addressToScript(WPKH)) }] });
+  const spender = { version: 2, locktime: 0, vin: [{ txid: reveal.txid, vout: 0, sequence: 0xfffffffd, scriptSig: new Uint8Array(0), witness: [new Uint8Array(64)] }], vout: [{ value: 100n, script: addressToScript(WPKH) }] };
+  const r1 = c.block(ixTx(spender, 'f1'.repeat(32)));
   assert.equal(r1.events[0].type, 'CLOSED');
+  assert.equal(claimProblem(l, toHex(serializeTx(spender))), null, 'the chain shows it CLOSED: the vault claims');
+  const other = { ...spender, vin: [{ ...spender.vin[0], txid: 'ee'.repeat(32) }] };
+  assert.match(claimProblem(l, toHex(serializeTx(other))), /does not spend the lock/);
   const npk = (await seller.opening(6)).npk;
   assert.equal(toHex(claimMessage(reveal.txid, npk)), Indexer.claimMessage(reveal.txid, npk).toString('hex'), 'the message the indexer checks');
   const cl = buildClaim({ listTxid: reveal.txid, lockSecret: lock.secret, npk, payer: { address: WPKH }, utxos: [{ txid: '77'.repeat(32), vout: 0, value: 20000n }], feeRate: 1, tipHeight: c.next - 1 });

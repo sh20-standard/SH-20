@@ -197,6 +197,12 @@ export class Esplora {
     if (!r.ok) throw new Error(`tx ${id}: HTTP ${r.status}`);
     return (await r.text()).trim();
   }
+  /** Whether output `vout` of `id` is spent, and by which transaction: { spent, txid } (Esplora /outspend). */
+  async outspend(id, vout) {
+    if (!/^[0-9a-f]{64}$/.test(id) || !Number.isInteger(vout)) throw new Error('bad outpoint');
+    const j = await getJson(`${this.base}/tx/${id}/outspend/${vout}`);
+    return { spent: j?.spent === true, txid: typeof j?.txid === 'string' && /^[0-9a-f]{64}$/.test(j.txid) ? j.txid : null };
+  }
   async txStatus(id) {
     return getJson(`${this.base}/tx/${id}/status`);
   }

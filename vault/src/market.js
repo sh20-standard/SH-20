@@ -186,6 +186,27 @@ export function buildCancel({ l, lockSecret, npk, payer, utxos, feeRate, tipHeig
   });
 }
 
+/**
+ * Why a CLAIM of listing `l` would be rejected, from the chain alone: its lock must be spent, by a
+ * transaction that carries no TAKE (else the listing is SOLD or CANCELLED, not CLOSED). `spender`
+ * is the raw hex of the transaction that spent the lock, or null if the lock is unspent.
+ */
+export function claimProblem(l, spender) {
+  if (!spender) return 'the lock is not spent: the listing is not CLOSED';
+  const tx = parseTx(fromHex(spender));
+  if (!tx.vin.some((i) => i.txid === l.listTxid && i.vout === l.lockVout)) return 'Esplora named a transaction that does not spend the lock';
+  const found = extractEnvelope({
+    vin: tx.vin.map((i) => ({ txid: i.txid, vout: i.vout, witness: i.witness.map((w) => Buffer.from(w)) })),
+    vout: tx.vout.map((o) => ({ value: o.value, script: Buffer.from(o.script) })),
+  });
+  if (found.bytes) {
+    try {
+      if (parseEnvelope(found.bytes).env.type === 'TAKE') return 'the lock was spent by a TAKE: the listing is SOLD or CANCELLED, not CLOSED';
+    } catch {}
+  }
+  return null;
+}
+
 /** What the lock key signs to CLAIM a CLOSED listing (Indexer.claimMessage). */
 export function claimMessage(listTxid, npk) {
   const le = new Uint8Array(32);
