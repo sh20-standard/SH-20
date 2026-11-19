@@ -125,8 +125,8 @@ path and a signature, and for each of the three outputs of `v, npk, rho`, such t
 - membership: unless `v = 0`, `leaf` is at position `index < 2^32` of the tree with root `R[anchorHeight]`. An input with `v = 0`
   is a dummy: it skips membership only, and still has a nullifier and a signature;
 - nullifier: `nf = Poseidon(nk, leaf, index)`;
-- authorisation: an EdDSA-Poseidon signature `(R8, S)` under `Ak` over `bodyHash`: `S·B8 = R8 + h·8·Ak`,
-  `h = Poseidon(R8.x, R8.y, Ak.x, Ak.y, bodyHash)` as its integer below `r`, `0 ≤ S < l`, and `4·Ak` has a non-zero x;
+- authorisation: an EdDSA-Poseidon signature `(R8, S)` under `Ak` over `bodyHash`: `Ak` and `R8` are points of the curve,
+  `S·B8 = R8 + h·8·Ak`, `h = Poseidon(R8.x, R8.y, Ak.x, Ak.y, bodyHash)` as its integer below `r`, `0 ≤ S < l`, and `4·Ak` has a non-zero x;
 - output note: `leaf = H(H(H(TAG_LEAF, t), v), H(npk, rho))` with the same `t`;
 - every `v` and `vPub` is below `2^64`, and `v_in0 + v_in1 = v_out0 + v_out1 + v_out2 + vPub`;
 - `vPub × (t − tPub) = 0`.
@@ -146,7 +146,7 @@ BN254 with KZG commitments, on a domain of 2^17 rows. The reference circuit and 
   circuit and this SRS.
 - Verifying key: 712 bytes, `power(4) nPublic(4) k1(32) k2(32) Qm Ql Qr Qo Qc S1 S2 S3 (64 each: x ‖ y) X2(128)`.
   Its digest `SHA256("sh20/v0/vk" ‖ key)` is pinned:
-  `da847145dbc5aa847af92ce5696fbd60bd57e6fbdf0e077cc1b62a0ba302492d` (draft: it changes with any change to the circuit until frozen).
+  `f48b551776188b652259ac42ff3d064ea61e9dd0d4b48addb825085ab1237745` (draft: it changes with any change to the circuit until frozen).
 - Proof, 480 bytes: `A B C Z T1 T2 T3 Wxi Wxiw` (G1, 32 bytes each) then `a b c s1 s2 zω` (scalars, 32 bytes each).
   A G1 point is its x coordinate, little-endian, with bit 255 set when `y > q − y`; x must be below the base-field modulus `q`
   and on the curve, and the point at infinity has no encoding. A scalar is little-endian and below `r`. Anything else is invalid.

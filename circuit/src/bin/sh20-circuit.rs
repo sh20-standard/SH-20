@@ -5,6 +5,7 @@
 //!   sh20-circuit pk <srs> <out.pk>               derive the keys, write the proving key file, print its SHA-256
 //!   sh20-circuit info                            size of the circuit, and the gates of each part of the relation
 //!   sh20-circuit sample <out.json>               a sample witness as circom input signals
+//!   sh20-circuit cases <dir>                     the honest and the adversarial witnesses of `fixture`, as circom input signals, with an index
 //!   sh20-circuit prove-sample <pk> <dir>         prove a sample spend; write proof, key and publics (binary and snarkjs JSON)
 //!   sh20-circuit verify <vk> <proof-hex> <public>×9 (decimal)
 //!   sh20-circuit verify-snarkjs <vk.json> <proof.json> <public.json>   check a PLONK proof made by snarkjs (any circuit)
@@ -167,6 +168,25 @@ fn main() {
         }
         "sample" => {
             std::fs::write(arg(1), circom_input(&fixture::transfer(&mut OsRng))).unwrap_or_else(|e| fail(&e.to_string()));
+        }
+        "cases" => {
+            // what the Rust circuit says of each case goes into the index: circom is asked the same question
+            let dir = arg(1);
+            std::fs::create_dir_all(dir).unwrap_or_else(|e| fail(&e.to_string()));
+            let mut index = Vec::new();
+            for (kind, cases) in [("valid", fixture::valid(&mut OsRng)), ("adversarial", fixture::adversarial(&mut OsRng))] {
+                for (i, (name, w)) in cases.iter().enumerate() {
+                    let file = format!("{kind}-{i:02}.json");
+                    std::fs::write(format!("{dir}/{file}"), circom_input(w)).unwrap_or_else(|e| fail(&e.to_string()));
+                    let rust = match spend::synthesize(w).unsatisfied() {
+                        None => "accepted".to_string(),
+                        Some((_, tag)) => format!("refused at {tag}"),
+                    };
+                    index.push(format!(r#"{{"kind":"{kind}","name":"{}","file":"{file}","rust":"{rust}"}}"#, name.replace('\\', "").replace('"', "'")));
+                }
+            }
+            std::fs::write(format!("{dir}/cases.json"), format!("[\n{}\n]\n", index.join(",\n"))).unwrap_or_else(|e| fail(&e.to_string()));
+            println!("{} cases in {dir}", index.len());
         }
         "prove-sample" => {
             let dir = arg(2);

@@ -32,13 +32,13 @@ use ark_std::rand::RngCore;
 
 /// SHA-256("sh20/v0/vk" ‖ verifying key) of the spend circuit on the Hermez SRS: the value
 /// docs/SPEC-WIRE.md pins. `keygen` on the SRS extracted from the pinned ptau reproduces it.
-pub const VK_DIGEST: &str = "da847145dbc5aa847af92ce5696fbd60bd57e6fbdf0e077cc1b62a0ba302492d";
+pub const VK_DIGEST: &str = "f48b551776188b652259ac42ff3d064ea61e9dd0d4b48addb825085ab1237745";
 /// SHA-256 of the SRS file `sh20-circuit srs` extracts from Hermez powersOfTau28_hez_final_18.ptau.
 pub const SRS_SHA256: &str = "e97b92f39a4371b2c137883e72400d0906a49d6f35511443572f478c3852a238";
 
 /// SHA-256 of `artifacts/spend.pk`, the proving key of the spend circuit: its verifying key and the
 /// SRS powers. `sh20-circuit pk` rebuilds the file from the Hermez SRS.
-pub const PK_SHA256: &str = "a376301be345cdeab66a0155714fa81976102d570ee6a3223edaf64a4d9e430a";
+pub const PK_SHA256: &str = "3625deb6e9512e57b530f60abab90e57e2f9648c741e187cb0b9f0fb51d4688b";
 
 /// SRS powers the spend circuit needs.
 pub fn srs_size() -> usize {

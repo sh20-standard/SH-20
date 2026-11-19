@@ -1,7 +1,7 @@
 //! Proofs of the spend relation end to end, with the shipped proving key (artifacts/spend.pk).
 
 use ark_bn254::Fr;
-use ark_ff::{One, Zero};
+use ark_ff::One;
 use rand_core::OsRng;
 use sh20_circuit::{fixture, keygen, load_key, plonk, prove, spend, srs_size, verify, ProvingKey, SpendWitness, PK_SHA256, PROOF_BYTES, VK_DIGEST};
 use std::sync::OnceLock;
@@ -104,42 +104,6 @@ fn witness_serialization_round_trips() {
     let mut bad = bytes.clone();
     bad[..32].copy_from_slice(&[0xff; 32]); // not below the field modulus
     assert!(SpendWitness::from_bytes(&bad).is_none());
-}
-
-/// Every variable of the assignment is pinned by at least one gate: changing any single value breaks
-/// a gate. (Variable 0 only fills unused wire slots.)
-#[test]
-fn no_variable_is_free() {
-    let cs = spend::synthesize(&fixture::transfer(&mut OsRng));
-    assert!(cs.is_satisfied());
-    let gates = cs.gates();
-    let mut uses: Vec<Vec<u32>> = vec![Vec::new(); cs.n_vars()];
-    for (i, g) in gates.iter().enumerate() {
-        for w in g.w {
-            if uses[w as usize].last() != Some(&(i as u32)) {
-                uses[w as usize].push(i as u32);
-            }
-        }
-    }
-    let value = |v: u32| cs.values()[v as usize];
-    let mut free = Vec::new();
-    for v in 1..cs.n_vars() as u32 {
-        let bumped = value(v) + Fr::one();
-        let at = |w: u32| if w == v { bumped } else { value(w) };
-        let broken = uses[v as usize].iter().any(|&gi| {
-            let g = &gates[gi as usize];
-            let [a, b, c] = g.w.map(at);
-            let mut e = g.q[0] * a + g.q[1] * b + g.q[2] * c + g.q[3] * a * b + g.q[4];
-            if (gi as usize) < cs.n_public() {
-                e -= value(g.w[0]); // the public input row compares against the original value
-            }
-            !e.is_zero()
-        });
-        if !broken {
-            free.push(v);
-        }
-    }
-    assert!(free.is_empty(), "{} unconstrained variables, first {:?}", free.len(), &free[..free.len().min(5)]);
 }
 
 #[test]

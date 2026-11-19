@@ -264,7 +264,7 @@ pub fn sign(sk: &BigUint, m: &Fr) -> Sig {
     Sig { r8, s: fr(&((r + BigUint::from(8u8) * h * k) % l_big())) }
 }
 
-/// What the circuit accepts for points on the curve: 0 ≤ S < l, 4·A with a non-zero x (A is not a
+/// What the circuit accepts: A and R8 on the curve, 0 ≤ S < l, 4·A with a non-zero x (A is not a
 /// small-order point), and the equation with h as the integer of the hash.
 pub fn verify_sig(a: &Pt, m: &Fr, sig: &Sig) -> bool {
     if &to_big(&sig.s) >= l_big() || !on_curve(a) || !on_curve(&sig.r8) {

@@ -169,8 +169,18 @@ pub fn canonical_bits_254(cs: &mut Cs, x: Var) -> Vec<Var> {
 
 pub type Point = [Var; 2];
 
-/// P + Q by the unified law. The outputs are determined as soon as one operand is on the curve
-/// (the denominators 1 ± d·x1·x2·y1·y2 cannot vanish together with their numerators).
+/// P is a point of the curve: a·x² + y² = 1 + d·x²·y², in four gates.
+pub fn assert_on_curve(cs: &mut Cs, p: Point) {
+    let (a, d) = (fr_u(BJJ_A), fr_u(BJJ_D));
+    let x2 = cs.mul(p[0], p[0]);
+    let y2 = cs.mul(p[1], p[1]);
+    let x2y2 = cs.mul(x2, y2);
+    cs.gate(x2, y2, x2y2, [a, Fr::one(), -d, Fr::zero(), -Fr::one()]);
+}
+
+/// P + Q by the unified law. The outputs are determined by the operands, on the curve or not: a
+/// denominator 1 ± d·x1·x2·y1·y2 cannot vanish together with its numerator, because d and a·d are
+/// not squares. For operands on the curve neither denominator vanishes and this is the group law.
 pub fn ec_add(cs: &mut Cs, p: Point, q: Point) -> Point {
     let (a, d) = (fr_u(BJJ_A), fr_u(BJJ_D));
     let beta = cs.mul(p[0], q[1]);
@@ -243,9 +253,15 @@ pub fn var_mul(cs: &mut Cs, bits: &[Var], p: Point) -> Point {
 
 // ── EdDSA-Poseidon ──
 
-/// S·B8 = R8 + h·8·A with h = Poseidon(R8, A, m), 0 ≤ S < l, h taken as its canonical 254-bit
-/// integer, and 4·A not of the form (0, ±1) (A is not a small-order point).
+/// S·B8 = R8 + h·8·A with h = Poseidon(R8, A, m), for A and R8 on the curve, 0 ≤ S < l, h taken as
+/// its canonical 254-bit integer, and 4·A not of the form (0, ±1) (A is not a small-order point).
+///
+/// circomlib's verifier does not check that A and R8 are on the curve. Here they are: every addition
+/// below is then the group law, and the equation is the one EdDSA is proved secure for.
 pub fn eddsa_verify(cs: &mut Cs, a: Point, r8: Point, s: Var, m: Var) {
+    assert_on_curve(cs, a);
+    assert_on_curve(cs, r8);
+
     let s_bits = scalar_bits(cs, s);
     let left = fixed_mul(cs, &s_bits, &model::base8());
 

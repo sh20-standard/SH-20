@@ -4,12 +4,14 @@
 #   1. snarkjs' verifier accepts a spend proof made by this crate and rejects a tampered input;
 #   2. this crate's verifier accepts a proof made by snarkjs' prover and rejects tampered ones;
 #   3. circomlib's statement of the spend relation accepts a witness built by the Rust model, with
-#      the same public signals.
+#      the same public signals;
+#   4. that statement and the Rust circuit give the same answer on every honest and every
+#      adversarial witness of src/fixture.rs: accepted by both, or refused by both.
 #
 #   bench/cross-check.sh [--write-fixtures]
 #
-# Needs `npm ci` in bench/. Steps 2 and 3 also need circom (2.1.6 or later) and the pinned Hermez
-# file: PTAU=/path/to/powersOfTau28_hez_final_18.ptau. Without them the two steps are skipped, and
+# Needs `npm ci` in bench/. Steps 2 to 4 also need circom (2.1.6 or later) and the pinned Hermez
+# file: PTAU=/path/to/powersOfTau28_hez_final_18.ptau. Without them those steps are skipped, and
 # `cargo test` still checks step 2 on the proof kept in tests/fixtures/snarkjs/.
 # --write-fixtures replaces that proof with the one just made.
 set -euo pipefail
@@ -25,7 +27,7 @@ $BIN prove-sample artifacts/spend.pk "$OUT" > /dev/null
 (cd bench && node cross-verify.mjs "../$OUT" spend)
 
 if ! command -v circom > /dev/null || [ -z "${PTAU:-}" ]; then
-  echo "2, 3. skipped: need circom on the PATH and PTAU=<Hermez pot18>"
+  echo "2, 3, 4. skipped: need circom on the PATH and PTAU=<Hermez pot18>"
   exit 0
 fi
 
@@ -48,3 +50,8 @@ fi
 echo "3. circomlib's statement of the relation accepts the Rust witness"
 circom circom/spend.circom --r1cs --wasm --O1 -l bench/node_modules -o "$OUT" > /dev/null
 (cd bench && node circom-check.mjs "../$OUT/spend_js/spend.wasm" "../$OUT/spend.input.json" "../$OUT/spend.public.json")
+
+echo "4. circom and the Rust circuit agree on every honest and every adversarial witness"
+rm -rf "$OUT/cases"
+$BIN cases "$OUT/cases" > /dev/null
+(cd bench && node circom-cases.mjs "../$OUT/spend_js/spend.wasm" "../$OUT/cases")
