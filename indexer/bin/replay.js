@@ -17,7 +17,7 @@ import { plonkVerifier } from '../src/adapters/plonk.js';
 const args = process.argv.slice(2);
 const dir = args[0];
 if (!dir) {
-  console.error('usage: node bin/replay.js <folder of getblock-2 JSON files> [--activation <height>] [--deploy-burn <D>] [--verifier sh20_circuit.wasm [--vk spend.vk]]');
+  console.error('usage: node bin/replay.js <folder of getblock-2 JSON files> [--activation <height>] [--deploy-burn <D>] [--verifier sh20_circuit.wasm [--vk spend.vk] | --verifier test]');
   process.exit(1);
 }
 const blocks = readdirSync(dir)
@@ -29,7 +29,12 @@ const flag = (name) => (args.indexOf(name) >= 0 ? args[args.indexOf(name) + 1] :
 // Default activation: the lowest height in the folder. Blocks below A have no root and no digest (SPEC-WIRE §6).
 const activationHeight = flag('--activation') !== undefined ? Number(flag('--activation')) : (blocks[0]?.height ?? 0);
 const deployBurn = flag('--deploy-burn') !== undefined ? BigInt(flag('--deploy-burn')) : undefined;
-const verifier = flag('--verifier') ? plonkVerifier({ wasm: flag('--verifier'), vk: flag('--vk') }) : undefined;
+// --verifier test: the rule of the vectors (one proof, "valid-proof" padded with zeros, is valid), for differential runs
+// against indexer-rs, which has the same flag. Never for a real chain.
+const TEST_PROOF = Buffer.concat([Buffer.from('valid-proof'), Buffer.alloc(480 - 11)]);
+const verifier = flag('--verifier') === 'test'
+  ? { name: 'test', verifySpend: (a) => Buffer.from(a.proof).equals(TEST_PROOF) }
+  : flag('--verifier') ? plonkVerifier({ wasm: flag('--verifier'), vk: flag('--vk') }) : undefined;
 const ix = new Indexer({ profile: { activationHeight, ...(deployBurn !== undefined ? { deployBurn } : {}) }, verifier });
 console.error(`profile: activation ${activationHeight}, D = ${ix.profile.deployBurn}`);
 for (const b of blocks) {
