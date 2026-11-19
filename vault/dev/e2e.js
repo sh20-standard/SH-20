@@ -28,7 +28,7 @@ const NEW_TICKER = 'T' + Array.from(crypto.getRandomValues(new Uint8Array(3)), (
 const LONG = 3000; // × 100 ms: a proof on one thread in a browser takes about half a minute
 const INDEXERS = ['http://127.0.0.1:8020', 'http://127.0.0.1:8030', ...(LIAR ? ['http://127.0.0.1:8031'] : [])].join(',');
 // E2E_HOST=<cid>.ipfs.localhost: a subdomain gateway (the page isolates itself with its service worker)
-// E2E_PATH=/ipfs/<cid>/vault/: a path gateway (it must not)
+// E2E_PATH=/ipfs/<cid>/vault/: a path gateway (the page refuses to run there: docs/AUDIT.md §8.1)
 const HOST = process.env.E2E_HOST || 'localhost';
 const PAGE = `http://${HOST}:8000${process.env.E2E_PATH || '/vault/'}?indexer=${INDEXERS}&esplora=http://127.0.0.1:8020/esplora`;
 const PATH_GATEWAY = /^\/ip[fn]s\//.test(process.env.E2E_PATH || '');
@@ -144,6 +144,21 @@ async function main() {
   await send('Page.navigate', { url: PAGE });
 
   const step = (s) => console.log('·', s);
+  if (PATH_GATEWAY) {
+    // docs/AUDIT.md §8.1: nothing runs on a path gateway, not even the servers of the link
+    await waitFor(`!!document.querySelector('#path-gateway')`, 'the path gateway refusal');
+    const page = await evaluate(`(async () => ({ text: document.body.innerText, forms: document.querySelectorAll('form, input, textarea').length, links: [...document.querySelectorAll('#path-gateway a')].map((a) => a.href), registrations: navigator.serviceWorker ? (await navigator.serviceWorker.getRegistrations()).length : 0, stored: Object.keys(localStorage) }))()`);
+    if (page.forms) throw new Error('a form on a path gateway');
+    if (page.registrations) throw new Error('a service worker on a path gateway');
+    if (dialogs.length) throw new Error('the page asked about the link servers on a path gateway: ' + dialogs.join(' / '));
+    if (page.stored.length) throw new Error('the page stored something on a path gateway: ' + page.stored.join(', '));
+    const cid = process.env.E2E_PATH.split('/')[2];
+    if (!page.links.some((u) => u.startsWith(`https://${cid}.ipfs.dweb.link/`))) throw new Error('no subdomain gateway named: ' + page.links.join(' '));
+    step('refused: ' + page.links.join(' · '));
+    ws.close();
+    console.log('\nOK: the path gateway page refuses to run and names its subdomain address');
+    return;
+  }
   await waitFor(`document.querySelector('#warnings')?.innerText.includes('servers from the link')`, 'URL servers warning');
   if (!dialogs.some((d) => d.includes('127.0.0.1:8020'))) throw new Error('URL servers applied without confirmation');
   step('URL servers confirmed by a dialog and flagged on the page');
@@ -162,7 +177,6 @@ async function main() {
   if (!/^tsh201[02-9ac-hj-np-z]{162}$/.test(address)) throw new Error('no signet sh20 address shown: ' + address);
   step('sh20 address: ' + address.slice(0, 24) + '…');
   const iso = await evaluate(`(async () => ({ isolated: self.crossOriginIsolated === true, controlled: !!navigator.serviceWorker?.controller, registrations: navigator.serviceWorker ? (await navigator.serviceWorker.getRegistrations()).length : 0, mode: document.querySelector('#prover-mode')?.textContent }))()`);
-  if (PATH_GATEWAY && (iso.registrations || iso.isolated)) throw new Error('a service worker on a path gateway: ' + JSON.stringify(iso));
   if (/\.ipfs\./.test(HOST) && !(iso.isolated && iso.controlled)) throw new Error('the subdomain gateway page did not isolate itself: ' + JSON.stringify(iso));
   step(`isolation: ${iso.mode}${iso.registrations ? ` (${iso.registrations} service worker)` : ''}`);
   const words = await evaluate(`[...document.querySelectorAll('#words li')].map((li) => li.textContent).join(' ')`);

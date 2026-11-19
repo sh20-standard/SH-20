@@ -19,6 +19,24 @@ export function gatewayKind(loc = globalThis.location) {
 }
 
 /**
+ * Where to open the page instead of a path gateway (docs/AUDIT.md §8.1), or null when `loc` is not
+ * one: the same CID (or IPNS name) on a subdomain gateway, where it has an origin of its own, and
+ * on a local IPFS node. The query string is left out: servers come from the settings, or from a
+ * link the user confirms there.
+ */
+export function ownOrigins(loc = globalThis.location) {
+  const m = /^\/(ip[fn]s)\/([^/]+)(\/.*)?$/.exec(loc.pathname);
+  if (!m) return null;
+  const [, ns, id, rest = '/'] = m;
+  // a DNSLink name fits in one DNS label as the gateways inline it: '-' becomes '--', '.' becomes '-'
+  const label = ns === 'ipns' && id.includes('.') ? id.replace(/-/g, '--').replace(/\./g, '-') : id;
+  // a CIDv0 (Qm…) or another case-sensitive name is no DNS label: the gateway's path form redirects
+  // to its subdomain form (base32), with an origin of its own
+  if (/^[a-z0-9-]{1,63}$/.test(label)) return [`https://${label}.${ns}.dweb.link${rest}`, `http://${label}.${ns}.localhost:8080${rest}`];
+  return [`https://dweb.link/${ns}/${id}${rest}`, `http://localhost:8080/${ns}/${id}${rest}`];
+}
+
+/**
  * 'headers' (isolated already), 'reloading' (the worker is in place: the page reloads through it),
  * or why the page stays on one thread: 'not-a-subdomain-gateway', 'unavailable', 'refused'.
  * The same steps as circuit/web/app.js `ensureIsolation`, limited to subdomain gateways.

@@ -13,6 +13,7 @@ import { frHex } from './fr.js';
 import { noteLeaf, tickerT, PUBLIC_RHO, masterSecret, hmacSha512 } from './sh20.js';
 import { newMnemonic, mnemonicToSeed } from './bip39.js';
 import { keyPathOutput } from './taproot.js';
+import { gatewayKind } from './isolation.js';
 
 const SECP_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
 /** How many lock keys past the last one used a restored vault looks for among the listings. */
@@ -31,6 +32,16 @@ async function aesKey(passphrase, salt) {
     false,
     ['encrypt', 'decrypt'],
   );
+}
+
+/**
+ * On a path gateway (…/ipfs/<cid>/) every site of the gateway shares the page's origin, so its
+ * storage and its window (docs/AUDIT.md §8.1): no vault is created, restored or opened there.
+ */
+function refuseSharedOrigin() {
+  if (globalThis.location && gatewayKind(globalThis.location) === 'path') {
+    throw new Error('the vault does not open on a path gateway (…/ipfs/<cid>/): every site on that gateway shares its origin. Open it from a subdomain gateway or a local IPFS node.');
+  }
 }
 
 /** Opening of public note `index` (SPEC-NOTES §5): npk alone, rho = 0. */
@@ -107,6 +118,7 @@ export class Vault {
    * BIP39 passphrase (none is used).
    */
   static async fromWords(storage, words, passphrase = '') {
+    refuseSharedOrigin();
     if (Vault.exists(storage)) throw new Error('a vault already exists on this device');
     const m = Uint8Array.from(await masterSecret(await mnemonicToSeed(words)));
     const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -123,6 +135,7 @@ export class Vault {
 
   /** Opens a stored record (or a backup text). Wrong passphrase throws. */
   static async open(storage, passphrase = '', text = storage.getItem(STORAGE_KEY)) {
+    refuseSharedOrigin();
     if (text === null) throw new Error('no vault on this device');
     const rec = JSON.parse(text);
     if (rec.v !== 0) throw new Error('unknown vault format');
@@ -149,6 +162,7 @@ export class Vault {
 
   /** Restores a backup file on this device (replaces nothing: fails if a vault exists). */
   static async restore(storage, text, passphrase = '') {
+    refuseSharedOrigin();
     if (Vault.exists(storage)) throw new Error('a vault already exists on this device');
     const v = await Vault.open(storage, passphrase, text);
     await v.save();

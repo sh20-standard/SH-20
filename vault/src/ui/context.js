@@ -120,9 +120,6 @@ export function report(e) {
 
 export function staticWarnings() {
   const w = [];
-  if (/\/ip[fn]s\//.test(location.pathname)) {
-    w.push('This page is served from a path gateway (…/ipfs/<cid>/). Every site on this gateway shares one origin and could read the vault. Open it from a subdomain gateway (<cid>.ipfs.dweb.link), a local IPFS node or a local copy.');
-  }
   if (urlServers) {
     w.push(`Using servers from the link, not your saved settings: ${Object.entries(urlServers).map(([k, v]) => `${k} ${v}`).join(', ')}. Check the price and outputs before signing.`);
   }
