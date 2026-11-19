@@ -46,7 +46,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 54 tests (4 need the verifier module below and are skipped without it)
+npm test            # 55 tests (4 need the verifier module below and are skipped without it)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
@@ -210,3 +210,5 @@ tokens. `proofLen` is removed in wire v0.3, together with the 32-byte X25519 `pk
 Decided (technical, v0.3): the events inside the digest have a fixed byte encoding (`src/events.js`, `SPEC-WIRE.md` §6).
 Decided (2026-11-19): batch mint, at most 10 mints per MINT (`MINT_BATCH_MAX`); a last batch gets what is left and pays for that.
 Decided (2026-11-19): a turnstile per ticker (`pool` in each token record), enforced by the indexer.
+Fixed (2026-11-19): a LIST carries its lock's output key (`lockKey`, +32 bytes) in the signed body; without it a copy of the
+envelope could lock the listed tokens to the copier.

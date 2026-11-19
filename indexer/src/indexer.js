@@ -370,7 +370,7 @@ export class Indexer {
     if (env.amount <= 0n || env.price <= 0n) throw new Reject('amount and price must be positive');
     const lock = tx.vout[env.lockVout];
     if (!lock) throw new Reject('no lock output');
-    if (!isP2TR(lock.script)) throw new Reject('lock output must be P2TR');
+    if (!isP2TR(lock.script) || !lock.script.subarray(2).equals(env.lockKey)) throw new Reject('lock output must be P2TR to lockKey');
     if (lock.value < MIN_LOCK_SATS) throw new Reject('lock output below 330 sats');
     this._outOfPool(t.ticker, env.amount, false);
     const s = this._checkSpend(env.spend, body, env.amount, t.t, H);
@@ -379,7 +379,7 @@ export class Indexer {
     const listing = {
       listTxid: tx.txid, ticker: t.ticker, amount: env.amount, price: env.price,
       payScript: env.payScript.toString('hex'), lock: `${tx.txid}:${env.lockVout}`,
-      lockKey: lock.script.subarray(2).toString('hex'), state: 'ACTIVE', height: H,
+      lockKey: env.lockKey.toString('hex'), state: 'ACTIVE', height: H,
     };
     this._set(this.listings, tx.txid, listing);
     this._set(this.locks, listing.lock, tx.txid);
