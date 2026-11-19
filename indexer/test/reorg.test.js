@@ -7,10 +7,11 @@ import { deployEnv, mockVerifier, opening, p2tr, p2wpkh, spend, tx } from './hel
 
 function scenario() {
   const pay = p2wpkh();
+  const lockKey = publicKey(randomBytes(32));
   const list = tx({
-    env: { type: 'LIST', ticker: 'GENE', amount: 1000n, price: 5000n, lockVout: 0, payScript: pay, spend: spend(2) },
+    env: { type: 'LIST', ticker: 'GENE', amount: 1000n, price: 5000n, lockVout: 0, lockKey, payScript: pay, spend: spend(2) },
     carrier: 'witness',
-    vout: [{ value: 330n, script: p2tr(publicKey(randomBytes(32))) }],
+    vout: [{ value: 330n, script: p2tr(lockKey) }],
   });
   const blocks = [
     // The two DEPLOY burns need SH20 in the pool: a batch of two free SH20 mints comes first.

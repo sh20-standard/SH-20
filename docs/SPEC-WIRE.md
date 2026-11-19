@@ -11,6 +11,8 @@ The events inside the digest have an exact byte encoding (§6) instead of JSON, 
 profile's rules, so a second implementation in any language can reproduce every digest.
 A MINT may carry a count `k` (2 to 10) as one more byte: one note of `k × lim` for `k × price` (§5).
 Each ticker has a turnstile, `pool[ticker]`: no BURN, LIST or DEPLOY burn may take out more than went in (§5).
+A LIST carries the x-only key of its lock output (`lockKey`, 32 bytes) in its signed body: a copy of the envelope in
+another transaction can no longer point its lock at a key the copier controls (§5).
 
 Changes from v0.1: tokens are named by their ticker everywhere. MINT, BURN and LIST carry `ticker(4)`
 instead of an indexer-assigned `tokenNum(4)` (same size), and the asset id inside notes and proofs is
@@ -65,12 +67,14 @@ After parsing, re-serialising must give the same bytes; trailing bytes are rejec
 | MINT | 0x02 | `ticker(4) opening(32) [k(1)]` | 42, or 43 with `k` |
 | TRANSFER | 0x03 | `spend` | 830 |
 | BURN | 0x04 | `ticker(4) vPub(8) spend` | 842 |
-| LIST | 0x05 | `ticker(4) amount(8) price(8) lockVout(1) psLen(1) payScript(psLen) spend` | 852 + payScript |
+| LIST | 0x05 | `ticker(4) amount(8) price(8) lockVout(1) lockKey(32) psLen(1) payScript(psLen) spend` | 884 + payScript |
 | TAKE | 0x06 | `opening(32)` | 38 |
 | CLAIM | 0x07 | `listTxid(32) opening(32) sig(64)` | 134 |
 
 - `ticker`: 4 ASCII characters `[A-Z0-9]`, in every type that carries one; anything else is rejected. `payMode`: 0 none, 1 burn, 2 pay to `payScript`.
   `payScript` (≤ 34 bytes) is present only with payMode 2. `listTxid`: txid in display (RPC) byte order.
+- `lockKey`: the x-only output key of the lock. It is part of `body`, so the proof's signature covers it; `lockVout` alone
+  would let anyone copy the envelope into a transaction whose output `lockVout` they control, and cancel the listing to themselves.
 - `k`: the number of mints in one MINT, 2 to 10 (`MINT_BATCH_MAX`); a single mint is written without the byte, so `k = 0`,
   `k = 1` and `k > 10` are rejected.
 
@@ -148,9 +152,9 @@ of a ticker can ever come back into the open than was issued. At every block, fo
 | MINT | `ticker` deployed; `start ≤ H`; `end = 0` or `H ≤ end`; `left = (max − pre) / lim − mints > 0`; with `m = min(k, left)` (`k = 1` without the byte), paid in the same tx: payMode 1 = OP_RETURN outputs carry ≥ `m × price` sats, payMode 2 = outputs to `payScript` total ≥ `m × price` | one leaf `(t, m × lim, npk, 0)`; mints + `m`; `pool += m × lim` |
 | TRANSFER | spend with `vPub = tPub = 0` | — |
 | BURN | `ticker` deployed; `0 < vPub ≤ pool[ticker]`; spend with `tPub = t(ticker)` | `burned[ticker] += vPub`, `pool −= vPub` |
-| LIST | `ticker` deployed; `0 < amount ≤ pool[ticker]`, `price > 0`; output `lockVout` is P2TR with ≥ 330 sats; spend with `vPub = amount`, `tPub = t(ticker)` | listing ACTIVE, lock = `(txid, lockVout)`; `pool −= amount` |
+| LIST | `ticker` deployed; `0 < amount ≤ pool[ticker]`, `price > 0`; output `lockVout` is `OP_1 <lockKey>` (P2TR to `lockKey`) with ≥ 330 sats; spend with `vPub = amount`, `tPub = t(ticker)` | listing ACTIVE, lock = `(txid, lockVout)`; `pool −= amount` |
 | TAKE | the tx spends the lock of an ACTIVE listing (first in input order) | leaf `(t, amount, npk, 0)`; `pool += amount`; SOLD if outputs to `payScript` total ≥ `price`, else CANCELLED |
-| CLAIM | listing is CLOSED; BIP340 signature by the lock's output key over `SHA256("sh20/v0/claim" ‖ listTxid ‖ npk)` | leaf `(t, amount, npk, 0)`; `pool += amount`; CLAIMED |
+| CLAIM | listing is CLOSED; BIP340 signature by `lockKey` over `SHA256("sh20/v0/claim" ‖ listTxid ‖ npk)` | leaf `(t, amount, npk, 0)`; `pool += amount`; CLAIMED |
 
 A rejected envelope changes nothing; sats it paid are not returned.
 

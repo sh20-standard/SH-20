@@ -226,9 +226,12 @@ export function parseEnvelope(buf) {
       const amount = r.u64();
       const price = r.u64();
       const lockVout = r.u8();
+      // The lock's output key is in the signed body, so a copy of this LIST in another
+      // transaction cannot point lockVout at a lock its copier controls.
+      const lockKey = r.bytes(32);
       const payScript = readPayScript(r);
       const res = readSpend(r);
-      env = { type: name, ticker, amount, price, lockVout, payScript, spend: res.spend };
+      env = { type: name, ticker, amount, price, lockVout, lockKey, payScript, spend: res.spend };
       bodyEnd = res.bodyEnd;
       break;
     }
@@ -289,6 +292,8 @@ export function serializeEnvelope(env) {
       w.u64(env.amount);
       w.u64(env.price);
       w.u8(env.lockVout);
+      if (!Buffer.isBuffer(env.lockKey) || env.lockKey.length !== 32) throw new CodecError('lockKey must be 32 bytes');
+      w.bytes(env.lockKey);
       w.u8(env.payScript.length);
       w.bytes(env.payScript);
       writeSpend(w, env.spend);

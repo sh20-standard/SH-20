@@ -10,7 +10,7 @@ const all = () => [
   { type: 'MINT', ticker: 'GENE', ...opening() },
   { type: 'TRANSFER', spend: spend(7) },
   { type: 'BURN', ticker: 'GENE', vPub: 500n, spend: spend(7) },
-  { type: 'LIST', ticker: 'GENE', amount: 2000n, price: 50000n, lockVout: 1, payScript: p2wpkh(), spend: spend(7) },
+  { type: 'LIST', ticker: 'GENE', amount: 2000n, price: 50000n, lockVout: 1, lockKey: Buffer.alloc(32, 9), payScript: p2wpkh(), spend: spend(7) },
   { type: 'TAKE', ...opening() },
   { type: 'CLAIM', listTxid: 'ab'.repeat(32), ...opening(), sig: Buffer.alloc(64, 3) },
 ];
@@ -28,6 +28,10 @@ test('sizes of the proof-less envelopes', () => {
   assert.equal(serializeEnvelope({ type: 'MINT', ticker: 'GENE', ...opening(), k: 1 }).length, 42);
   const batch = serializeEnvelope({ type: 'MINT', ticker: 'GENE', ...opening(), k: 10 });
   assert.equal(batch.length, 43);
+  // LIST: 884 bytes + its payScript (the 32-byte lockKey is in the signed body).
+  const list = serializeEnvelope({ type: 'LIST', ticker: 'GENE', amount: 1n, price: 1n, lockVout: 0, lockKey: Buffer.alloc(32, 1), payScript: Buffer.alloc(22), spend: spend(7) });
+  assert.equal(list.length, 884 + 22);
+  assert.throws(() => serializeEnvelope({ type: 'LIST', ticker: 'GENE', amount: 1n, price: 1n, lockVout: 0, lockKey: Buffer.alloc(31), payScript: Buffer.alloc(0), spend: spend(7) }), /lockKey must be 32 bytes/);
   assert.equal(parseEnvelope(batch).env.k, 10);
   for (const k of [0, 11, 2.5]) assert.throws(() => serializeEnvelope({ type: 'MINT', ticker: 'GENE', ...opening(), k }), /mint count must be 1 to 10/);
   assert.equal(serializeEnvelope({ type: 'TAKE', ...opening() }).length, 38);
