@@ -20,12 +20,16 @@ A public gateway is trusted to serve the right blocks; a local node or a verifyi
 
 ## 0.2.0
 
+**Obsolete:** it builds MINTs of wire v0.2 (74-byte envelopes) and has no prover; v0.3 indexers reject what it sends. Use 0.3.0 or later.
+
 - Source commit: `f8122d7dbb154df189ca883c8c35ce4917299a5e`
 - Package: `sh20-vault-0.2.0.tar`, 122368 bytes, 24 files
 - SHA-256: `392c0fd7e0bb796637e6c6b891e4149fbdbc4e27315fb22e80e8e69369f0e436`
 - IPFS CID: `bafybeigfj45xzun5mek5zvqeby6bs76ukwkslx7ifa7ipzdoylfl4pnavi`
 
 ## 0.1.0
+
+**Obsolete:** it names tokens by tokenNum (wire v0.1) and has no prover; current indexers reject what it sends. Use 0.3.0 or later.
 
 - Source commit: `cb0dee33c5b118b0da1d09cd4e12c5273d9fdb88`
 - Package: `sh20-vault-0.1.0.tar`, 121856 bytes, 24 files
