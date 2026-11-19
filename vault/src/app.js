@@ -598,6 +598,17 @@ const decodeTerms = (t) => JSON.parse(JSON.stringify(t), (_, v) => (typeof v ===
 let deploysRunning = false;
 
 /**
+ * The only way a DEPLOY reveal is broadcast: never before its commit is N blocks deep (SPEC-WIRE §5).
+ * A reveal sent early is rejected, loses its fees and shows the ticker to whoever watches the mempool.
+ */
+async function broadcastDeployReveal(p) {
+  const [cs, tip] = await Promise.all([esplora.txStatus(p.commitTxid).catch(() => null), esplora.tipHeight()]);
+  const sched = revealSchedule({ commitHeight: cs?.confirmed ? cs.block_height : null, tip, N: p.deploy.N, anchorHeight: p.anchorHeight ?? null, W: p.deploy.W });
+  if (sched.state !== 'ready') throw new Error(`the DEPLOY reveal is not due: ${sched.state}${sched.blocks ? `, ${sched.blocks} block(s) to go` : ''}`);
+  await esplora.broadcast(p.revealHex);
+}
+
+/**
  * The DEPLOYs waiting for their commit to mature (SPEC-WIRE §5): their reveal is signed and kept in
  * the encrypted state, and goes out once the commit is N blocks deep, if the ticker is still free.
  * A DEPLOY whose proof's anchor would be out of the window W by then must be proved again.
@@ -626,7 +637,7 @@ async function processDeploys() {
         await v.updatePending(p.id, { status: 'ticker taken' });
         continue;
       }
-      await esplora.broadcast(p.revealHex);
+      await broadcastDeployReveal(p);
       await v.updatePending(p.id, { status: 'broadcast' });
       result('deploy-out', h('p', { class: 'ok' }, `DEPLOY of ${p.deploy.ticker}: the commit is ${p.deploy.N} blocks deep, the reveal is broadcast.`), txLink(p.revealTxid));
     }
@@ -882,6 +893,20 @@ function renderPending() {
         re.addEventListener('click', busy(re, () => reproveDeploy(p)));
         return h('tr', {}, h('td', {}, p.kind), h('td', {}, 'the proof\'s anchor left the window W: prove again'), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', {}, '—'), h('td', {}, re));
       }
+      if (p.kind === 'DEPLOY' && p.status === 'signed') {
+        // signed but the commit may never have gone out: send the commit only, then the countdown
+        const commit = h('button', { type: 'button', class: 'small secondary' }, 'Broadcast the commit');
+        commit.addEventListener('click', busy(commit, async () => {
+          try { await esplora.broadcast(p.commitHex); } catch (e) { if (!/already|known|exists|conflict/i.test(e.message)) throw e; }
+          await st.vault.updatePending(p.id, { status: 'waiting maturity' });
+          await processDeploys();
+        }));
+        return h('tr', {}, h('td', {}, p.kind), h('td', {}, 'signed; the commit may not be out yet'), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', {}, 'kept, signed'), h('td', {}, commit));
+      }
+      if (p.kind === 'DEPLOY' && p.status !== 'broadcast' && p.status !== 'waiting maturity') {
+        // ticker taken, replaced: nothing to broadcast
+        return h('tr', {}, h('td', {}, p.kind), h('td', {}, p.status), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', {}, '—'), h('td', {}));
+      }
       if (p.status === 'waiting maturity') {
         const left = p.schedule === 'unconfirmed' || p.revealIn === undefined ? 'the commit is not confirmed yet' : `reveal in ${p.revealIn} block${p.revealIn === 1 ? '' : 's'}`;
         const commitAgain = h('button', { type: 'button', class: 'small secondary' }, 'Broadcast the commit again');
@@ -895,7 +920,8 @@ function renderPending() {
         // the same signed transactions; a reveal is signed again only if it was never made
         const reveal = p.revealHex ? { hex: p.revealHex, txid: p.revealTxid } : revealFor(planFromPending(p), p.commitTxid);
         try { await esplora.broadcast(p.commitHex); } catch (e) { if (!/already|known|exists|conflict/i.test(e.message)) throw e; }
-        await esplora.broadcast(reveal.hex);
+        if (p.kind === 'DEPLOY') await broadcastDeployReveal({ ...p, revealHex: reveal.hex }); // only once mature
+        else await esplora.broadcast(reveal.hex);
         await st.vault.updatePending(p.id, { status: 'broadcast', revealHex: reveal.hex, revealTxid: reveal.txid });
         renderPending();
       }));
