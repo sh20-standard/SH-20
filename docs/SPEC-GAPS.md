@@ -130,6 +130,10 @@ in block 4, the same 11 verifier calls, the 73-byte GENESIS record, and every di
 | M2 | **What a stop leaves behind.** "Must stop, not guess" does not say what becomes of the transactions of that block before the DEPLOY. | Nothing of the block is applied; the same block can be given again with the height. | cannot be expressed |
 | M3 | **`H − N` below zero.** The anchor rule writes `max(0, H − W)`; this one writes `≤ H − N`. | Read as integers: below block `N` no commit is old enough, not even one of block 0. | silent: the first DEPLOY is in block 4 |
 
+**Settled (2026-11-19):** `SPEC-WIRE.md` §5 now states all three as chosen here. The reference indexer already
+stopped where M1 says and read `H − N` as M3 does; it did not meet M2 (a block cut short kept the transactions applied
+before the stop) and now undoes it, with a test (`indexer/test/adapter.test.js`).
+
 M1 and M2 cannot change a digest: an indexer that stops has no digest for that block. They decide whether two
 indexers given the same incomplete data both stop. The vectors pin a commit exactly `N` blocks old (accepted, blocks
 4 and 5) and one `N − 2` blocks old (refused); `N − 1` has only this crate's test.

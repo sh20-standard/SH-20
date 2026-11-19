@@ -203,6 +203,10 @@ A rejected envelope changes nothing; sats it paid are not returned.
   Indexers therefore need, for input 0 of a transaction that carries a DEPLOY in its witness, the height of the block
   that confirmed the output it spends: `getblock <hash> 3` gives it (`prevout.height`), and Esplora gives it as the
   spent transaction's `status.block_height`. An indexer that lacks it must stop, not guess: the others would diverge.
+  It stops at the first transaction whose one counted envelope is a DEPLOY in the witness, before any other condition of
+  that DEPLOY is checked; a DEPLOY in an OP_RETURN, a transaction with two envelopes and an envelope that does not decode
+  need no height. A block an indexer stops in is not applied at all, none of its transactions count, and the same block
+  can be given again once the height is known. `H − N` is a signed integer: below block `N` no commit is old enough.
 
 - **Payment.** payMode 1 counts the value of every output whose script starts with `OP_RETURN` (`0x6a`), the envelope's
   own included; payMode 2 and TAKE count every output whose script equals `payScript`. Products and sums are exact

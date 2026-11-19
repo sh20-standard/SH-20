@@ -90,6 +90,18 @@ export class Indexer {
     }
     this._ops = [];
     const frame = { height: block.height, ops: this._ops, tree: this.tree.snapshot(), digest: this.digest };
+    try {
+      return this._applyBlock(block, frame);
+    } catch (e) {
+      // All or nothing (SPEC-WIRE §5): a block the indexer cannot finish leaves no trace, and can be given again.
+      this._undo(frame);
+      throw e;
+    } finally {
+      this._ops = null;
+    }
+  }
+
+  _applyBlock(block, frame) {
     const events = [];
     const rejected = [];
 
@@ -125,7 +137,6 @@ export class Indexer {
     }
 
     this.frames.push(frame);
-    this._ops = null;
     this.height = block.height;
     return { height: block.height, root: active ? this.tree.root : null, digest: active ? this.digest.toString('hex') : null, events, rejected };
   }
@@ -148,20 +159,25 @@ export class Indexer {
     }
     while (this.frames.length && this.frames[this.frames.length - 1].height > height) {
       const f = this.frames.pop();
-      for (let i = f.ops.length - 1; i >= 0; i--) {
-        const op = f.ops[i];
-        if (op.kind === 'map') {
-          if (op.had) op.map.set(op.key, op.prev);
-          else op.map.delete(op.key);
-        } else {
-          op.set.delete(op.key);
-        }
-      }
-      this.tree.restore(f.tree);
-      this.notes.length = this.tree.size;
-      this.digest = f.digest;
+      this._undo(f);
       this.height = f.height - 1;
     }
+  }
+
+  /** Reverts what one block (whole or cut short) changed, from its undo log. */
+  _undo(f) {
+    for (let i = f.ops.length - 1; i >= 0; i--) {
+      const op = f.ops[i];
+      if (op.kind === 'map') {
+        if (op.had) op.map.set(op.key, op.prev);
+        else op.map.delete(op.key);
+      } else {
+        op.set.delete(op.key);
+      }
+    }
+    this.tree.restore(f.tree);
+    this.notes.length = this.tree.size;
+    this.digest = f.digest;
   }
 
   // ---- transactions -------------------------------------------------------

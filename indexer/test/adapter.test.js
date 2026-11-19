@@ -45,6 +45,31 @@ test('getblock-3 JSON maps to the indexer format with exact sats and the spent o
   assert.throws(() => new Indexer({ profile: { activationHeight: 8, deployBurn: 0n } }).applyBlock(blind), /height of the output spent by DEPLOY/);
 });
 
+test('a block the indexer stops in leaves nothing behind, and applies in full once given again', () => {
+  // block 8: a MINT, then a DEPLOY in a witness whose commit height is missing
+  const json = rpcBlock(8, [{ value: 0, scriptPubKey: { hex: opReturn(serializeEnvelope({ type: 'MINT', ticker: 'SH20', ...opening() })).toString('hex') } }]);
+  const witness = witnessFor(serializeEnvelope(deployEnv({ start: 9, unlock: 9 }))).map((w) => w.toString('hex'));
+  json.tx.push({ txid: 'de'.repeat(32), vin: [{ txid: 'cd'.repeat(32), vout: 0, txinwitness: witness, prevout: { height: 2, value: 0.0001, scriptPubKey: { hex: '51' } } }], vout: [{ value: 0, scriptPubKey: { hex: '51' } }] });
+  const block = (withHeight) => {
+    const copy = JSON.parse(JSON.stringify(json));
+    if (!withHeight) delete copy.tx[2].vin[0].prevout;
+    return fromBitcoindBlock(copy);
+  };
+  const profile = { activationHeight: 8, deployBurn: 0n, deployMaturity: 6 };
+  const ix = new Indexer({ profile });
+  const before = JSON.stringify({ h: ix.height, d: ix.digest.toString('hex'), root: String(ix.tree.root), n: ix.tree.size, tokens: [...ix.tokens.keys()], meta: [...ix.meta] });
+  assert.throws(() => ix.applyBlock(block(false)), /height of the output spent by DEPLOY/);
+  // the MINT and the GENESIS before the stop are undone
+  assert.equal(JSON.stringify({ h: ix.height, d: ix.digest.toString('hex'), root: String(ix.tree.root), n: ix.tree.size, tokens: [...ix.tokens.keys()], meta: [...ix.meta] }), before);
+  assert.equal(ix.notes.length, 0);
+  // the same block with the height: the same result as an indexer that never stopped
+  const again = ix.applyBlock(block(true));
+  const fresh = new Indexer({ profile }).applyBlock(block(true));
+  assert.deepEqual(again.events.map((e) => e.type), ['GENESIS', 'MINT', 'DEPLOY']);
+  assert.equal(again.digest, fresh.digest);
+  assert.equal(ix.tokens.get('SH20').mints, 1n);
+});
+
 test('bin/replay.js replays a folder of blocks', () => {
   const dir = mkdtempSync(join(tmpdir(), 'sh20-'));
   const mint = (h) => JSON.stringify(rpcBlock(h, [{ value: 0, scriptPubKey: { hex: opReturn(serializeEnvelope({ type: 'MINT', ticker: 'SH20', ...opening() })).toString('hex') } }]));
