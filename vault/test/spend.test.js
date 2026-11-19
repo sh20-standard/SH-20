@@ -55,18 +55,19 @@ async function vaultOf(m) {
   st.setItem(STORAGE_KEY, JSON.stringify({ v: 0, plain: { v: 0, network: 'signet', scheme: NOTE_SCHEME, next: 0, notes: [], seed: m } }));
   return Vault.open(st);
 }
-const toIndexerTx = (t, txid) => ({
+const toIndexerTx = (t, txid, prevHeight) => ({
   txid,
-  vin: t.vin.map((i) => ({ txid: i.txid, vout: i.vout, witness: i.witness.map((w) => Buffer.from(w)) })),
+  vin: t.vin.map((i, k) => ({ txid: i.txid, vout: i.vout, witness: (i.witness ?? []).map((w) => Buffer.from(w)), ...(k === 0 && prevHeight !== undefined ? { prevHeight } : {}) })),
   vout: t.vout.map((o) => ({ value: o.value, script: Buffer.from(o.script) })),
 });
 
 test('a TRANSFER built and proved by the vault is accepted by the indexer with the real verifier', async () => {
-  const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n }, verifier: plonkVerifier({ wasm: new Uint8Array(readFileSync(WASM)) }) });
+  // N = 0 here: the DEPLOY is only setup (test/deploy-maturity.test.js tests N = 6); its commit is one block old
+  const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n, deployMaturity: 0 }, verifier: plonkVerifier({ wasm: new Uint8Array(readFileSync(WASM)) }) });
   const c = chain(ix);
   // GENE (D = 0) and two public notes of the vault, 1,000 each
   const vault = await vaultOf(cv.wallets[0].m);
-  c.block(helperTx({ env: deployEnv({ start: 2, unlock: 2 }) }));
+  c.block(helperTx({ env: deployEnv({ start: 2, unlock: 2 }), prevHeight: c.next - 1 }));
   const mints = [];
   for (const i of [0, 1]) mints.push(await vault.opening(i));
   const b = c.block(...mints.map((o) => helperTx({ env: { type: 'MINT', ticker: 'GENE', npk: o.npk }, burnSats: 1000n })));
@@ -126,12 +127,13 @@ test('a TRANSFER built and proved by the vault is accepted by the indexer with t
   for (const n of notes) assert.ok(ix.nullifiers.has(frHex(await vault.nullifier(n))));
 });
 
-test('a DEPLOY that burns D SH20, planned from a synced vault and proved, is accepted with the real verifier', async () => {
+test('a DEPLOY that burns D SH20: proved, committed, revealed N = 6 blocks later, accepted with the real verifier', async () => {
   const { listen } = await import('../../indexer/src/api.js');
   const { IndexerApi } = await import('../src/api.js');
   const { Sync } = await import('../src/sync.js');
   const { memoryCache } = await import('../src/cache.js');
-  const { planDeployBurn, proveSpend, planCarrier, revealFor } = await import('../src/send.js');
+  const { planDeployBurn, proveSpend, planCarrier, revealFor, revealSchedule } = await import('../src/send.js');
+  const { txid: txidOf } = await import('../src/btc.js');
   const { deployProblems } = await import('../src/deploy-plan.js');
 
   // the reference profile: D = 1000, SH20 from block 1
@@ -150,7 +152,7 @@ test('a DEPLOY that burns D SH20, planned from a synced vault and proved, is acc
     await s.sync(new IndexerApi(`http://127.0.0.1:${server.address().port}`));
     await vault.updateNote(note.id, { spent: s.spentAt(frHex(await vault.nullifier(note))) === null ? 'no' : 'yes' });
     const tip = c.next - 1;
-    const d = { ticker: 'NEWT', max: 1000000n, lim: 100n, pre: 0n, start: tip + 5, end: 0, unlock: tip + 5, payMode: 0, price: 0n, payScript: new Uint8Array(0) };
+    const d = { ticker: 'NEWT', max: 1000000n, lim: 100n, pre: 0n, start: tip + 20, end: 0, unlock: tip + 20, payMode: 0, price: 0n, payScript: new Uint8Array(0) };
     assert.deepEqual(deployProblems(d, { nextHeight: tip + 1, taken: ['SH20'] }), []);
     const built = await planDeployBurn({ vault, sync: s, tip, d, D: 1000n });
     assert.equal(built.change, 1000n);
@@ -158,8 +160,21 @@ test('a DEPLOY that burns D SH20, planned from a synced vault and proved, is acc
     assert.equal(envelope.length, 56 + 824, 'the size the deploy screen shows');
     const cp = planCarrier({ envelope, payer: { address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx' }, utxos: [{ txid: '22'.repeat(32), vout: 0, value: 100000n }], feeRate: 1, tipHeight: tip });
     assert.equal(cp.commit.tx.vout[0].value, cp.value, 'the commit pays the reveal');
-    const reveal = revealFor(cp, 'c1'.repeat(32));
-    const r = c.block(toIndexerTx(reveal.tx, reveal.txid));
+    // the reference profile's N = 6 (SPEC-WIRE §5): the commit is mined, the reveal waits until it is 6 blocks deep
+    const N = ix.profile.deployMaturity;
+    assert.equal(N, 6);
+    const commitTxid = txidOf(cp.commit.tx);
+    const commitHeight = c.next;
+    c.block(toIndexerTx({ ...cp.commit.tx, vin: cp.commit.tx.vin.map((i) => ({ ...i, witness: [new Uint8Array(71), new Uint8Array(33)] })) }, commitTxid));
+    const reveal = revealFor(cp, commitTxid);
+    assert.deepEqual(revealSchedule({ commitHeight, tip: c.next - 1, N, anchorHeight: built.anchorHeight }), { state: 'waiting', blocks: N - 1 });
+    // empty blocks until a reveal mined in the next block would be exactly one block early
+    while (revealSchedule({ commitHeight, tip: c.next, N }).state !== 'ready') c.block();
+    const early = c.block(toIndexerTx(reveal.tx, reveal.txid, commitHeight));
+    assert.deepEqual(early.rejected.map((x) => x.reason), ['DEPLOY commit confirmed less than 6 blocks before'], 'one block early: refused');
+    assert.equal(revealSchedule({ commitHeight, tip: c.next - 1, N, anchorHeight: built.anchorHeight }).state, 'ready');
+    const r = c.block(toIndexerTx(reveal.tx, reveal.txid, commitHeight));
+    assert.equal(r.height - commitHeight, N);
     assert.deepEqual(r.rejected, []);
     assert.equal(r.events[0].type, 'DEPLOY');
     assert.equal(ix.token('NEWT').max, 1000000n);

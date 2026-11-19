@@ -290,6 +290,12 @@ export class Vault {
     return id;
   }
 
+  /** Gives back the notes a spend under way had reserved (a DEPLOY whose ticker was taken meanwhile). */
+  async releaseInputs(ids = []) {
+    for (const n of this.state.notes) if (ids.includes(n.id) && n.status === 'spending') n.status = 'in tree';
+    await this.save();
+  }
+
   async updatePending(id, patch) {
     const p = (this.state.pending ?? []).find((x) => x.id === id);
     if (!p) return;

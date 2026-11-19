@@ -48,9 +48,10 @@ function localSync(ix) {
 }
 /** A chain with GENE and two public notes of 1,000 of the vault. */
 async function setup(verifier) {
-  const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n }, verifier });
+  // N = 0 here: the DEPLOY is only setup (test/deploy-maturity.test.js tests N = 6); its commit is one block old
+  const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n, deployMaturity: 0 }, verifier });
   const c = chain(ix);
-  c.block(helperTx({ env: deployEnv({ start: 2, unlock: 2 }) }));
+  c.block(helperTx({ env: deployEnv({ start: 2, unlock: 2 }), prevHeight: c.next - 1 }));
   const seller = await vaultOf(cv.wallets[0].m);
   const npks = [(await seller.opening(0)).npk, (await seller.opening(1)).npk];
   const b = c.block(...npks.map((npk) => helperTx({ env: { type: 'MINT', ticker: 'GENE', npk }, burnSats: 1000n })));

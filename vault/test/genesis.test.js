@@ -23,7 +23,7 @@ function activated() {
   const idx = new Indexer({ profile: { activationHeight: A } }); // default profile: D = 1000
   const c = chain(idx);
   for (let h = 1; h <= A; h++) c.block();
-  return { idx, c, token: normToken(json(idx.token('SH20'))), status: { activationHeight: A, deployBurn: String(idx.profile.deployBurn), genesis: idx.genesis } };
+  return { idx, c, token: normToken(json(idx.token('SH20'))), status: { activationHeight: A, deployBurn: String(idx.profile.deployBurn), deployMaturity: idx.profile.deployMaturity, genesis: idx.genesis } };
 }
 
 test('the vault\'s genesis constants are the profile\'s and the vectors\'', async () => {
@@ -67,11 +67,13 @@ test('indexers on different profiles (activation height, D) refuse the mint', as
   const ix = (base, s) => ({ base, status: async () => ({ network: 'signet', height: 9, digest: 'd'.repeat(64), ...s }), token: async () => token });
   let r = await crossCheck([ix('a', status), ix('b', status)], 'SH20');
   assert.deepEqual(r.problems, []);
-  assert.deepEqual(r.profile, { activationHeight: A, deployBurn: 1000n, genesis: 'SH20' });
+  assert.deepEqual(r.profile, { activationHeight: A, deployBurn: 1000n, deployMaturity: 6, genesis: 'SH20' });
   r = await crossCheck([ix('a', status), ix('b', { ...status, activationHeight: 4 })], 'SH20');
   assert.match(r.problems.join(), /different profiles: activationHeight 4 ≠ 5/);
   r = await crossCheck([ix('a', status), ix('b', { ...status, deployBurn: '0' })], 'SH20');
   assert.match(r.problems.join(), /deployBurn 0 ≠ 1000/);
+  r = await crossCheck([ix('a', status), ix('b', { ...status, deployMaturity: 1 })], 'SH20');
+  assert.match(r.problems.join(), /deployMaturity 1 ≠ 6/, 'indexers must agree on N, the DEPLOY maturity');
   assert.equal(profileOf({}).deployBurn, null);
   for (const bad of ['abc', '1.5', -1, '1e3', {}, true]) assert.equal(profileOf({ deployBurn: bad }).deployBurn, null, `deployBurn ${JSON.stringify(bad)}`);
   assert.equal(profileOf({ deployBurn: 1000 }).deployBurn, 1000n);

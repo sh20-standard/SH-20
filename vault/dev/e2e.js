@@ -224,16 +224,40 @@ async function main() {
   if (!/1,300 in tree/.test(notesNow) || !/yes, block/.test(notesNow)) throw new Error('after the transfer: ' + notesNow);
   step('after the transfer: ' + notesNow);
 
-  // a DEPLOY: with D > 0 it burns 1,000 SH20 with a proof (paid by the 1,300 of change); with D = 0, one OP_RETURN
+  // a DEPLOY: with D > 0 it burns 1,000 SH20 with a proof (paid by the 1,300 of change). Either way a commit,
+  // then the reveal once the commit is N blocks deep (SPEC-WIRE §5); the vault is reloaded in the middle
   await evaluate(`(() => { const i = document.querySelector('#deploy-body input'); i.value = '${NEW_TICKER}'; i.dispatchEvent(new Event('change')); })()`);
   await waitFor(`document.querySelector('#deploy-body').innerText.includes('Envelope')`, 'deploy plan');
   const plan = await evaluate(`document.querySelector('#deploy-body dl').innerText.replace(/\\n/g, ' | ')`);
-  const want = D0 ? ['D = 0', '56 bytes in one OP_RETURN'] : ['1,000 SH20 burned with a proof', '2 indexers agree on D', 'one note would pay the burn', '880 bytes in a tapscript witness'];
+  const want = D0 ? ['D = 0', '56 bytes in a tapscript witness (a commit, then the reveal 6 blocks later'] : ['1,000 SH20 burned with a proof', '2 indexers agree on D', 'one note would pay the burn', '880 bytes in a tapscript witness (a commit, then the reveal 6 blocks later'];
   for (const w of want) if (!plan.includes(w)) throw new Error(`deploy screen lacks "${w}": ${plan}`);
   step('deploy screen: ' + plan);
   await waitFor(`!document.querySelector('#deploy-body button[name=deploy]').disabled`, 'deploy enabled');
   await evaluate(`document.querySelector('#deploy-body button[name=deploy]').click()`);
-  await waitFor(`/broadcast/.test(document.querySelector('#deploy-out')?.innerText ?? '')`, 'deploy broadcast', LONG);
+  await waitFor(`/the commit is broadcast/.test(document.querySelector('#deploy-out')?.innerText ?? '')`, 'the DEPLOY commit', LONG);
+  step('DEPLOY: ' + (await evaluate(`document.querySelector('#deploy-out .ok').innerText`)));
+  const countdown = () => evaluate(`document.querySelector('#pending-body .countdown')?.textContent ?? ''`);
+  await waitFor(`/reveal in 5 blocks/.test(document.querySelector('#pending-body .countdown')?.textContent ?? '')`, 'the countdown');
+  step('countdown: ' + (await countdown()));
+  if (!D0 && !/ 1,300 spending/.test(await evaluate(`document.querySelector('#notes-body tbody').innerText.replace(/\\s+/g, ' ')`))) throw new Error('the SH20 note the burn spends is not reserved');
+  const mine = (count) => fetch(`http://127.0.0.1:8020/esplora/mine?n=${count}`, { method: 'POST' }).then((r) => r.text());
+  // two blocks pass, then the page is reloaded: the signed reveal and the countdown come back from the encrypted vault
+  await mine(2);
+  await send('Page.reload');
+  await waitFor(`!!document.querySelector('#vault-body input[type=password]')`, 'the unlock form after the reload');
+  await evaluate(`document.querySelector('#vault-body input[type=password]').value = 'e2e passphrase'`);
+  await click('#vault-body button', 'Unlock');
+  await waitFor(`/reveal in 3 blocks/.test(document.querySelector('#pending-body .countdown')?.textContent ?? '')`, 'the countdown after the reload', 300);
+  step('after a reload: ' + (await countdown()));
+  await waitFor(`[...document.querySelectorAll('#wallet-body button')].some((b) => b.textContent === 'UniSat' && !b.disabled)`, 'UniSat after the reload');
+  await click('#wallet-body button', 'UniSat');
+  await waitFor(`document.querySelector('#wallet-body').innerText.includes('connected')`, 'the wallet again');
+  await mine(2); // 4 of 6: still waiting
+  await click('#tokens h2 button', 'Refresh');
+  await waitFor(`/reveal in 1 block/.test(document.querySelector('#pending-body .countdown')?.textContent ?? '')`, 'one block to go');
+  await mine(1);
+  await click('#tokens h2 button', 'Refresh');
+  await waitFor(`/the reveal is broadcast/.test(document.querySelector('#deploy-out')?.innerText ?? '')`, 'the reveal, once the commit is 6 blocks deep', 300);
   step('DEPLOY: ' + (await evaluate(`document.querySelector('#deploy-out .ok').innerText`)));
   await click('#tokens h2 button', 'Refresh');
   await waitFor(`[...document.querySelectorAll('#tokens-body strong')].some((x) => x.textContent === '${NEW_TICKER}')`, 'the new ticker deployed');

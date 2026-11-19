@@ -91,7 +91,7 @@ export function planDeploy(d, { nextHeight, taken, deployBurn, notes }) {
   const plan = {
     problems,
     burn, // D SH20, or 0n, or null (unknown)
-    carrier: burn === 0n ? 'OP_RETURN' : 'witness',
+    carrier: 'witness', // always (SPEC-WIRE §5, DEPLOY maturity): a commit, then a reveal N blocks later
     proof: burn !== 0n, // a burn needs a spend proof
     bytes,
     mints: !problems.length ? (d.max - d.pre) / d.lim : null,

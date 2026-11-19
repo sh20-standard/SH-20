@@ -9,7 +9,7 @@ import { verifyMintTerms } from './deploy.js';
 import { planDeploy } from './deploy-plan.js';
 import { crossCheck, TERMS, profileOf } from './consensus.js';
 import { finalizePsbt, sameUnsignedTx, scriptType, addressToScript } from './btc.js';
-import { frHex } from './fr.js';
+import { frHex, frFromHex } from './fr.js';
 import { Sync } from './sync.js';
 import { defaultCache } from './cache.js';
 import { PAY_MODE, PUBLIC_RHO, MINT_BATCH_MAX, noteLeaf, tickerT } from './sh20.js';
@@ -17,7 +17,7 @@ import { toHex, fromHex } from './bytes.js';
 import { loadProver } from './prover.js';
 import { ensureIsolation } from './isolation.js';
 import { available } from './sh20.js';
-import { planTransfer, planDeployBurn, proveSpend, planCarrier, revealFor, pendingRecord, planFromPending, buildPlainDeploy } from './send.js';
+import { planTransfer, planDeployBurn, proveSpend, planCarrier, revealFor, pendingRecord, planFromPending, planPlainDeploy, revealSchedule } from './send.js';
 import { poolProblem, claimProblem, planBurn, planList, listOutputs, signOffer, encodeOffer, decodeOffer, offerValid, listingFromChain, buildTake, buildCancel, buildClaim } from './market.js';
 
 if (window.top !== window.self) {
@@ -297,6 +297,7 @@ async function refresh() {
   }
   renderTokens();
   renderDeploy();
+  processDeploys().catch(report);
 }
 
 function chainHeight() {
@@ -535,9 +536,7 @@ function renderDeploy() {
       h('dt', {}, 'Deploy burn'), h('dd', {}, burnRow),
       yours ? [h('dt', {}, 'Your SH20'), h('dd', {}, yours)] : null,
       plan.mints !== null ? [h('dt', {}, 'Public mints'), h('dd', {}, `${units(plan.mints)} × ${units(d.lim)} ${d.ticker}`)] : null,
-      plan.bytes !== null ? [h('dt', {}, 'Envelope'), h('dd', {}, plan.carrier === 'witness'
-        ? `${units(plan.bytes)} bytes in a tapscript witness (commit and reveal transactions, ≈ ${Math.ceil(plan.bytes / 4)} vB for the envelope)`
-        : `${plan.bytes} bytes in one OP_RETURN transaction`)] : null),
+      plan.bytes !== null ? [h('dt', {}, 'Envelope'), h('dd', {}, `${units(plan.bytes)} bytes in a tapscript witness (a commit, then the reveal ${deployMaturity() ?? 'N'} blocks later; ≈ ${Math.ceil(plan.bytes / 4)} vB for the envelope)`)] : null),
     plan.problems.map((p) => h('div', { class: 'warn' }, p)),
     deployButton(d, plan, D),
     resultBox('deploy-out'));
@@ -550,14 +549,15 @@ function deployButton(d, plan, D) {
   if (!st.vault) need.push('unlock the vault');
   if (!st.wallet) need.push('connect a wallet');
   if (D > 0n && !plan.inputs?.pick) need.push('hold enough unspent SH20');
+  if (deployMaturity() === null) need.push('indexers that report the DEPLOY maturity N (SPEC-WIRE §5)');
   const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: '2', class: 'narrow', name: 'deploy-fee' });
   const b = h('button', { type: 'button', disabled: need.length > 0, name: 'deploy' }, D > 0n ? `Prove the burn of ${units(D)} SH20, sign and broadcast` : 'Sign and broadcast');
   b.addEventListener('click', busy(b, () => sendDeploy(d, D, Number(fee.value))));
   return [h('div', { class: 'row' }, h('label', {}, 'Fee rate (sat/vB) ', fee), b),
     need.length ? h('p', { class: 'muted' }, `First ${need.join(', ')}.`) : null,
-    h('p', { class: 'muted' }, D > 0n
-      ? 'The burn is a spend: the vault proves it on this device (about half a minute on one thread), then your wallet signs the commit transaction and the vault the reveal that carries it.'
-      : 'One OP_RETURN transaction. A DEPLOY rejected by the indexers (a ticker taken in the same block) is not refunded.')];
+    h('p', { class: 'muted' }, `${D > 0n
+      ? 'The burn is a spend: the vault proves it on this device (about half a minute on one thread). '
+      : ''}Your wallet signs a commit transaction, which hides the ticker; the vault keeps the signed reveal and broadcasts it once the commit is ${deployMaturity() ?? 'N'} blocks deep, so nobody who sees the ticker can deploy it first (SPEC-WIRE §5). Keep the vault open, or come back: the countdown survives a reload. A DEPLOY rejected by the indexers is not refunded.`)];
 }
 
 const termsKey = (d) => JSON.stringify(d, (_, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v));
@@ -571,22 +571,90 @@ async function sendDeploy(shown, D, feeRate) {
   if (plan.problems.length) throw new Error(plan.problems.join('; '));
   if (termsKey(currentTerms().d) !== termsKey(shown)) throw new Error('the terms changed: check them again');
   if (!confirm(`Deploy ${shown.ticker}${D > 0n ? `, burning ${units(D)} SH20` : ''}? The terms are public and final.`)) return;
+  const N = deployMaturity();
+  if (N === null) throw new Error('the indexers do not report deployMaturity (or disagree on it): they predate SPEC-WIRE §5\'s DEPLOY maturity');
   // the team note, if any, is a public note of this vault, created at block `unlock`
   const team = shown.pre > 0n ? { npk: (await st.vault.reserveNote()).npk } : null;
-  if (D === 0n) {
-    const m = buildPlainDeploy({ d: shown, team, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip });
-    const done = await signFunded(m);
-    const id = await esplora.broadcast(done.hex);
-    result(out, h('p', { class: 'ok' }, `DEPLOY of ${shown.ticker} broadcast (${done.vsize} vB).`), txLink(id));
-    return;
-  }
-  await checkPool('SH20', D, 'DEPLOY burn');
-  const s = await getSyncer();
+  if (D > 0n) await checkPool('SH20', D, 'DEPLOY burn');
+  const s = D > 0n ? await getSyncer() : null;
   await carry({
     kind: 'DEPLOY', out, feeRate, tip,
-    plan: () => planDeployBurn({ vault: st.vault, sync: s, tip, d: shown, D, team }),
-    label: `DEPLOY of ${shown.ticker}, burning ${units(D)} SH20`,
+    plan: () => (D > 0n ? planDeployBurn({ vault: st.vault, sync: s, tip, d: shown, D, team }) : planPlainDeploy({ d: shown, team })),
+    label: D > 0n ? `DEPLOY of ${shown.ticker}, burning ${units(D)} SH20` : `DEPLOY of ${shown.ticker}`,
+    deploy: { terms: encodeTerms(shown), team: team ? frHex(team.npk) : null, D: String(D), N, W: anchorWindow(), ticker: shown.ticker },
   });
+}
+
+/** N, the DEPLOY maturity, as every configured indexer reports it (one value), or null. */
+function deployMaturity() {
+  const values = new Set(st.profiles.map((p) => p.deployMaturity));
+  return values.size === 1 && Number.isInteger([...values][0]) ? [...values][0] : null;
+}
+const anchorWindow = () => (Number.isInteger(st.status?.anchorWindow) ? st.status.anchorWindow : 100);
+
+const encodeTerms = (d) => JSON.parse(JSON.stringify(d, (_, v) => (typeof v === 'bigint' ? `${v}n` : v instanceof Uint8Array ? `0x${toHex(v)}` : v)));
+const decodeTerms = (t) => JSON.parse(JSON.stringify(t), (_, v) => (typeof v === 'string' && /^\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : typeof v === 'string' && /^0x[0-9a-f]*$/.test(v) ? fromHex(v.slice(2)) : v));
+
+let deploysRunning = false;
+
+/**
+ * The DEPLOYs waiting for their commit to mature (SPEC-WIRE §5): their reveal is signed and kept in
+ * the encrypted state, and goes out once the commit is N blocks deep, if the ticker is still free.
+ * A DEPLOY whose proof's anchor would be out of the window W by then must be proved again.
+ * Runs on every refresh and every minute while the vault is open.
+ */
+async function processDeploys() {
+  const v = st.vault;
+  if (!v || deploysRunning) return;
+  deploysRunning = true;
+  try {
+    for (const p of (v.state.pending ?? []).filter((x) => x.kind === 'DEPLOY' && x.status === 'waiting maturity')) {
+      const [cs, tip] = await Promise.all([esplora.txStatus(p.commitTxid).catch(() => null), esplora.tipHeight()]);
+      const commitHeight = cs?.confirmed ? cs.block_height : null;
+      const sched = revealSchedule({ commitHeight, tip, N: p.deploy.N, anchorHeight: p.anchorHeight ?? null, W: p.deploy.W });
+      await v.updatePending(p.id, { commitHeight, revealIn: sched.blocks, schedule: sched.state });
+      if (sched.state === 'expired') {
+        await v.updatePending(p.id, { status: 'anchor expired' });
+        continue;
+      }
+      if (sched.state !== 'ready') continue;
+      // the ticker may have been taken meanwhile (another DEPLOY confirmed first): then the reveal would be rejected.
+      // From the full lists: asking /token/<ticker> would tell the indexer the ticker before the reveal shows it.
+      const lists = await Promise.allSettled(indexers.map((a) => a.tokens()));
+      if (lists.some((r) => r.status === 'fulfilled' && r.value.some((t) => t.ticker === p.deploy.ticker))) {
+        await v.releaseInputs(p.inputs);
+        await v.updatePending(p.id, { status: 'ticker taken' });
+        continue;
+      }
+      await esplora.broadcast(p.revealHex);
+      await v.updatePending(p.id, { status: 'broadcast' });
+      result('deploy-out', h('p', { class: 'ok' }, `DEPLOY of ${p.deploy.ticker}: the commit is ${p.deploy.N} blocks deep, the reveal is broadcast.`), txLink(p.revealTxid));
+    }
+  } finally {
+    deploysRunning = false;
+    renderPending();
+  }
+}
+setInterval(() => processDeploys().catch(report), 60000);
+
+/** A DEPLOY whose proof's anchor went out of the window: proved again on today's tree, with a new commit that takes the old one's sats back. */
+async function reproveDeploy(p) {
+  if (!st.wallet) throw new Error('connect the wallet first: it pays the new commit');
+  const d = decodeTerms(p.deploy.terms);
+  const D = BigInt(p.deploy.D);
+  const team = p.deploy.team ? { npk: frFromHex(p.deploy.team) } : null;
+  await st.vault.releaseInputs(p.inputs);
+  await syncNotes();
+  const s = await getSyncer();
+  const tip = await esplora.tipHeight();
+  await carry({
+    kind: 'DEPLOY', out: 'deploy-out', feeRate: p.feeRate, tip,
+    plan: () => planDeployBurn({ vault: st.vault, sync: s, tip, d, D, team }),
+    label: `DEPLOY of ${d.ticker}, proved again`,
+    deploy: p.deploy,
+    sweep: p,
+  });
+  await st.vault.updatePending(p.id, { status: 'replaced' });
 }
 
 // ---- spends: proved here; the wallet signs the commit, the vault the reveal --------------------
@@ -624,34 +692,49 @@ async function carry(args) {
   }
 }
 
-async function carryOnce({ kind, out, feeRate, tip, plan, label, outputs, onRevealed }) {
+async function carryOnce({ kind, out, feeRate, tip, plan, label, outputs, onRevealed, deploy, sweep }) {
   const status = (t) => result(out, h('p', { class: 'muted' }, t));
-  status('Building the spend: note keys, sealed outputs, signatures…');
+  status('Building the envelope: note keys, sealed outputs, signatures…');
   await new Promise((r) => setTimeout(r, 30));
   const built = await plan();
-  const prover = await loadProver({ onStatus: status });
-  status(`Proving on ${prover.threads} thread${prover.threads > 1 ? 's' : ''}… keep this tab open.`);
-  const t0 = performance.now();
-  const envelope = await proveSpend(prover, built);
-  const proveS = ((performance.now() - t0) / 1000).toFixed(1);
-  const cp = planCarrier({ envelope, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip, outputs });
+  let envelope = built.envelope; // a DEPLOY with no burn carries no spend, hence no proof
+  let proveS = null;
+  if (!envelope) {
+    const prover = await loadProver({ onStatus: status });
+    status(`Proving on ${prover.threads} thread${prover.threads > 1 ? 's' : ''}… keep this tab open.`);
+    const t0 = performance.now();
+    envelope = await proveSpend(prover, built);
+    proveS = ((performance.now() - t0) / 1000).toFixed(1);
+  }
+  const cp = planCarrier({ envelope, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip, outputs, sweep });
   const draft = revealFor(cp, '00'.repeat(32));
-  if (!confirm(`${label}: proved in ${proveS} s. Commit ≈ ${cp.commit.vsizeEstimate} vB, reveal ${draft.vsize} vB, network fees ≈ ${sats(cp.commit.fee + draft.fee)}. Sign the commit with ${st.wallet.adapter.name}?`)) {
+  const wait = deploy ? ` The reveal goes out once the commit is ${deploy.N} blocks deep (SPEC-WIRE §5): keep the vault open, or come back.` : '';
+  if (!confirm(`${label}${proveS ? `: proved in ${proveS} s` : ''}. Commit ≈ ${cp.commit.vsizeEstimate} vB, reveal ${draft.vsize} vB, network fees ≈ ${sats(cp.commit.fee + draft.fee)}.${wait} Sign the commit with ${st.wallet.adapter.name}?`)) {
     status('Not sent.');
     return;
   }
-  const pid = await st.vault.addPending(pendingRecord(kind, cp, envelope, built.inputs));
+  const pid = await st.vault.addPending({ ...pendingRecord(kind, cp, envelope, built.inputs), ...(deploy ? { deploy, anchorHeight: built.anchorHeight ?? null } : {}) });
   const done = await signFunded(cp.commit);
   const reveal = revealFor(cp, done.txid);
   await st.vault.updatePending(pid, { commitTxid: done.txid, commitHex: done.hex, revealHex: reveal.hex, revealTxid: reveal.txid, status: 'signed' });
   await onRevealed?.(reveal);
   await esplora.broadcast(done.hex);
-  await st.vault.updatePending(pid, { status: 'commit broadcast' });
+  await st.vault.updatePending(pid, { status: deploy ? 'waiting maturity' : 'commit broadcast' });
+  if (deploy) {
+    // the signed reveal stays in the encrypted state until the commit is N blocks deep (processDeploys)
+    renderAll();
+    result(out,
+      h('p', { class: 'ok' }, `${label}: the commit is broadcast. The reveal waits until it is ${deploy.N} blocks deep, against ticker sniping; the notes it burns stay reserved meanwhile.`),
+      h('p', { class: 'muted' }, 'Commit:'), txLink(done.txid),
+      h('p', { class: 'muted', id: 'deploy-countdown' }, 'Spends sent from this vault (below) shows the countdown.'));
+    await processDeploys();
+    return;
+  }
   await esplora.broadcast(reveal.hex);
   await st.vault.updatePending(pid, { status: 'broadcast' });
   renderAll();
   result(out,
-    h('p', { class: 'ok' }, `${label}: broadcast. Proved in ${proveS} s; ${envelope.length}-byte envelope; reveal ${reveal.vsize} vB.`),
+    h('p', { class: 'ok' }, `${label}: broadcast. ${proveS ? `Proved in ${proveS} s; ` : ''}${envelope.length}-byte envelope; reveal ${reveal.vsize} vB.`),
     h('p', { class: 'muted' }, 'Commit, then reveal:'), txLink(done.txid), txLink(reveal.txid),
     h('p', { class: 'muted' }, 'Sync after the next block: the notes spent show their block, and the change shows as a received note.'));
 }
@@ -789,11 +872,24 @@ async function sendTransfer(out) {
 
 /** Spends whose reveal may still need sending: their one-time key is in the vault. */
 function renderPending() {
-  const open = (st.vault?.state.pending ?? []).filter((p) => p.status !== 'prepared');
+  const open = (st.vault?.state.pending ?? []).filter((p) => p.status !== 'prepared' && p.status !== 'replaced');
   if (!open.length) return fill('pending-body');
   fill('pending-body', h('h3', {}, 'Spends sent from this vault'), h('div', { class: 'table-wrap' }, h('table', {},
     h('thead', {}, h('tr', {}, ['What', 'Status', 'Commit', 'Reveal', ''].map((x) => h('th', {}, x)))),
     h('tbody', {}, open.map((p) => {
+      if (p.status === 'anchor expired') {
+        const re = h('button', { type: 'button', class: 'small', name: 'reprove' }, 'Prove again');
+        re.addEventListener('click', busy(re, () => reproveDeploy(p)));
+        return h('tr', {}, h('td', {}, p.kind), h('td', {}, 'the proof\'s anchor left the window W: prove again'), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', {}, '—'), h('td', {}, re));
+      }
+      if (p.status === 'waiting maturity') {
+        const left = p.schedule === 'unconfirmed' || p.revealIn === undefined ? 'the commit is not confirmed yet' : `reveal in ${p.revealIn} block${p.revealIn === 1 ? '' : 's'}`;
+        const commitAgain = h('button', { type: 'button', class: 'small secondary' }, 'Broadcast the commit again');
+        commitAgain.addEventListener('click', busy(commitAgain, async () => {
+          try { await esplora.broadcast(p.commitHex); } catch (e) { if (!/already|known|exists|conflict/i.test(e.message)) throw e; }
+        }));
+        return h('tr', {}, h('td', {}, p.kind), h('td', { class: 'countdown' }, `${p.deploy.ticker}: ${left}`), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', {}, 'kept, signed'), h('td', {}, commitAgain));
+      }
       const again = h('button', { type: 'button', class: 'small secondary', disabled: !p.commitHex }, 'Broadcast again');
       again.addEventListener('click', busy(again, async () => {
         // the same signed transactions; a reveal is signed again only if it was never made
@@ -930,6 +1026,7 @@ async function syncNotes({ full = false } = {}) {
   }
   renderAll();
   staticWarnings();
+  processDeploys().catch(report);
   if (found) $('warnings').append(h('div', { class: 'warn' }, `${found} note(s) found in the tree.`));
 }
 
