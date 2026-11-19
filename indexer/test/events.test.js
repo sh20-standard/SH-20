@@ -100,7 +100,7 @@ test('vectors: the nine public inputs of every verifier call match the envelope 
   const v = JSON.parse(readFileSync(new URL('../vectors/v0.3.json', import.meta.url), 'utf8'));
   const hex = (x) => x.toString(16).padStart(64, '0');
   const roots = new Map(v.scenario.after.map((b) => [b.height, b.root]));
-  assert.equal(v.scenario.verifierCalls.length, 7);
+  assert.equal(v.scenario.verifierCalls.length, 11);
   for (const call of v.scenario.verifierCalls) {
     const raw = v.scenario.blocks.find((b) => b.height === call.height).txs.find((x) => x.txid === call.txid);
     const tx = { txid: raw.txid, vin: raw.vin.map((i) => ({ ...i, witness: i.witness.map((w) => Buffer.from(w, 'hex')) })), vout: raw.vout.map((o) => ({ value: BigInt(o.value), script: Buffer.from(o.script, 'hex') })) };
@@ -108,7 +108,8 @@ test('vectors: the nine public inputs of every verifier call match the envelope 
     const s = env.spend;
     const bodyHash = BigInt('0x' + sha256(Buffer.from(D.BODY), body).toString('hex')) % FR;
     const [root, nf0, nf1, l0, l1, l2, bh, vPub, tPub] = call.publicInputs;
-    assert.equal(root, roots.get(s.anchorHeight), `anchor root of ${call.txid}`);
+    const A = v.scenario.profile.activationHeight;
+    assert.equal(root, s.anchorHeight < A ? v.emptyRootDepth32 : roots.get(s.anchorHeight), `anchor root of ${call.txid}`);
     assert.deepEqual([nf0, nf1, l0, l1, l2], [...s.nf, ...s.outs.map((o) => o.leaf)].map(hex));
     assert.equal(bh, hex(bodyHash));
     const t = (ticker) => BigInt('0x' + Buffer.from(ticker).toString('hex'));

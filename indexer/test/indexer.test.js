@@ -302,3 +302,14 @@ test('ticker ids: big-endian ASCII, never 0 (reserved for BTC)', () => {
   assert.equal(tickerT('0000'), 0x30303030n);
   assert.ok(tickerT('0000') > 0n);
 });
+
+test('a LIST whose txid already names a listing is refused (a chain built by hand)', () => {
+  const { ix, c } = setup();
+  c.block(tx({ env: deployEnv() }));
+  c.block(mint('GENE'), mint('GENE'));
+  const lockKey = publicKey(randomBytes(32));
+  const list = (anchor) => tx({ id: 'aa'.repeat(32), env: { type: 'LIST', ticker: 'GENE', amount: 10n, price: 10n, lockVout: 0, lockKey, payScript: p2wpkh(), spend: spend(anchor) }, carrier: 'witness', vout: [{ value: 330n, script: p2tr(lockKey) }] });
+  assert.deepEqual(reasons(c.block(list(2))), []);
+  assert.deepEqual(reasons(c.block(list(3))), ['a listing already has this txid']);
+  assert.equal(ix.listings.get('aa'.repeat(32)).amount, 10n);
+});

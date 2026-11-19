@@ -1,7 +1,7 @@
 # SH-20 wire format and acceptance rules — draft v0.3
 
-Status: draft. Nothing here is activated on any network. This file is normative for
-`indexer/src/`; the design rationale lives in [`DESIGN.md`](DESIGN.md).
+Status: draft. Nothing here is activated on any network. This file is normative for every SH-20 indexer (the
+reference in `indexer/`, and `indexer-rs/`, written from this text alone); the design rationale lives in [`DESIGN.md`](DESIGN.md).
 
 Changes from v0.2: `pk_eph` is a 32-byte X25519 public key (was a 33-byte secp256k1 point), so wallets can scan with
 the native X25519 of WebCrypto; the spend section loses `proofLen`, since the proof always has 480 bytes. A TRANSFER is
@@ -53,7 +53,8 @@ leaf     = H( H( H(TAG_LEAF, t), v ), H(npk, rho) )
 
 A **minimal push** is a push in Bitcoin's minimal form (`CheckMinimalPush`): no data is `OP_0`; the single byte
 `0x01`…`0x10` is `OP_1`…`OP_16` and `0x81` is `OP_1NEGATE`; any other data of `n` bytes is the opcode `n` for `n ≤ 75`,
-`OP_PUSHDATA1` for `n ≤ 255`, `OP_PUSHDATA2` for `n ≤ 65,535`. Any other way of pushing the same data is not minimal.
+`OP_PUSHDATA1` for `n ≤ 255`, `OP_PUSHDATA2` for `n ≤ 65,535`, and `OP_PUSHDATA4` above. Any other way of pushing the same
+data is not minimal. (A witness push of more than 520 bytes is invalid in Bitcoin; an OP_RETURN script can be longer.)
 A script is read as opcodes from its first byte; a script with a push that runs past its end carries no envelope.
 
 - **OP_RETURN**: an output whose script is exactly `OP_RETURN` followed by one minimal push, whose data starts with
@@ -72,7 +73,7 @@ byte (the version) exists and is not `0x00`: it belongs to another version, is n
 A transaction with **one** counted envelope applies it (§5). With **two or more**, none is applied: the transaction is
 refused (the listings whose locks it spends still close, §6). Any type may use either carrier; a proof-carrying envelope
 (830 bytes for a TRANSFER) costs four times more in an OP_RETURN than in a witness. A coinbase transaction is read like
-any other (only its OP_RETURN outputs can carry an envelope).
+any other for its OP_RETURN outputs; the witness of its input is not looked at.
 
 ## 4. Envelopes
 
@@ -166,6 +167,9 @@ read, and blocks below `A` have no root and no digest (§6).
 **Every spend**: `max(0, H − W) ≤ anchorHeight ≤ H − K_min`; root known (`anchorHeight < A` uses the empty root); nullifiers
 non-zero, distinct, never seen; output leaves non-zero (they may repeat, within the spend or a leaf already in the tree);
 room for 3 leaves in the tree; proof valid, with the nine inputs of §4. Effect: record nullifiers, append the 3 leaves.
+The proof is checked **last**, once every other condition of the envelope holds (those of its type in the table below,
+the turnstile, and the ones above): a refusal has no effect either way, but this fixes which spends reach the verifier,
+and the vectors list exactly those (`scenario.verifierCalls`).
 
 **Turnstile.** Each ticker has a counter `pool[ticker]`, 0 when the token is created: what entered the shielded pool in
 public minus what left it in public. MINT adds `m × lim`, a team unlock adds `pre`, TAKE and CLAIM add the listing's
@@ -204,7 +208,8 @@ A rejected envelope changes nothing; sats it paid are not returned.
   in the transaction that spends the lock is refused, since the listing is still ACTIVE when the envelope applies.
 - **CLAIM message.** `SHA256("sh20/v0/claim" ‖ listTxid ‖ npk)`, with `listTxid` and `npk` as their 32 bytes in the envelope
   (display order, and little-endian); this 32-byte hash is the BIP340 message, checked against `lockKey`.
-- **Listings** are named by the txid of their LIST transaction, which is unique (BIP30, BIP34).
+- **Listings** are named by the txid of their LIST transaction, which is unique on a chain with BIP30 and BIP34. A LIST
+  whose txid already names a listing (a chain built by hand) is refused.
 
 ## 6. Block processing and digest
 
