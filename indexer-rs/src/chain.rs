@@ -7,6 +7,8 @@ use crate::field::Bytes32;
 pub struct TxIn {
     /// The spent outpoint; `None` for a coinbase input. The txid is in display (RPC) byte order.
     pub prevout: Option<(Bytes32, u32)>,
+    /// The input of a coinbase transaction: its witness is not looked at (§3).
+    pub coinbase: bool,
     pub witness: Vec<Vec<u8>>,
 }
 
@@ -51,8 +53,8 @@ pub enum Instr {
 }
 
 /// A minimal push, as §3 defines it: `OP_0` for no data, `OP_1`…`OP_16` and `OP_1NEGATE` for
-/// the single bytes they push, then the opcode `n`, `OP_PUSHDATA1`, `OP_PUSHDATA2` by length.
-/// §3 names no minimal form above 65,535 bytes, so `OP_PUSHDATA4` is never one (SPEC-GAPS R1).
+/// the single bytes they push, then by length the opcode `n`, `OP_PUSHDATA1`, `OP_PUSHDATA2`,
+/// and `OP_PUSHDATA4` above 65,535 bytes.
 fn is_minimal(opcode: u8, data: &[u8]) -> bool {
     match data.len() {
         0 => opcode == OP_0,
@@ -61,7 +63,7 @@ fn is_minimal(opcode: u8, data: &[u8]) -> bool {
         n if n <= 75 => opcode as usize == n,
         n if n <= 255 => opcode == OP_PUSHDATA1,
         n if n <= 65535 => opcode == OP_PUSHDATA2,
-        _ => false,
+        _ => opcode == OP_PUSHDATA4,
     }
 }
 
@@ -186,9 +188,10 @@ pub fn witness_envelopes(script: &[u8]) -> Vec<Vec<u8>> {
 
 /// Every envelope candidate a transaction carries: the OP_RETURN outputs in output order,
 /// then the tapscript of input 0. Each starts with `SH20`; nothing else is checked here.
+/// A coinbase is read for its OP_RETURN outputs only: the witness of its input is not looked at.
 pub fn envelopes(tx: &Tx) -> Vec<Vec<u8>> {
     let mut found: Vec<Vec<u8>> = tx.vout.iter().filter_map(|o| op_return_envelope(&o.script)).collect();
-    if let Some(script) = tx.vin.first().and_then(|i| tapscript(&i.witness)) {
+    if let Some(script) = tx.vin.first().filter(|i| !i.coinbase).and_then(|i| tapscript(&i.witness)) {
         found.extend(witness_envelopes(script));
     }
     found

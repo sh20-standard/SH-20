@@ -68,16 +68,26 @@ fn op_return_carrier() {
     let mut s = vec![0x6a, 0x4e, 0x2c, 0x01, 0, 0];
     s.extend_from_slice(&long);
     assert!(envelopes(&with_script(s)).is_empty());
-    // 65,535 bytes is the longest minimal push (OP_PUSHDATA2). §3 gives no minimal form beyond:
-    // 65,536 bytes in OP_PUSHDATA4 carry nothing (SPEC-GAPS R1)
+    // 65,535 bytes is the longest push of OP_PUSHDATA2; above, the minimal form is OP_PUSHDATA4
     long.resize(65_535, 0xaa);
+    long[4] = 0x00; // version 0, so that it counts
     let mut s = vec![0x6a, 0x4d, 0xff, 0xff];
     s.extend_from_slice(&long);
     assert_eq!(envelopes(&with_script(s)), vec![long.clone()]);
-    long.push(0xaa);
-    let mut s = vec![0x6a, 0x4e, 0x00, 0x00, 0x01, 0x00];
+    let mut s = vec![0x6a, 0x4e, 0xff, 0xff, 0x00, 0x00];
     s.extend_from_slice(&long);
     assert!(envelopes(&with_script(s)).is_empty());
+    long.push(0xaa);
+    let mut pushdata4 = vec![0x6a, 0x4e, 0x00, 0x00, 0x01, 0x00];
+    pushdata4.extend_from_slice(&long);
+    assert_eq!(envelopes(&with_script(pushdata4.clone())), vec![long.clone()]);
+    // such an envelope counts: alone it is refused by the decoder, and beside a real one the
+    // transaction has two envelopes
+    let mut two = op_return_tx(2, &env, 0);
+    two.vout.push(out(0, &pushdata4));
+    assert_eq!(sh20_indexer::chain::counted_envelopes(&two).len(), 2);
+    let mut ix = indexer(1, 0);
+    assert_eq!(apply(&mut ix, 1, vec![two]).1, ["more than one envelope"]);
 }
 
 #[test]
@@ -258,8 +268,16 @@ fn any_transaction_can_carry_an_envelope() {
     // a coinbase has no outpoint to spend, and its outputs are read like any other
     let mut ix = indexer(1, 0);
     let mut coinbase = op_return_tx(1, &mint("SH20", 1, None), 0);
-    coinbase.vin = vec![TxIn { prevout: None, witness: vec![vec![0; 32]] }];
-    assert_eq!(apply(&mut ix, 1, vec![coinbase]).0, ["GENESIS", "MINT"]);
+    coinbase.vin = vec![TxIn { prevout: None, coinbase: true, witness: vec![vec![0; 32]] }];
+    // the witness of a coinbase input is not looked at, whatever its shape
+    let mut with_witness = witness_tx(8, &mint("SH20", 8, None));
+    with_witness.vin[0].prevout = None;
+    assert_eq!(envelopes(&with_witness).len(), 1);
+    with_witness.vin[0].coinbase = true;
+    assert!(envelopes(&with_witness).is_empty());
+    let (events, rejected) = apply(&mut ix, 1, vec![coinbase, with_witness]);
+    assert_eq!(events, ["GENESIS", "MINT"]);
+    assert!(rejected.is_empty());
     // a small envelope may ride in a witness, and a spend in an OP_RETURN
     let (events, rejected) =
         apply(&mut ix, 2, vec![witness_tx(2, &mint("SH20", 2, None)), op_return_tx(3, &transfer(1, 1), 0)]);

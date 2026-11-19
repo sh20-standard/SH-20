@@ -96,7 +96,7 @@ fn replay_prints_the_vectors_digests() {
     let (ok, stdout, _) = replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--verifier", "test", "--json"]);
     assert!(ok);
     let lines: Vec<Value> = stdout.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
-    assert_eq!(lines.len(), 11);
+    assert_eq!(lines.len(), 13);
     for (got, a) in lines.iter().zip(sc["after"].as_array().unwrap()) {
         for key in ["height", "root", "events", "eventsH", "digest"] {
             assert_eq!(got[key], a[key], "{key} of block {}", a["height"]);
