@@ -58,6 +58,11 @@ jobs:
             ~/.cargo/registry
             circuit/target
           key: circuit-${{ hashFiles('circuit/Cargo.lock') }}
+      - run: rustup component add rustfmt clippy
+      - working-directory: circuit
+        run: cargo fmt --check
+      - working-directory: circuit
+        run: cargo clippy --release --all-targets -- -D warnings
       - working-directory: circuit
         run: cargo test --release
 

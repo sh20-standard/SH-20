@@ -61,7 +61,8 @@ web/build.sh            # the phone test page, in web/dist/ (see circuit/web/REA
 ```
 
 `.github/workflows/ci.yml` runs the tests of `indexer`, `indexer-rs`, `circuit`, `circuit/js` and `vault` on each push and pull request, checks that the vectors and the
-explorer's demo data regenerate byte for byte, and holds `indexer-rs` to `cargo fmt` and `clippy -D warnings`.
+explorer's demo data regenerate byte for byte, and holds `indexer-rs` and `circuit` to `cargo fmt` and `clippy -D warnings`
+(`circuit/rustfmt.toml`: lines of 160, so that formatting moves no line `docs/AUDIT.md` cites).
 
 ## Status (draft v0.3)
 
