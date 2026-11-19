@@ -40,8 +40,9 @@ export const WALLETS = [
       const p = xverseProvider();
       const message = 'SH-20 vault: pay for mints on signet';
       // wallet_connect is the current method; getAccounts is the older one
-      const res = await rpc(p, 'wallet_connect', { addresses: ['payment'], message, network: 'Signet' })
-        .catch(() => rpc(p, 'getAccounts', { purposes: ['payment'], message }));
+      // the ordinals (taproot) address too: only ever a change address, for a cancel (market.js buildCancel)
+      const res = await rpc(p, 'wallet_connect', { addresses: ['payment', 'ordinals'], message, network: 'Signet' })
+        .catch(() => rpc(p, 'getAccounts', { purposes: ['payment', 'ordinals'], message }));
       let name = (await rpc(p, 'wallet_getNetwork', null).catch(() => null))?.bitcoin?.name ?? res?.network?.bitcoin?.name;
       if (name && name !== 'Signet') {
         await rpc(p, 'wallet_changeNetwork', { name: 'Signet' });
@@ -51,7 +52,8 @@ export const WALLETS = [
       // the payment address is P2WPKH or P2SH-P2WPKH depending on the user's setting; never the ordinals one
       const pay = accounts.find((a) => a.purpose === 'payment');
       if (!pay) throw new Error('Xverse returned no payment address');
-      return { address: pay.address, publicKey: pay.publicKey, network: name ?? NET };
+      const other = accounts.find((a) => a.purpose === 'ordinals' && a.address !== pay.address);
+      return { address: pay.address, publicKey: pay.publicKey, network: name ?? NET, otherAddress: other?.address ?? null };
     },
     async signPsbt(psbt, indexes, address) {
       const res = await rpc(xverseProvider(), 'signPsbt', { psbt: toBase64(psbt), signInputs: { [address]: indexes }, broadcast: false });
@@ -101,7 +103,8 @@ export const WALLETS = [
       // pay from the native segwit address; the taproot one is for collectibles
       const pay = (res.addresses ?? []).find((a) => a.symbol === 'BTC' && a.type === 'p2wpkh');
       if (!pay) throw new Error('Leather returned no native segwit Bitcoin address');
-      return { address: pay.address, publicKey: pay.publicKey, network: NET };
+      const other = (res.addresses ?? []).find((a) => a.symbol === 'BTC' && a.type === 'p2tr');
+      return { address: pay.address, publicKey: pay.publicKey, network: NET, otherAddress: other?.address ?? null };
     },
     async signPsbt(psbt, indexes) {
       const res = await rpc(globalThis.LeatherProvider, 'signPsbt', { hex: toHex(psbt), network: NET, signAtIndex: indexes, broadcast: false });

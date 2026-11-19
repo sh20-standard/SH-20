@@ -253,7 +253,12 @@ function renderWallet() {
       } catch {
         throw new Error(`${ad.name} gave ${acc.address}, which is not a signet address. Switch the wallet to Signet.`);
       }
-      st.wallet = { adapter: ad, ...acc, type };
+      // a second address of the wallet (Xverse's and Leather's taproot one): only a cancel's change goes there
+      let otherAddress = null;
+      try {
+        if (acc.otherAddress && acc.otherAddress !== acc.address) otherAddress = (addressToScript(acc.otherAddress), acc.otherAddress);
+      } catch {}
+      st.wallet = { adapter: ad, ...acc, type, otherAddress };
       renderAll();
     }));
     return b;
@@ -763,7 +768,7 @@ async function sendList(out) {
   const lock = await st.vault.lockOutput(lockIndex);
   await carry({
     kind: 'LIST', out, feeRate: Number(f.fee), tip,
-    plan: () => planList({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount, price, payScript }),
+    plan: () => planList({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount, price, payScript, lockKey: lock.key }),
     outputs: listOutputs(lock.script),
     label: `LIST of ${units(amount)} ${f.ticker} for ${sats(price)}`,
     onRevealed: (reveal) => st.vault.addListing({ lockIndex, ticker: f.ticker, amount: amount.toString(), price: price.toString(), payScript: toHex(payScript), listTxid: reveal.txid, state: 'broadcast' }),

@@ -15,7 +15,7 @@ import { proveSpend, planCarrier, revealFor } from '../src/send.js';
 import { withProof } from '../src/spend.js';
 import {
   planBurn, planList, listOutputs, signOffer, encodeOffer, decodeOffer, offerValid, listingFromChain,
-  buildTake, buildCancel, buildClaim, claimMessage, LOCK_SATS,
+  buildTake, buildCancel, buildClaim, claimMessage, LOCK_SATS, cancelChangeScript,
 } from '../src/market.js';
 import { addressToScript, serializeTx } from '../src/btc.js';
 import { fromHex, toHex } from '../src/bytes.js';
@@ -63,10 +63,11 @@ async function setup(verifier) {
 const fakeSigned = (t) => ({ ...t, vin: t.vin.map((i, k) => (i.witness?.length ? i : { ...i, witness: [new Uint8Array(k ? 71 : 64), new Uint8Array(33)] })) });
 
 /** A LIST of 600 GENE for 5,000 sats, revealed and mined; `prove` makes the proof. */
-async function list(ix, c, seller, prove) {
+async function list(ix, c, seller, prove, payScript = SELLER_PAY) {
   const lockIndex = await seller.reserveLock();
   const lock = await seller.lockOutput(lockIndex);
-  const built = await planList({ vault: seller, sync: localSync(ix), tip: c.next - 1, ticker: 'GENE', amount: 600n, price: 5000n, payScript: SELLER_PAY });
+  const built = await planList({ vault: seller, sync: localSync(ix), tip: c.next - 1, ticker: 'GENE', amount: 600n, price: 5000n, payScript, lockKey: lock.key });
+  assert.equal(toHex(built.env.lockKey), toHex(lock.key), 'the lock key is in the signed body'); // SPEC-WIRE §4
   const envelope = await prove(built);
   const cp = planCarrier({ envelope, payer: { address: WPKH }, utxos: [{ txid: '33'.repeat(32), vout: lockIndex, value: 100000n }], feeRate: 1, tipHeight: c.next - 1, outputs: listOutputs(lock.script) });
   const reveal = revealFor(cp, 'c2'.repeat(32));
@@ -191,4 +192,38 @@ test('the turnstile: a BURN or LIST above the pool is refused before proving, as
   const over = { ...built.env, vPub: 2001n };
   const r = c.block(helperTx({ env: { ...over, spend: { ...over.spend, proof: testProof() } }, carrier: 'witness' }));
   assert.deepEqual(r.rejected.map((x) => x.reason), ['more than the pool holds of this ticker']);
+});
+
+test('a copy of a LIST that points its lock at another key is refused (lockKey is in the signed body)', async () => {
+  const { ix, c, seller } = await setup(mockVerifier());
+  const lock = await seller.lockOutput(await seller.reserveLock());
+  const built = await planList({ vault: seller, sync: localSync(ix), tip: c.next - 1, ticker: 'GENE', amount: 600n, price: 5000n, payScript: SELLER_PAY, lockKey: lock.key });
+  const envelope = await fakeProve(built);
+  const thief = await vaultOf(cv.wallets[2].m);
+  const theirs = (await thief.lockOutput(0)).script;
+  const cp = planCarrier({ envelope, payer: { address: WPKH }, utxos: [{ txid: '99'.repeat(32), vout: 0, value: 100000n }], feeRate: 1, tipHeight: c.next - 1, outputs: listOutputs(theirs) });
+  const copy = revealFor(cp, 'c9'.repeat(32));
+  const r = c.block(ixTx(copy.tx, copy.txid));
+  assert.deepEqual(r.rejected.map((x) => x.reason), ['lock output must be P2TR to lockKey']);
+  assert.throws(() => listingFromChain(copy.txid, copy.hex), /not P2TR to the LIST's lockKey/);
+});
+
+test('a cancel sends its change to the wallet\'s other address when the payee is the paying one: CANCELLED', async () => {
+  const { ix, c, seller } = await setup(mockVerifier());
+  const TR = 'tb1pqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesf3hn0c';
+  const mine = addressToScript(WPKH);
+  // listed to the paying address itself
+  const { lock, reveal, listing } = await list(ix, c, seller, fakeProve, mine);
+  const l = listingFromChain(reveal.txid, reveal.hex, { ...listing, amount: String(listing.amount), price: String(listing.price) });
+  assert.equal(toHex(cancelChangeScript(l, { address: WPKH })), toHex(mine), 'one address: the change stays there');
+  assert.equal(toHex(cancelChangeScript(l, { address: WPKH, otherAddress: TR })), toHex(addressToScript(TR)), 'Xverse: its taproot address');
+  const t = buildCancel({ l, lockSecret: lock.secret, npk: (await seller.opening(7)).npk, payer: { address: WPKH, otherAddress: TR }, utxos: [{ txid: 'ab'.repeat(32), vout: 0, value: 20000n }], feeRate: 1, tipHeight: c.next - 1 });
+  assert.ok(t.tx.vout.every((o) => toHex(o.script) !== toHex(mine)), 'nothing goes back to the payee');
+  const r = c.block(ixTx(fakeSigned(t.tx), 'ac'.repeat(32)));
+  assert.equal(r.events[0].outcome, 'CANCELLED');
+  // without another address the same cancel is a sale to oneself, and nothing is lost
+  const second = await list(ix, c, seller, fakeProve, mine);
+  const l2 = listingFromChain(second.reveal.txid, second.reveal.hex, { ...second.listing, amount: String(second.listing.amount), price: String(second.listing.price) });
+  const t2 = buildCancel({ l: l2, lockSecret: second.lock.secret, npk: (await seller.opening(8)).npk, payer: { address: WPKH }, utxos: [{ txid: 'ad'.repeat(32), vout: 0, value: 20000n }], feeRate: 1, tipHeight: c.next - 1 });
+  assert.equal(c.block(ixTx(fakeSigned(t2.tx), 'ae'.repeat(32))).events[0].outcome, 'SOLD');
 });

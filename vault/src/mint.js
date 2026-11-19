@@ -109,12 +109,13 @@ export function buildMint({ token, opening, payer, utxos, feeRate, tipHeight, k 
  * the wallet: the MINT, the commit of a proof-carrying envelope, a DEPLOY without a burn.
  * payer = { address, publicKey (hex, optional for p2wpkh) }; utxos = [{ txid, vout, value }] there.
  */
-export function buildFunded({ fixed, payer, utxos, feeRate, tipHeight, pre = [], locktime = tipHeight, sign }) {
+export function buildFunded({ fixed, payer, utxos, feeRate, tipHeight, pre = [], locktime = tipHeight, sign, changeScript }) {
   if (!(feeRate > 0) || feeRate > MAX_FEE_RATE) throw new Error(`fee rate must be between 0 and ${MAX_FEE_RATE} sat/vB`);
   const payScript = addressToScript(payer.address);
   const inType = scriptType(payScript);
   if (!SUPPORTED_INPUTS.includes(inType)) throw new Error(`pay from a native segwit, nested segwit or taproot address, not ${inType}`);
-  const { picked, change, fee } = selectCoins(utxos, fixed, inType, payScript, feeRate, pre);
+  const changeTo = changeScript ?? payScript; // the payer's address unless told otherwise (a cancel)
+  const { picked, change, fee } = selectCoins(utxos, fixed, inType, changeTo, feeRate, pre);
 
   // `pre` inputs come first, at the indexes their signatures expect (a seller's lock at 0)
   const tx = {
@@ -124,7 +125,7 @@ export function buildFunded({ fixed, payer, utxos, feeRate, tipHeight, pre = [],
       ...pre.map((i) => ({ txid: i.txid, vout: i.vout, sequence: i.sequence, scriptSig: new Uint8Array(0), witness: i.witness ?? [] })),
       ...picked.map((u) => ({ txid: u.txid, vout: u.vout, sequence: SEQUENCE, scriptSig: new Uint8Array(0), witness: [] })),
     ],
-    vout: change > 0n ? [...fixed, { value: change, script: payScript }] : fixed,
+    vout: change > 0n ? [...fixed, { value: change, script: changeTo }] : fixed,
   };
   // a `pre` input signed over the whole transaction (SIGHASH_DEFAULT) is signed now that it is final
   const prevouts = [...pre.map((i) => ({ value: i.value, script: i.script })), ...picked.map((u) => ({ value: u.value, script: payScript }))];

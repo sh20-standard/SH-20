@@ -28,7 +28,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 82 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 87 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development)
 npm run release          # a verifiable release from the current commit (below)
 ```
@@ -222,7 +222,12 @@ requires). `src/send.js` then:
 2. **proves** (`src/prover.js`, `src/prover-worker.js`): the circuit's WebAssembly prover, wired as
    the phone test page wires it (`circuit/web/host.js` and `thread-worker.js`, unchanged), on a
    thread pool when the page is cross-origin isolated, else on one thread; the proof is checked
-   against its public inputs before anything is signed;
+   against its public inputs before anything is signed. Each proof gets a seed of 32 bytes from
+   `crypto.getRandomValues`, drawn for it alone (`proveWithFreshSeed`): the same seed with two
+   witnesses would give the same blinding and unblind the difference of their commitments
+   (`docs/AUDIT.md`, doubt 6.6). It is never reused, never stored, never derived from a key or the
+   witness; `test/prover-seed.test.js` checks it, and the same witness proved twice gives two
+   different valid proofs (`test/spend.test.js`);
 3. **carries** (`src/taproot.js`): a commit transaction, built by the vault and signed by the
    wallet, pays a taproot output whose one leaf is `<E> OP_CHECKSIG OP_0 OP_IF "SH20" … OP_ENDIF`;
    the reveal spends it by that leaf, signed by the vault with the one-time key `E`, and returns the
@@ -255,7 +260,11 @@ control block, signature message) is checked against the BIP341 vectors (`test/t
   (`vPub` = amount), with the price and the payee (a signet address, the wallet's by default). The
   reveal's output 0 is the **lock**, a BIP86 key-path output of 330 sats whose key only this vault
   holds: `HMAC-SHA512("sh20/vault/lock", m ‖ u32le(i))`, so the words restore it (these are Bitcoin
-  keys of the vault, not note keys: SPEC-NOTES does not define them). 886-byte envelope, 353 vB reveal.
+  keys of the vault, not note keys: SPEC-NOTES does not define them). The lock's x-only key,
+  `lockKey`, is in the LIST's signed body (right after `lockVout`), and the indexers refuse a LIST
+  whose output `lockVout` is not `OP_1 <lockKey>`: a copy of the envelope in another transaction
+  cannot point the lock at its copier's key. The vault reads it back the same way before signing an
+  offer or a TAKE. 918-byte envelope, 361 vB reveal.
 - **Offer** ("Copy offer", once the listing is ACTIVE): the lock key signs a spend of the lock with
   `SIGHASH_SINGLE | ANYONECANPAY` that pays the price to the payee at the same index (version 2,
   locktime 0), shared as one line, `sh20offer1:<listing>:<signature>`.
@@ -266,8 +275,11 @@ control block, signature message) is checked against the BIP341 vectors (`test/t
   the wallet's own inputs, which are the only ones the wallet signs. The tokens become a public note
   of the buyer. A lock is spent once: a sale can be neither doubled nor left unpaid.
 - **Cancel**: a TAKE by the seller itself, the lock signed by the vault (SIGHASH_DEFAULT): the
-  tokens come back as a public note. The indexers count it CANCELLED, or SOLD when the change
-  returns to the payee's own address with at least the price (a sale to oneself: nothing is lost).
+  tokens come back as a public note. A TAKE whose outputs pay the payee at least the price counts
+  as SOLD, so the cancel sends its change to the wallet's other address when it has one and the
+  payee is the paying address (Xverse's and Leather's taproot address): the listing is then
+  CANCELLED. With one address only (UniSat), the change stays there and the indexers count a sale to
+  oneself; nothing is lost either way.
 - **CLAIM** ("Claim back", for a CLOSED listing, whose lock was spent with no TAKE): a BIP340
   signature by the lock key over `SHA256("sh20/v0/claim" ‖ listTxid ‖ npk)`, in an OP_RETURN.
 

@@ -19,7 +19,7 @@
 import { serializeEnvelope, parseEnvelope, extractEnvelope, tickerT, schnorrSign, schnorrVerify, DOMAIN } from './sh20.js';
 import { sigMsg, sigHash, signKeyPath, SIGHASH_DEFAULT, SIGHASH_SINGLE_ANYONECANPAY } from './taproot.js';
 import { buildFunded } from './mint.js';
-import { opReturnScript, parseTx, txid as txidOf, scriptType, dustLimit } from './btc.js';
+import { opReturnScript, parseTx, txid as txidOf, scriptType, dustLimit, addressToScript } from './btc.js';
 import { sha256 } from './hash.js';
 import { concat, fromHex, toHex, utf8 } from './bytes.js';
 import { spendFrom, shuffled } from './send.js';
@@ -56,16 +56,22 @@ export async function planBurn({ vault, sync, tip, ticker, amount }) {
   });
 }
 
-/** A LIST of `amount` of `ticker` for `price` sats paid to `payScript`; the lock is `lockScript` at output 0. */
-export async function planList({ vault, sync, tip, ticker, amount, price, payScript }) {
+/**
+ * A LIST of `amount` of `ticker` for `price` sats paid to `payScript`. The lock is output 0 of the
+ * reveal, `OP_1 <lockKey>`; `lockKey` (its 32-byte x-only output key) is in the LIST's signed body
+ * (SPEC-WIRE §4, PR #20), so a copy of the envelope in another transaction cannot point the lock at
+ * a key its copier holds.
+ */
+export async function planList({ vault, sync, tip, ticker, amount, price, payScript, lockKey }) {
   const v = BigInt(amount);
   const p = BigInt(price);
+  if (!(lockKey instanceof Uint8Array) || lockKey.length !== 32) throw new Error('a LIST needs the 32-byte key of its lock');
   if (v <= 0n || p <= 0n) throw new Error('the amount and the price must be positive');
   if (p < dustLimit(payScript)) throw new Error(`a price below ${dustLimit(payScript)} sats could not be paid in a standard transaction`);
   return spendFrom({
     vault, sync, tip, ticker, need: v, vPub: v, tPub: tickerT(ticker),
     outputs: ({ change, me }) => shuffled([{ address: me, v: change }, { address: me, v: 0n }, { address: me, v: 0n }]),
-    envelope: (spend) => ({ type: 'LIST', ticker, amount: v, price: p, lockVout: 0, payScript: Buffer.from(payScript), spend }),
+    envelope: (spend) => ({ type: 'LIST', ticker, amount: v, price: p, lockVout: 0, lockKey: Buffer.from(lockKey), payScript: Buffer.from(payScript), spend }),
   });
 }
 
@@ -124,9 +130,11 @@ export function listingFromChain(listTxid, rawHex, indexed) {
   if (env.type !== 'LIST') throw new Error(`the listing transaction carries a ${env.type}, not a LIST`);
   const lock = tx.vout[env.lockVout];
   if (!lock || scriptType(lock.script) !== 'p2tr') throw new Error('the listing has no P2TR lock');
+  // the lock must be OP_1 <lockKey>, the key the LIST's signed body names (the indexers refuse it otherwise)
+  if (toHex(lock.script.subarray(2)) !== toHex(env.lockKey)) throw new Error('the lock output is not P2TR to the LIST\'s lockKey');
   const l = {
     listTxid, ticker: env.ticker, amount: env.amount, price: env.price, payScript: Uint8Array.from(env.payScript),
-    lockVout: env.lockVout, lockValue: lock.value, lockScript: lock.script, lockKey: lock.script.subarray(2),
+    lockVout: env.lockVout, lockValue: lock.value, lockScript: lock.script, lockKey: Uint8Array.from(env.lockKey),
   };
   if (indexed) {
     const bad = [];
@@ -155,12 +163,25 @@ export function buildTake({ l, sig, npk, payer, utxos, feeRate, tipHeight }) {
   });
 }
 
+/**
+ * Where a cancel sends its change: the first of the wallet's addresses that is not the listing's
+ * payee. A TAKE whose outputs pay the payee at least the price counts as SOLD (to the seller itself),
+ * so change on the payee's address can turn a cancel into a sale. With one address only, it stays there.
+ */
+export function cancelChangeScript(l, payer) {
+  for (const a of [payer.address, payer.otherAddress].filter(Boolean)) {
+    const s = addressToScript(a);
+    if (toHex(s) !== toHex(l.payScript)) return s;
+  }
+  return addressToScript(payer.address);
+}
+
 /** The seller taking its own listing back: a TAKE that spends the lock without the offer. */
 export function buildCancel({ l, lockSecret, npk, payer, utxos, feeRate, tipHeight }) {
   return buildFunded({
     fixed: [takeOutput(npk)],
     pre: [{ txid: l.listTxid, vout: l.lockVout, sequence: OFFER_SEQUENCE, value: l.lockValue, script: l.lockScript }],
-    payer, utxos, feeRate, tipHeight,
+    payer, utxos, feeRate, tipHeight, changeScript: cancelChangeScript(l, payer),
     sign: (tx, k, prevouts) => [signKeyPath(lockSecret, sigMsg(tx, k, prevouts, null, SIGHASH_DEFAULT))],
   });
 }

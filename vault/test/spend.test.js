@@ -97,6 +97,10 @@ test('a TRANSFER built and proved by the vault is accepted by the indexer with t
   console.log(`  proved in ${((performance.now() - t0) / 1000).toFixed(1)} s (one thread, Node)`);
   assert.ok(proof && proof.length === 480, 'the prover accepts the vault\'s witness');
   assert.equal(await p.verify(built.publics, proof), true);
+  // a fresh seed for each proof (docs/AUDIT.md 6.6): the same witness proved again gives another proof, valid too
+  const again = await p.prove(built.witness);
+  assert.notEqual(Buffer.from(again).toString('hex'), Buffer.from(proof).toString('hex'), 'another seed, other blinding');
+  assert.equal(await p.verify(built.publics, again), true);
   const envelope = withProof(built.env, proof);
   assert.equal(envelope.length, 830);
 

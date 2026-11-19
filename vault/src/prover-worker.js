@@ -9,13 +9,31 @@
 
 import { proverApi, threadedImports } from '../../circuit/web/host.js';
 
+/**
+ * Proves `witness` with a seed of 32 bytes drawn from crypto.getRandomValues for this proof alone.
+ * The seed makes the proof's blinding scalars: the same seed with two witnesses would give the same
+ * blinding, and the difference of their commitments would come out unblinded (docs/AUDIT.md, doubt
+ * 6.6). So it is never reused, never stored, and never derived from a key or from the witness.
+ * test/prover-seed.test.js checks it.
+ */
+export function proveWithFreshSeed(prover, witness, random = (b) => crypto.getRandomValues(b)) {
+  const seed = random(new Uint8Array(32));
+  if (!(seed instanceof Uint8Array) || seed.length !== 32) throw new Error('the prover needs 32 random bytes');
+  try {
+    return prover.prove(witness, seed);
+  } finally {
+    seed.fill(0); // this copy is cleared; the module overwrites its own with the next proof's
+  }
+}
+
 let api = null;
 
-self.onmessage = ({ data }) => {
+const inWorker = typeof WorkerGlobalScope !== 'undefined' && globalThis instanceof WorkerGlobalScope;
+if (inWorker) self.onmessage = ({ data }) => {
   try {
     if (data.init) return init(data.init);
     if (!api) throw new Error('the prover is not loaded');
-    if (data.prove) return self.postMessage({ id: data.id, proof: api.prove(data.prove, crypto.getRandomValues(new Uint8Array(32))) });
+    if (data.prove) return self.postMessage({ id: data.id, proof: proveWithFreshSeed(api, data.prove) });
     if (data.verify) return self.postMessage({ id: data.id, ok: api.verify(data.verify.publics, data.verify.proof) });
     throw new Error('unknown message');
   } catch (e) {
