@@ -49,7 +49,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 58 tests (4 need the verifier module below and are skipped without it)
+npm test            # 59 tests (4 need the verifier module below and are skipped without it)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
@@ -59,6 +59,9 @@ cargo test --release    # 35 tests, with the shipped proving key (artifacts/spen
 bench/cross-check.sh    # snarkjs against our verifier, both ways (hard requirement 4)
 web/build.sh            # the phone test page, in web/dist/ (see circuit/web/README.md)
 ```
+
+`.github/workflows/ci.yml` runs the tests of `indexer`, `indexer-rs`, `circuit`, `circuit/js` and `vault` on each push and pull request, checks that the vectors and the
+explorer's demo data regenerate byte for byte, and holds `indexer-rs` to `cargo fmt` and `clippy -D warnings`.
 
 ## Status (draft v0.3)
 
@@ -139,8 +142,10 @@ claims exist. What is left before people can try it, in order (review of 2026-11
      and is paid in tokens by the third output. Needs "several envelopes per transaction" decided.
    - **Differential fuzzing.** Random chains (valid and broken envelopes, both carriers, lock spends, reorgs) through
      `indexer/` and `indexer-rs/`, digests compared at every block: the vectors only cover the cases someone thought of.
-   - **Scale.** The indexer keeps its whole state in memory and replays from `A` on every restart; `/nullifiers`,
-     `/roots` and `/listings` return everything at once. Snapshots and pagination before mainnet volumes.
+   - **Scale.** The note tree is no longer the limit (2026-11-19: an append hashes only the subtrees it completes,
+     129 µs on average, a path is O(depth); a million leaves in about 2 minutes, was about 1.5 hours). What is left:
+     the indexer keeps its whole state in memory and replays from `A` on every restart; `/nullifiers`, `/roots` and
+     `/listings` return everything at once. Snapshots and pagination before mainnet volumes.
    - **External audit** of the circuit, the verifier and the note sealing (`docs/AUDIT.md`).
 
 Rules that stay in force for the circuit and the vault:
