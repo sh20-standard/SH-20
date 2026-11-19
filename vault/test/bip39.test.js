@@ -16,7 +16,7 @@ const memStorage = () => {
   return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)) };
 };
 
-test('the wordlist is BIP39\'s English list', () => {
+test('the wordlist is BIP39\'s English list', async () => {
   assert.equal(WORDS.length, 2048);
   assert.equal(createHash('sha256').update(WORDS.join('\n') + '\n').digest('hex'), '2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda');
 });
@@ -51,9 +51,9 @@ test('a new vault has 12 words; the words alone restore its keys and address', a
   assert.equal(again.words, v.words, 'kept in the encrypted record, to show again');
   const restored = await Vault.fromWords(memStorage(), v.words.toUpperCase());
   assert.equal(restored.address, v.address);
-  assert.equal(restored.opening(0).npk, v.opening(0).npk);
+  assert.equal((await restored.opening(0)).npk, (await v.opening(0)).npk);
   // SPEC-NOTES §1: m = HMAC-SHA512("sh20/v0/seed", BIP39 seed)[0..32], no BIP39 passphrase
-  const m = masterSecret(await mnemonicToSeed(v.words));
-  assert.equal(encodeAddress('tsh20', walletKeys(m).address), v.address);
-  await assert.rejects(Vault.fromWords(memStorage(), v.words.split(' ').reverse().join(' ')), /checksum/);
+  const m = await masterSecret(await mnemonicToSeed(v.words));
+  assert.equal(encodeAddress('tsh20', (await walletKeys(m)).address), v.address);
+  await assert.rejects(Vault.fromWords(memStorage(), vectors[0][1].replace(/about$/, 'abandon')), /checksum/, 'a wrong checksum restores nothing');
 });

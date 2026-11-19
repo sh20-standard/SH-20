@@ -21,14 +21,14 @@ What works today, without proofs:
 - **private TRANSFER**: proved on the device by the circuit's WebAssembly prover, carried by a
   commit transaction (signed by the wallet) and a reveal (signed by the vault);
 - **DEPLOY** of a new ticker, burning `D` SH20 with a proof (or a plain OP_RETURN when `D = 0`);
-- **12 recovery words** (BIP39) that restore the keys, the address and every note.
-
-BURN, LIST, TAKE and CLAIM are not in the vault yet.
+- **BURN**, and a **market**: LIST tokens for BTC, share a signed offer, buy from an offer (TAKE),
+  cancel a listing, CLAIM back a closed one;
+- **12 recovery words** (BIP39) that restore the keys, the address, every note and every listing.
 
 ## Run
 
 ```sh
-npm test                 # 72 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 87 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development)
 npm run release          # a verifiable release from the current commit (below)
 ```
@@ -38,8 +38,10 @@ Development (serves the repository root, a mock indexer API and a mock Esplora):
 ```sh
 node dev/serve.js        # http://localhost:8000/vault/, API on :8020 (not isolated: the prover runs on one thread)
 node dev/serve.js --isolate                   # with COOP/COEP: shared memory, the prover's thread pool
-node dev/e2e.js          # headless Chrome: mint, sync, TRANSFER, DEPLOY with a burn, restore from the words
+node dev/e2e.js          # headless Chrome: mint, TRANSFER, DEPLOY, BURN, LIST, TAKE, cancel, restore from the words
 E2E_PATH=/vault/dist/vault/ node dev/e2e.js   # the same flow on the IPFS build
+E2E_HOST=<cid>.ipfs.localhost node dev/e2e.js # a subdomain gateway: the page isolates itself (service worker)
+E2E_PATH=/ipfs/<cid>/vault/ node dev/e2e.js   # a path gateway: no service worker, one thread
 E2E_LIAR=1 node dev/e2e.js                    # a lying indexer in the list: the mint is refused
 
 node dev/serve.js --deploy-burn 0             # profile with D = 0: GENE is deployed too
@@ -51,9 +53,13 @@ serialised transactions, with the reference profile (D = 1000) and the real PLON
 `vault/prover/sh20_circuit.wasm`). Its mock Esplora serves those transactions and "mines" every
 broadcast one into the next block. The e2e run mints 2,000 SH20, syncs, sends 700 privately to
 another wallet's sh20 address (proved in the page), finds its 1,300 of change by scanning, deploys
-a ticker that burns 1,000 SH20 with a proof, finds the 300 left, then erases the vault, restores
-it from the 12 words alone and requires the same address and the same notes. Measured in
-headless Chrome on a laptop: 26 s per proof on one thread, 4.7 s on the thread pool.
+a ticker that burns 1,000 SH20 with a proof, finds the 300 left, burns 100, lists 150 for 5,000
+sats, copies the offer, checks it and buys it back (the listing is SOLD and a public note of 150
+appears), lists 50 and cancels it, then erases the vault, restores it from the 12 words alone and
+requires the same address, the same notes and the same listings. Measured in headless Chrome on a
+laptop: 26 s per proof on one thread, 4.7 s on the thread pool. `serve.js` answers under
+`/ipfs/<cid>/…` like a path gateway, and Chrome resolves `<cid>.ipfs.localhost` to this machine,
+so both kinds of gateway are tested without IPFS.
 
 ## Releases and IPFS hosting
 
@@ -78,16 +84,25 @@ folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
   switching, and restore it on the new CID.
 - **Nothing from another domain:** the CSP allows scripts from the page's own origin and the import
   map (by hash), no CDN, no remote font or stylesheet; `test/page.test.js` and `test/release.test.js`
-  check it. Network calls (`connect-src`) go only to the indexer and Esplora servers you configure.
-  `'wasm-unsafe-eval'` lets the page compile the prover's WebAssembly (from its own origin); it does
-  not allow `eval` of strings.
+  check it. Network calls (`connect-src`) go to the page's own origin (the prover and its key) and to
+  the indexer and Esplora servers you configure. `'wasm-unsafe-eval'` lets the page compile the
+  prover's WebAssembly (from its own origin); it does not allow `eval` of strings.
 - **The prover is in the release:** `vault/prover/*.wasm` (1.1 and 1.3 MB) and the proving key
   `circuit/artifacts/spend.pk` (8.4 MB, checked by the module against its pinned SHA-256). The CID
   covers them like every other file (`tools/pack.js` chunks files above 256 KiB as kubo does).
 - **Threads need isolation:** the thread pool needs shared memory, which browsers give only to pages
   served with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy:
-  require-corp`. Public IPFS gateways do not send them, so there the vault proves on one thread
-  (about half a minute on a laptop); a host or a local node that sends them gets the pool.
+  require-corp`. IPFS gateways do not send them. On a **subdomain gateway** (`<cid>.ipfs.dweb.link`,
+  one origin per CID) the vault registers the phone test page's service worker (byte for byte
+  `circuit/web/sw.js`, which a test checks), which re-serves the page's own responses with the
+  headers; the page reloads once and proves on the pool (4.7 s instead of 26 s on a laptop). The
+  build puts it at the root of the site (`sw.js`, from `vault/sw.js`), with the root as its scope: the
+  pool's threads (`circuit/web/thread-worker.js`) are outside `vault/`, and a worker it did not
+  control would get neither the headers nor the shared memory. On a subdomain gateway that root is
+  the CID's own. On a **path gateway** (`…/ipfs/<cid>/`) it never does: every site there shares one
+  origin, and a service worker would sit in front of all of them (`src/isolation.js`). The pool has
+  `defaultThreads()` threads (`circuit/web/host.js`): the cores the browser reports, and at least 6
+  on an iPhone, whose Safari reports 4.
 - **Why `chrome-extension:` and `moz-extension:` stay in `script-src`:** Xverse, UniSat and Leather
   inject their wallet provider into the page as a script served from their own extension, which only
   an installed extension can serve, so allowing these schemes lets the wallets work without letting
@@ -207,7 +222,12 @@ requires). `src/send.js` then:
 2. **proves** (`src/prover.js`, `src/prover-worker.js`): the circuit's WebAssembly prover, wired as
    the phone test page wires it (`circuit/web/host.js` and `thread-worker.js`, unchanged), on a
    thread pool when the page is cross-origin isolated, else on one thread; the proof is checked
-   against its public inputs before anything is signed;
+   against its public inputs before anything is signed. Each proof gets a seed of 32 bytes from
+   `crypto.getRandomValues`, drawn for it alone (`proveWithFreshSeed`): the same seed with two
+   witnesses would give the same blinding and unblind the difference of their commitments
+   (`docs/AUDIT.md`, doubt 6.6). It is never reused, never stored, never derived from a key or the
+   witness; `test/prover-seed.test.js` checks it, and the same witness proved twice gives two
+   different valid proofs (`test/spend.test.js`);
 3. **carries** (`src/taproot.js`): a commit transaction, built by the vault and signed by the
    wallet, pays a taproot output whose one leaf is `<E> OP_CHECKSIG OP_0 OP_IF "SH20" … OP_ENDIF`;
    the reveal spends it by that leaf, signed by the vault with the one-time key `E`, and returns the
@@ -224,6 +244,54 @@ pinned verifying key; a TRANSFER the vault builds, proves and reveals is accepte
 indexer with the pinned PLONK verifier, the recipient's scan finds its note and the vault its
 change; and a DEPLOY that burns 1,000 SH20 is accepted the same way. Taproot (tweak, leaf hash,
 control block, signature message) is checked against the BIP341 vectors (`test/taproot.test.js`).
+
+## BURN and the market
+
+`src/market.js`, with the same spend machinery as a transfer for the two proof-carrying envelopes:
+
+- **The turnstile** (SPEC-WIRE §5): the indexers keep `pool[ticker]`, what the shielded pool holds of
+  a ticker, and reject a BURN, a LIST or a DEPLOY burn that takes out more. Before proving one, the
+  vault reads `pool` in `/token/:ticker` from every configured indexer and refuses, saying so, when
+  the amount is above the lowest: the transaction would be rejected and its fees lost. Another
+  spend in the same block can still lower the pool before this one confirms.
+- **BURN** (send panel, "Burn"): a spend with `vPub` = the amount and `tPub = t(ticker)`; the change
+  and two unused outputs are sealed to the vault. 842-byte envelope, 342 vB reveal.
+- **LIST** (send panel, "Sell for BTC"): a spend that moves the amount into a public escrow
+  (`vPub` = amount), with the price and the payee (a signet address, the wallet's by default). The
+  reveal's output 0 is the **lock**, a BIP86 key-path output of 330 sats whose key only this vault
+  holds: `HMAC-SHA512("sh20/vault/lock", m ‖ u32le(i))`, so the words restore it (these are Bitcoin
+  keys of the vault, not note keys: SPEC-NOTES does not define them). The lock's x-only key,
+  `lockKey`, is in the LIST's signed body (right after `lockVout`), and the indexers refuse a LIST
+  whose output `lockVout` is not `OP_1 <lockKey>`: a copy of the envelope in another transaction
+  cannot point the lock at its copier's key. The vault reads it back the same way before signing an
+  offer or a TAKE. 918-byte envelope, 361 vB reveal.
+- **Offer** ("Copy offer", once the listing is ACTIVE): the lock key signs a spend of the lock with
+  `SIGHASH_SINGLE | ANYONECANPAY` that pays the price to the payee at the same index (version 2,
+  locktime 0), shared as one line, `sh20offer1:<listing>:<signature>`.
+- **TAKE** ("Buy from an offer"): the vault reads the LIST from the chain (Esplora) and requires
+  every configured indexer to report the same listing, ACTIVE; it checks the seller's signature for
+  that price and payee, then builds the buyer's transaction: the lock at input 0 with the seller's
+  signature, the price at output 0, the TAKE (an OP_RETURN with a public note key of this vault) and
+  the wallet's own inputs, which are the only ones the wallet signs. The tokens become a public note
+  of the buyer. A lock is spent once: a sale can be neither doubled nor left unpaid.
+- **Cancel**: a TAKE by the seller itself, the lock signed by the vault (SIGHASH_DEFAULT): the
+  tokens come back as a public note. A TAKE whose outputs pay the payee at least the price counts
+  as SOLD, so the cancel sends its change to the wallet's other address when it has one and the
+  payee is the paying address (Xverse's and Leather's taproot address): the listing is then
+  CANCELLED. With one address only (UniSat), the change stays there and the indexers count a sale to
+  oneself; nothing is lost either way.
+- **CLAIM** ("Claim back", for a CLOSED listing, whose lock was spent with no TAKE): a BIP340
+  signature by the lock key over `SHA256("sh20/v0/claim" ‖ listTxid ‖ npk)`, in an OP_RETURN.
+
+The vault follows its listings in the indexer's full `/listings` list, matched on the device (it
+never asks `/listing/:txid` about one of its own), and after a restore finds them again by their
+lock keys (the first `nextLock + 10`). `/listing/:txid` is asked only about an offer to buy, from
+every configured indexer. What is checked against the reference indexer (`test/market.test.js`):
+a BURN and a LIST with real proofs and the pinned verifier; an offer that another vault takes,
+SOLD, with the buyer's public note in the tree; an offer refused for another price or payee; a
+cancel (CANCELLED); and a CLAIM of a closed listing, whose signature the indexer checks, with a
+claim by another key refused. The sighash for `SIGHASH_SINGLE | ANYONECANPAY` and the BIP86 tweak
+are checked against the BIP341 vectors.
 
 ## Recovery words
 
@@ -263,9 +331,8 @@ checks every request the page sends). Instead `src/sync.js`:
   zero" ignores the cache; a restored vault always rescans everything to find its notes.
 
 Loading a cached tree recomputes it (about 0.2 ms per leaf) to check it against the cached root.
-Measured in Node under the browser shims: a public note key costs about 170 ms (two BabyJubJub
-multiplications in `circuit/js`), so a new vault spends about 8 s once on its first 50 keys,
-which it then keeps in its encrypted state; opening someone else's sealed output costs about 1.3 ms.
+A public note key costs about 170 ms (two BabyJubJub multiplications in `circuit/js`), so a new
+vault spends about 8 s once on its first 50 keys, which it then keeps in its encrypted state.
 
 ## Note keys and the sh20 address
 
@@ -288,10 +355,13 @@ The vault reads the API of `indexer/bin/follow.js` ([`docs/API.md`](../docs/API.
 
 - `GET /status` → `network` (must be `signet`), `height`, `digest`, `verifier`, `activationHeight`,
   `deployBurn`, `genesis`
-- `GET /tokens`, `GET /token/:ticker` → the reference indexer's token records (SH20 first, `genesis: true`)
+- `GET /tokens`, `GET /token/:ticker` → the reference indexer's token records (SH20 first, `genesis: true`;
+  `pool`, the turnstile, read from every indexer before a BURN, LIST or DEPLOY burn)
 - `GET /notes?from&limit` → `{ from, total, notes }`, read page by page (5,000 per page); public
   notes carry `ticker`, `v`, `npk`, sealed ones (`OUT`) `pkEph` (32 bytes) and `ct` (28 bytes)
 - `GET /nullifiers?from=H` → every nullifier spent from block `H` on
+- `GET /listings` → every listing (the vault's own are matched on the device); `GET /listing/:txid`
+  only for an offer to buy
 - never `/path/:pos` nor `/nullifier/:hex` (see Private sync)
 
 Big integers arrive as decimal strings, field elements as 64-char hex. The vault downloads every
@@ -303,21 +373,25 @@ and never recomputes them, so the byte encoding of the events (SPEC-WIRE §6) do
 
 ## Reusing the indexer and circuit code in the browser
 
-`src/sh20.js` imports `indexer/src/carrier.js`, `codec.js`, `constants.js`, `notes.js`, `poseidon.js`
-and `tree.js`, and `circuit/js/address.js`, `babyjub.js`, `notes.js` and `seal.js`, all
-**unchanged**. Two shims make that possible, which the import map in `index.html` puts in place:
+`src/sh20.js` imports `indexer/src/carrier.js`, `codec.js`, `constants.js`, `notes.js`, `poseidon.js`,
+`schnorr.js` and `tree.js`, and `circuit/js/webcrypto.js`, the wallet reference's browser entry point,
+all **unchanged**. Everything that touches a secret goes through the platform's WebCrypto there
+(`circuit/js/subtle.js`): X25519 for the viewing key and sealing, HKDF, AES-256-GCM, HMAC-SHA512 for
+the master secret and the lock keys, and the EdDSA nonce's SHA-256. What stays in JavaScript is
+BabyJubJub and Poseidon, which no browser offers (BigInt, not constant time), and the public hashes.
+At start the page calls `available()` and stops with a message if the browser has no X25519 in
+WebCrypto (Chrome 133, Firefox 130, Safari 17 or newer) or no secure context. Two shims, which the
+import map in `index.html` puts in place:
 
 - `src/shim/buffer.js`: the subset of Node's `Buffer` those files use;
-- `src/shim/node-crypto.js`: Node's synchronous `createHash` (SHA-256, SHA-512), `createHmac`,
-  `hkdfSync`, AES-256-GCM ciphers and X25519 keys, in plain JavaScript (`src/hash.js`,
-  `src/aesgcm.js`, `src/x25519.js`). WebCrypto has all of them, but only asynchronously, and
-  `circuit/js` calls them synchronously. Like `circuit/js` itself, this code is **not constant
-  time** (BigInt and table lookups); SPEC-NOTES §6 says so for the reference too.
+- `src/shim/node-crypto.js`: `createHash('sha256')`, which the indexer's constants call when they
+  load (`src/hash.js`). `circuit/js/address.js` and `seal.js` import the names of their synchronous
+  functions too; the vault calls none of them, and in the shim they throw.
 
-`test/shim.test.js` compares every shimmed function with Node's own on random inputs, and runs the
-indexer's vectors and all of `circuit/js/vectors.json` (RFC 7748, wallets, addresses a payer must
-refuse, sealed outputs, public notes, a whole spend) through that exact setup (no global `Buffer`,
-`node:crypto` remapped). The build keeps the repository layout (`dist/vault/`, `dist/indexer/src/`,
+`test/shim.test.js` checks the shim's SHA-256 against Node's, and runs the indexer's vectors and all
+of `circuit/js/vectors.json` (RFC 7748, `available()`, wallets, addresses a payer must refuse, sealed
+outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup (no global `Buffer`,
+`node:crypto` remapped, Node's `crypto.subtle`). The build keeps the repository layout (`dist/vault/`, `dist/indexer/src/`,
 `dist/circuit/js/`) so the relative imports stay valid.
 
 ## Layout
@@ -325,10 +399,12 @@ refuse, sealed outputs, public notes, a whole spend) through that exact setup (n
 | Path | What |
 | --- | --- |
 | `index.html`, `style.css` | the page |
-| `src/app.js` | UI: vault, wallet, tickers, mint, deploy, notes, send, settings |
+| `src/app.js` | UI: vault, wallet, tickers, mint, deploy, notes, send, market, settings |
 | `src/keys.js` | master secret, recovery words, encrypted storage, backup, the vault's notes, spends under way |
 | `src/bip39.js`, `src/bip39-english.js` | the 12 recovery words |
 | `src/send.js` | a TRANSFER or a DEPLOY with a burn, end to end: plan, prove, commit and reveal |
+| `src/market.js` | BURN, LIST, offers, TAKE, cancel and CLAIM |
+| `src/isolation.js`, `sw.js` | cross-origin isolation on subdomain gateways (the test page's service worker, served at the site's root) |
 | `src/spend.js` | inputs, dummy inputs, sealed outputs, body, signatures and the prover's witness |
 | `src/prover.js`, `src/prover-worker.js` | the WebAssembly prover, threads or one thread (circuit/web/host.js) |
 | `src/taproot.js` | the witness carrier: commit output, reveal, BIP341 signature message |
@@ -343,8 +419,7 @@ refuse, sealed outputs, public notes, a whole spend) through that exact setup (n
 | `src/btc.js` | addresses, transactions, PSBT v0, finalization, size estimates |
 | `src/wallets.js` | Xverse, UniSat, Leather adapters (injected providers, no SDK) |
 | `src/api.js` | indexer API and Esplora clients |
-| `src/hash.js`, `src/bytes.js`, `src/fr.js` | SHA-256, RIPEMD-160, SHA-512, HMAC, HKDF, bytes, field elements |
-| `src/aesgcm.js`, `src/x25519.js` | AES-256-GCM and X25519, synchronous, for the `node:crypto` shim |
+| `src/hash.js`, `src/bytes.js`, `src/fr.js` | SHA-256 and RIPEMD-160 (public data), bytes, field elements |
 | `src/sh20.js`, `src/shim/` | the reused indexer and `circuit/js` modules and their browser shims |
 | `build.js` | the site's file set; `npm run build` writes `dist/` |
 | `release.js`, `tools/pack.js` | reproducible release: tar, SHA-256, IPFS CID, `RELEASES.md` |
@@ -358,7 +433,9 @@ refuse, sealed outputs, public notes, a whole spend) through that exact setup (n
 - A real signet broadcast, and the vault against `follow.js` on a live chain.
 - A real phone: the prover was measured in headless Chrome on a laptop only (26 s on one thread,
   4.7 s on the pool); it needs about 230 MB.
-- Real wallets signing a commit: tested with the fake UniSat, which signs any P2TR input.
+- Real wallets signing a commit or a TAKE: tested with the fake UniSat, which signs the inputs it is
+  asked to. Whether a wallet extension still injects its provider into a page isolated by the
+  service worker (COEP `require-corp`) was not tried with the real extensions.
 
 ## License
 

@@ -12,8 +12,10 @@ export { noteLeaf, tickerT, PUBLIC_RHO } from '../../indexer/src/notes.js';
 export { poseidon2 } from '../../indexer/src/poseidon.js';
 export { rootFromPath } from '../../indexer/src/tree.js';
 export { sign as schnorrSign, verify as schnorrVerify, publicKey as schnorrPublicKey, taggedHash } from '../../indexer/src/schnorr.js';
-export { HRP, encodeAddress, decodeAddress } from '../../circuit/js/address.js';
-export { walletKeys, publicOpening, scan, seal, spendKeys, masterSecret } from '../../circuit/js/seal.js';
-export { nullifier, noteKeys, bodyHash } from '../../circuit/js/notes.js';
-export { sign as eddsaSign, verify as eddsaVerify } from '../../circuit/js/eddsa.js';
-export { L } from '../../circuit/js/babyjub.js';
+// circuit/js/webcrypto.js: everything that touches a secret (X25519, HKDF, AES-GCM, HMAC-SHA512, the
+// EdDSA nonce) is asynchronous and runs in the platform's WebCrypto. BabyJubJub and Poseidon stay in JS.
+export {
+  available, HRP, encodeAddress, decodeAddress, walletKeys, publicOpening, scan, seal, spendKeys, masterSecret,
+  sign as eddsaSign, verify as eddsaVerify, nullifier, noteKeys, bodyHash, L,
+} from '../../circuit/js/webcrypto.js';
+export { hmacSha512 } from '../../circuit/js/subtle.js';

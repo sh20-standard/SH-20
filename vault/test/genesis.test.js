@@ -26,7 +26,7 @@ function activated() {
   return { idx, c, token: normToken(json(idx.token('SH20'))), status: { activationHeight: A, deployBurn: String(idx.profile.deployBurn), genesis: idx.genesis } };
 }
 
-test('the vault\'s genesis constants are the profile\'s and the vectors\'', () => {
+test('the vault\'s genesis constants are the profile\'s and the vectors\'', async () => {
   const v = JSON.parse(readFileSync(new URL('../../indexer/vectors/v0.3.json', import.meta.url), 'utf8')).genesis;
   assert.equal(GENESIS.ticker, DEFAULT_PROFILE.genesis.ticker);
   assert.equal(GENESIS.max, DEFAULT_PROFILE.genesis.max);
@@ -35,7 +35,7 @@ test('the vault\'s genesis constants are the profile\'s and the vectors\'', () =
   assert.equal(ACTIVATION_HEIGHT, null, 'A is not fixed yet: update this test when it is');
 });
 
-test('SH20 from the reference indexer matches the profile; every lie is refused', () => {
+test('SH20 from the reference indexer matches the profile; every lie is refused', async () => {
   const { token } = activated();
   assert.equal(token.genesis, true);
   assert.equal(token.deployTxid, null);
@@ -79,7 +79,7 @@ test('indexers on different profiles (activation height, D) refuse the mint', as
 
 test('MINT of SH20 accepted by the indexer: free, 1,000 units, terms from the profile', async () => {
   const { idx, c, token, status } = activated();
-  const opening = noteOpening(new Uint8Array(32).fill(3), 0);
+  const opening = (await noteOpening(new Uint8Array(32).fill(3), 0));
   const m = buildMint({
     token, opening, payer: { address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx' },
     utxos: [{ txid: '11'.repeat(32), vout: 0, value: 50000n }], feeRate: 1, tipHeight: c.next - 1,

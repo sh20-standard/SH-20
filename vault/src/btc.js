@@ -274,7 +274,8 @@ const stripped = (t) => ({ ...t, vin: t.vin.map((i) => ({ ...i, scriptSig: new U
 const kv = (key, value) => concat(compactSize(key.length), key, compactSize(value.length), value);
 
 /**
- * meta[i] = { witnessUtxo: { value, script }, redeemScript?, tapInternalKey? }
+ * meta[i] = { witnessUtxo: { value, script }, redeemScript?, tapInternalKey?, finalScriptWitness? }
+ * (finalScriptWitness: an input signed already, which the wallet leaves alone: a seller's lock)
  */
 export function createPsbt(tx, meta) {
   const parts = [MAGIC, kv(new Uint8Array([0x00]), serializeTx(stripped(tx), false)), new Uint8Array([0])];
@@ -283,6 +284,7 @@ export function createPsbt(tx, meta) {
     parts.push(kv(new Uint8Array([0x01]), wu));
     if (m.redeemScript) parts.push(kv(new Uint8Array([0x04]), m.redeemScript));
     if (m.tapInternalKey) parts.push(kv(new Uint8Array([0x17]), m.tapInternalKey));
+    if (m.finalScriptWitness) parts.push(kv(new Uint8Array([0x08]), witnessBytes(m.finalScriptWitness)));
     parts.push(new Uint8Array([0]));
   });
   tx.vout.forEach(() => parts.push(new Uint8Array([0])));

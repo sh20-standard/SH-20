@@ -27,7 +27,11 @@ const RECIPIENT = JSON.parse(readFileSync(new URL('../../circuit/js/vectors.json
 const NEW_TICKER = 'T' + Array.from(crypto.getRandomValues(new Uint8Array(3)), (x) => String.fromCharCode(65 + (x % 26))).join('');
 const LONG = 3000; // × 100 ms: a proof on one thread in a browser takes about half a minute
 const INDEXERS = ['http://127.0.0.1:8020', 'http://127.0.0.1:8030', ...(LIAR ? ['http://127.0.0.1:8031'] : [])].join(',');
-const PAGE = `http://localhost:8000${process.env.E2E_PATH || '/vault/'}?indexer=${INDEXERS}&esplora=http://127.0.0.1:8020/esplora`;
+// E2E_HOST=<cid>.ipfs.localhost: a subdomain gateway (the page isolates itself with its service worker)
+// E2E_PATH=/ipfs/<cid>/vault/: a path gateway (it must not)
+const HOST = process.env.E2E_HOST || 'localhost';
+const PAGE = `http://${HOST}:8000${process.env.E2E_PATH || '/vault/'}?indexer=${INDEXERS}&esplora=http://127.0.0.1:8020/esplora`;
+const PATH_GATEWAY = /^\/ip[fn]s\//.test(process.env.E2E_PATH || '');
 const PORT = 9333;
 
 // Runs in the page before any of its scripts.
@@ -35,19 +39,29 @@ const FAKE_UNISAT = `(() => {
   const ADDR = 'tb1pqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesf3hn0c';
   const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
   const unhex = (h) => Uint8Array.from(h.match(/../g), (x) => parseInt(x, 16));
-  // Adds PSBT_IN_TAP_KEY_SIG (64 zero bytes) to every input map.
-  function sign(psbtHex) {
+  // Adds PSBT_IN_TAP_KEY_SIG (64 zero bytes) to the input maps it is asked to sign (toSignInputs),
+  // as a wallet does; an input signed already (a seller's lock) is left as it is.
+  function sign(psbtHex, indexes) {
     const b = unhex(psbtHex);
     let p = 5;
     const cs = () => { const f = b[p++]; if (f < 0xfd) return f; const v = b[p] | (b[p + 1] << 8); p += 2; return v; };
+    let nIn = 0;
+    for (;;) { // the global map; its unsigned transaction gives the number of inputs
+      const k = cs();
+      if (k === 0) break;
+      const type = b[p];
+      p += k;
+      const v = cs();
+      if (type === 0x00) nIn = b[p + 4];
+      p += v;
+    }
     const skipMap = () => { for (;;) { const k = cs(); if (k === 0) return p - 1; p += k; const v = cs(); p += v; } };
-    skipMap();
     const out = [];
     let last = 0;
-    const nIn = window.__nIn;
     for (let i = 0; i < nIn; i++) {
       const end = skipMap();
-      out.push(b.slice(last, end), Uint8Array.from([1, 0x13, 64, ...new Uint8Array(64)]));
+      out.push(b.slice(last, end));
+      if (indexes.includes(i)) out.push(Uint8Array.from([1, 0x13, 64, ...new Uint8Array(64)]));
       last = end;
       p = end + 1;
     }
@@ -59,7 +73,7 @@ const FAKE_UNISAT = `(() => {
     getAccounts: async () => [ADDR],
     getChain: async () => ({ enum: 'BITCOIN_SIGNET' }),
     getPublicKey: async () => '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798',
-    signPsbt: async (h, opts) => { window.__nIn = opts.toSignInputs.length; window.__signed = opts; return sign(h); },
+    signPsbt: async (h, opts) => { window.__signed = opts; return sign(h, opts.toSignInputs.map((x) => x.index)); },
   };
 })();`;
 
@@ -147,6 +161,10 @@ async function main() {
   const address = await evaluate(`document.querySelector('#address')?.textContent`);
   if (!/^tsh201[02-9ac-hj-np-z]{162}$/.test(address)) throw new Error('no signet sh20 address shown: ' + address);
   step('sh20 address: ' + address.slice(0, 24) + '…');
+  const iso = await evaluate(`(async () => ({ isolated: self.crossOriginIsolated === true, controlled: !!navigator.serviceWorker?.controller, registrations: navigator.serviceWorker ? (await navigator.serviceWorker.getRegistrations()).length : 0, mode: document.querySelector('#prover-mode')?.textContent }))()`);
+  if (PATH_GATEWAY && (iso.registrations || iso.isolated)) throw new Error('a service worker on a path gateway: ' + JSON.stringify(iso));
+  if (/\.ipfs\./.test(HOST) && !(iso.isolated && iso.controlled)) throw new Error('the subdomain gateway page did not isolate itself: ' + JSON.stringify(iso));
+  step(`isolation: ${iso.mode}${iso.registrations ? ` (${iso.registrations} service worker)` : ''}`);
   const words = await evaluate(`[...document.querySelectorAll('#words li')].map((li) => li.textContent).join(' ')`);
   if (words.split(' ').length !== 12) throw new Error('the 12 recovery words are not shown on creation');
   step('recovery words shown once: ' + words.split(' ').slice(0, 2).join(' ') + ' … (12)');
@@ -223,11 +241,56 @@ async function main() {
   await click('#notes button', 'Sync');
   if (!D0) await waitFor(`document.querySelector('#notes-body').innerText.replace(/\\s+/g, ' ').includes(' 300 in tree')`, 'the change of the burn', 600);
   await waitFor(`!document.querySelector('#scan').disabled`, 'the sync to finish', 600);
-  const before = await evaluate(`document.querySelector('#notes-body tbody').innerText.replace(/\\s+/g, ' ')`);
-  step('notes: ' + before);
+
+  // BURN, then LIST → offer → TAKE (bought by this vault itself), and a LIST cancelled
+  const notesText = () => evaluate(`document.querySelector('#notes-body tbody').innerText.replace(/\\s+/g, ' ')`);
+  const syncDone = async () => {
+    await click('#notes button', 'Sync');
+    await waitFor(`!document.querySelector('#scan').disabled`, 'the sync to finish', 600);
+  };
+  const spend = async (action, fields, what, label) => {
+    await evaluate(`(() => { const a = document.querySelector('#send-body select[name=action]'); a.value = '${action}'; a.dispatchEvent(new Event('change')); })()`);
+    await waitFor(`document.querySelector('#send-body select[name=ticker]')?.value === '${TICKER}'`, 'ticker in the send panel');
+    for (const [k, val] of Object.entries(fields)) await setField(`#send-body input[name=${k}]`, val);
+    await evaluate(`document.querySelector('#send-body button[name=send]').click()`);
+    await waitFor(`document.querySelector('#send-out .ok')?.innerText.startsWith(${JSON.stringify(label)})`, what, LONG);
+    step(what + ': ' + (await evaluate(`document.querySelector('#send-out .ok').innerText`)));
+    await syncDone();
+  };
+  await spend('burn', { amount: '100' }, 'BURN', `BURN of 100 ${TICKER}: broadcast`);
+  await spend('list', { amount: '150', price: '5000' }, 'LIST', `LIST of 150 ${TICKER} for 5,000 sats: broadcast`);
+  const listingRow = (amount) => `[...document.querySelectorAll('#market-body tbody tr')].find((r) => r.children[1].textContent === '${amount}')`;
+  await waitFor(`${listingRow(150)}?.children[3].textContent === 'ACTIVE'`, 'the listing ACTIVE');
+  await evaluate(`${listingRow(150)}.querySelector('button[name=offer]').click()`);
+  await waitFor(`!!document.querySelector('#offer-text')`, 'the offer');
+  const offer = await evaluate(`document.querySelector('#offer-text').textContent`);
+  if (!/^sh20offer1:[0-9a-f]{64}:[0-9a-f]{130}$/.test(offer)) throw new Error('offer: ' + offer);
+  step('offer: ' + offer.slice(0, 40) + '…');
+  await evaluate(`(() => { const t = document.querySelector('#market-body textarea[name=offer]'); t.value = ${JSON.stringify(offer)}; t.dispatchEvent(new Event('input')); })()`);
+  await evaluate(`document.querySelector('#market-body button[name=check]').click()`);
+  await waitFor(`!!document.querySelector('#market-body button[name=buy]')`, 'the offer checked');
+  step('checked: ' + (await evaluate(`document.querySelector('#market-body dl').innerText.replace(/\\n/g, ' | ')`)));
+  await evaluate(`document.querySelector('#market-body button[name=buy]').click()`);
+  await waitFor(`/broadcast/.test(document.querySelector('#buy-out')?.innerText ?? '')`, 'the TAKE broadcast');
+  await syncDone();
+  await waitFor(`${listingRow(150)}?.children[3].textContent === 'SOLD'`, 'the listing SOLD');
+  if (!/ 150 in tree/.test(await notesText())) throw new Error('no public note of 150 after the TAKE: ' + (await notesText()));
+  step('TAKE: listing SOLD, a public note of 150 in the tree');
+  // paid to another address: a TAKE whose change goes to the payee's address would count as paid (SOLD to oneself)
+  await spend('list', { amount: '50', price: '1000', payTo: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx' }, 'LIST', `LIST of 50 ${TICKER} for 1,000 sats: broadcast`);
+  await waitFor(`${listingRow(50)}?.children[3].textContent === 'ACTIVE'`, 'the second listing ACTIVE');
+  await evaluate(`${listingRow(50)}.querySelector('button[name=cancel]').click()`);
+  await waitFor(`/broadcast/.test(document.querySelector('#listing-out')?.innerText ?? '')`, 'the cancel broadcast');
+  await syncDone();
+  await waitFor(`${listingRow(50)}?.children[3].textContent === 'CANCELLED'`, 'the listing CANCELLED');
+  if (!/ 50 in tree/.test(await notesText())) throw new Error('no public note of 50 after the cancel');
+  step('cancel: listing CANCELLED, the 50 back as a public note');
+  const listingsBefore = await evaluate(`[...document.querySelectorAll('#market-body tbody tr')].map((r) => r.children[1].textContent + ' ' + r.children[3].textContent).sort().join(', ')`);
 
   // restore on an empty device from the 12 words alone: the same notes come back, public and sealed
   await waitFor(`!document.querySelector('#scan').disabled`, 'the sync to finish', 600);
+  const before = await notesText();
+  step('notes: ' + before);
   await click('#vault-body button', 'Lock');
   await evaluate(`localStorage.removeItem('sh20.vault.v0')`);
   await send('Page.reload');
@@ -241,6 +304,10 @@ async function main() {
   if (amounts(after) !== amounts(before)) throw new Error(`restored from words: ${after}\nwas: ${before}`);
   if ((await evaluate(`document.querySelector('#address').textContent`)) !== address) throw new Error('another address after the restore');
   step('restored from the 12 words: same address, same notes: ' + after);
+  await waitFor(`document.querySelectorAll('#market-body tbody tr').length === 2`, 'the listings found again by their lock keys');
+  const listingsAfter = await evaluate(`[...document.querySelectorAll('#market-body tbody tr')].map((r) => r.children[1].textContent + ' ' + r.children[3].textContent).sort().join(', ')`);
+  if (listingsAfter !== listingsBefore) throw new Error(`listings after the restore: ${listingsAfter}, before: ${listingsBefore}`);
+  step('listings found again from the words: ' + listingsAfter);
 
   ws.close();
   // a 404 on /nullifiers is expected from an indexer without the route (before PR #5): spends shown as unknown

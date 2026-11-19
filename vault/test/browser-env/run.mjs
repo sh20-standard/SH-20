@@ -1,6 +1,7 @@
-// Loads the vault, the indexer's codec and circuit/js the way a browser does: no global Buffer,
-// node:crypto replaced by the shim (SHA-512, HMAC, HKDF, X25519 and AES-GCM in plain JavaScript).
-// Runs the indexer's vectors and circuit/js/vectors.json through them; prints results for the parent test.
+// Loads the vault, the indexer's codec and circuit/js/webcrypto.js the way a browser does: no global
+// Buffer, node:crypto replaced by the shim (SHA-256 only), X25519, HKDF, AES-GCM and HMAC from the
+// platform's WebCrypto (crypto.subtle). Runs the indexer's vectors and circuit/js/vectors.json
+// through them; prints results for the parent test.
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
 
@@ -12,8 +13,7 @@ const vectors = json('../../../indexer/vectors/v0.3.json');
 const cv = json('../../../circuit/js/vectors.json');
 const sh20 = await import('../../src/sh20.js');
 const { ShimBuffer } = await import('../../src/shim/buffer.js');
-const { masterSecret } = await import('../../../circuit/js/seal.js');
-const { x25519, x25519Public } = await import('../../../circuit/js/address.js');
+const { masterSecret, x25519, x25519Public, available } = await import('../../../circuit/js/webcrypto.js');
 const { wallet, publicNote, scanOutput, nullifierOf } = await import('../../src/notekeys.js');
 const { frHex } = await import('../../src/fr.js');
 
@@ -39,35 +39,47 @@ out.carrier = found.bytes?.toString('hex') === vectors.envelopes.mintGenesis.hex
 // RFC 7748 §6.1
 const a = hex('77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a');
 const b = hex('5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb');
-out.rfc7748 = x25519Public(a).toString('hex') === '8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a'
-  && x25519(a, x25519Public(b)).toString('hex') === '4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742'
-  && x25519(a, Buffer.alloc(32)).every((x) => x === 0);
-const wallets = Object.fromEntries(cv.wallets.map((w) => [w.name, wallet(hex(w.m))]));
-out.wallets = cv.wallets.map((w) => masterSecret(hex(w.bip39Seed)).toString('hex') === w.m
-  && wallets[w.name].ask.toString() === w.ask && wallets[w.name].nsk.toString() === w.nsk
-  && Buffer.from(wallets[w.name].ivk).toString('hex') === w.ivk && Buffer.from(wallets[w.name].address.ivkPub).toString('hex') === w.IVK
-  && sh20.encodeAddress('sh20', wallets[w.name].address) === w.address && wallets[w.name].addressString === w.addressTest
-  && sh20.decodeAddress('tsh20', w.addressTest).ivkPub.toString('hex') === w.IVK);
-out.invalidAddresses = cv.invalidAddresses.map(({ address }) => {
-  try { sh20.decodeAddress('sh20', address); return false; } catch (e) { return /address:/.test(e.message); }
-});
-out.sealed = cv.sealed.map((s) => {
+const h = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+out.available = await available();
+out.rfc7748 = h(await x25519Public(a)) === '8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a'
+  && h(await x25519(a, await x25519Public(b))) === '4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742'
+  && (await x25519(a, new Uint8Array(32))).every((x) => x === 0);
+const wallets = {};
+for (const w of cv.wallets) wallets[w.name] = await wallet(hex(w.m));
+out.wallets = [];
+for (const w of cv.wallets) {
+  const k = wallets[w.name];
+  out.wallets.push(h(await masterSecret(hex(w.bip39Seed))) === w.m && k.ask.toString() === w.ask && k.nsk.toString() === w.nsk
+    && h(k.ivk) === w.ivk && h(k.address.ivkPub) === w.IVK
+    && sh20.encodeAddress('sh20', k.address) === w.address && k.addressString === w.addressTest
+    && h((await sh20.decodeAddress('tsh20', w.addressTest)).ivkPub) === w.IVK);
+}
+out.invalidAddresses = [];
+for (const { address } of cv.invalidAddresses) {
+  try { await sh20.decodeAddress('sh20', address); out.invalidAddresses.push(false); } catch (e) { out.invalidAddresses.push(/address:/.test(e.message)); }
+}
+out.sealed = [];
+for (const s of cv.sealed) {
   const to = wallets[s.to];
-  const o = sh20.seal(to.address, s.ticker, BigInt(s.v), hex(s.e));
-  const sealedOk = o.pkEph.toString('hex') === s.pkEph && o.ct.toString('hex') === s.ct && o.leaf.toString() === s.leaf && o.npk.toString() === s.npk
+  const o = await sh20.seal(to.address, s.ticker, BigInt(s.v), hex(s.e));
+  const sealedOk = h(o.pkEph) === s.pkEph && h(o.ct) === s.ct && o.leaf.toString() === s.leaf && o.npk.toString() === s.npk
     && o.secrets.rho.toString() === s.rho && o.secrets.tauA.toString() === s.tauA;
   const output = { leaf: BigInt(s.leaf), pkEph: hex(s.pkEph), ct: hex(s.ct) };
-  const mine = scanOutput(to, output);
-  const others = Object.entries(wallets).filter(([n]) => n !== s.to).every(([, w]) => scanOutput(w, output) === null);
-  return sealedOk && mine?.v.toString() === s.v && mine.ticker === s.ticker && others;
-});
-out.publicNotes = cv.publicNotes.map((p) => publicNote(wallets[p.wallet], p.i).npk.toString() === p.npk);
+  const mine = await scanOutput(to, output);
+  let others = true;
+  for (const [n, w] of Object.entries(wallets)) if (n !== s.to && (await scanOutput(w, output)) !== null) others = false;
+  out.sealed.push(sealedOk && mine?.v.toString() === s.v && mine.ticker === s.ticker && others);
+}
+out.publicNotes = [];
+for (const p of cv.publicNotes) out.publicNotes.push((await publicNote(wallets[p.wallet], p.i)).npk.toString() === p.npk);
 const sp = cv.spend;
-out.spendNullifiers = sp.inputs.map((inp, k) => {
+out.spendNullifiers = [];
+for (const [k, inp] of sp.inputs.entries()) {
   const w = wallets[inp.wallet];
-  const o = publicNote(w, inp.publicNote);
+  const o = await publicNote(w, inp.publicNote);
   const leaf = sh20.noteLeaf(sh20.tickerT(sp.ticker), BigInt(inp.v), o.npk, 0n);
-  return nullifierOf(w, o.secrets, leaf, Number(inp.index)).toString() === sp.nf[k];
-});
-out.spendOutputs = sp.outputs.map((o, j) => scanOutput(wallets[o.to], { leaf: BigInt(sp.outLeaf[j]), pkEph: hex(o.pkEph), ct: hex(o.ct) })?.v.toString() === o.v);
+  out.spendNullifiers.push(nullifierOf(w, o.secrets, leaf, Number(inp.index)).toString() === sp.nf[k]);
+}
+out.spendOutputs = [];
+for (const [j, o] of sp.outputs.entries()) out.spendOutputs.push((await scanOutput(wallets[o.to], { leaf: BigInt(sp.outLeaf[j]), pkEph: hex(o.pkEph), ct: hex(o.ct) }))?.v.toString() === o.v);
 console.log(JSON.stringify(out));

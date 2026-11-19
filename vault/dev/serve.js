@@ -132,7 +132,11 @@ createServer(serveApi(liar)).listen(LIAR_PORT, '127.0.0.1');
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm' };
 const ISOLATION = ISOLATE ? { 'cross-origin-opener-policy': 'same-origin', 'cross-origin-embedder-policy': 'require-corp' } : {};
 createServer(async (req, res) => {
-  const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^(\.\.[/\\])+/, '');
+  // /ipfs/<cid>/… is served like a path gateway would (the same files), to check the page never
+  // registers its service worker there; <cid>.ipfs.localhost:<port> is a subdomain gateway
+  const pathname = new URL(req.url, 'http://x').pathname.replace(/^\/ip[fn]s\/[^/]+(?=\/)/, '');
+  // the site's root sw.js (build.js puts vault/sw.js there): the repository root has none
+  const path = pathname === '/sw.js' ? '/vault/sw.js' : normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, '');
   let file = join(root, path);
   if (!file.startsWith(root)) return res.writeHead(403).end();
   if (file.endsWith('/')) file = join(file, 'index.html');

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { leafHash, tweakKey, sigMsg, sigHash, commitment, commitValue, signReveal, revealVsize, oneTimeSecret } from '../src/taproot.js';
+import { leafHash, tweakKey, sigMsg, sigHash, commitment, commitValue, signReveal, revealVsize, oneTimeSecret, keyPathOutput, signKeyPath } from '../src/taproot.js';
 import { parseTx, vsize, addressToScript, dustLimit } from '../src/btc.js';
 import { fromHex, toHex } from '../src/bytes.js';
 import { extractEnvelope, schnorrVerify } from '../src/sh20.js';
@@ -33,18 +33,41 @@ test('BIP341: tweaked keys, leaf hashes and control blocks of the one-leaf trees
   assert.ok(leaves >= 2);
 });
 
-test('BIP341: signature message and hash for SIGHASH_DEFAULT', () => {
+test('BIP341: signature message and hash for SIGHASH_DEFAULT and SINGLE | ANYONECANPAY', () => {
   for (const k of v.keyPathSpending) {
     const tx = parseTx(fromHex(k.given.rawUnsignedTx));
     const prevouts = k.given.utxosSpent.map((u) => ({ value: BigInt(u.amountSats), script: fromHex(u.scriptPubKey) }));
-    const cases = k.inputSpending.filter((i) => i.given.hashType === 0);
-    assert.ok(cases.length >= 1);
+    const cases = k.inputSpending.filter((i) => i.given.hashType === 0 || i.given.hashType === 0x83);
+    assert.deepEqual(cases.map((i) => i.given.hashType).sort(), [0, 0x83]);
     for (const i of cases) {
-      const msg = sigMsg(tx, i.given.txinIndex, prevouts);
-      assert.equal(toHex(msg), i.intermediary.sigMsg);
+      const msg = sigMsg(tx, i.given.txinIndex, prevouts, null, i.given.hashType);
+      assert.equal(toHex(msg), i.intermediary.sigMsg, `hash type ${i.given.hashType}`);
       assert.equal(toHex(sigHash(msg)), i.intermediary.sigHash);
     }
   }
+});
+
+test('BIP86 key-path outputs: the tweaked secret of the vectors, and a signature that verifies', () => {
+  let n = 0;
+  for (const k of v.keyPathSpending) {
+    for (const i of k.inputSpending.filter((x) => x.given.merkleRoot === null)) {
+      const o = keyPathOutput(fromHex(i.given.internalPrivkey));
+      assert.equal(toHex(o.internal), i.intermediary.internalPubkey);
+      assert.equal(toHex(o.secret), i.intermediary.tweakedPrivkey);
+      const utxo = k.given.utxosSpent[i.given.txinIndex];
+      assert.equal(toHex(o.script), utxo.scriptPubKey);
+      const tx = parseTx(fromHex(k.given.rawUnsignedTx));
+      const prevouts = k.given.utxosSpent.map((u) => ({ value: BigInt(u.amountSats), script: fromHex(u.scriptPubKey) }));
+      for (const type of [0, 0x83]) {
+        const msg = sigMsg(tx, i.given.txinIndex, prevouts, null, type);
+        const sig = signKeyPath(o.secret, msg, type);
+        assert.equal(sig.length, type ? 65 : 64);
+        assert.ok(schnorrVerify(Buffer.from(o.key), Buffer.from(sigHash(msg)), Buffer.from(sig.subarray(0, 64))), `type ${type}`);
+      }
+      n++;
+    }
+  }
+  assert.ok(n >= 1);
 });
 
 test('a reveal carries the real TRANSFER where the indexer looks for it, signed by the one-time key', () => {

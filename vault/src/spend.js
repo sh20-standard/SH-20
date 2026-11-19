@@ -72,10 +72,10 @@ export function packWitness(w) {
  *   outputs    three { address, v } (an address as decodeAddress returns it); v may be 0
  *   vPub, tPub value leaving the pool (0 for a TRANSFER) and its asset id
  *   envelope   (spend) => the envelope object around the spend section (TRANSFER, DEPLOY, BURN…)
- * Returns { env, witness, publics, body, outputs } where env.spend.proof is still zeros and
+ * Asynchronous (sealing and signing go through WebCrypto). Returns { env, witness, publics, body, outputs } where env.spend.proof is still zeros and
  * outputs are the sealed notes with their secrets (the vault finds its own again by scanning).
  */
-export function buildSpend({ wallet, ticker, inputs, paths, root, anchorHeight, outputs, vPub = 0n, tPub = 0n, envelope }) {
+export async function buildSpend({ wallet, ticker, inputs, paths, root, anchorHeight, outputs, vPub = 0n, tPub = 0n, envelope }) {
   const t = tickerT(ticker);
   if (inputs.length < 1 || inputs.length > 2 || outputs.length !== 3) throw new Error('a spend has one or two inputs and three outputs');
   const ins = inputs.map((n, i) => {
@@ -92,15 +92,17 @@ export function buildSpend({ wallet, ticker, inputs, paths, root, anchorHeight, 
   if (sumIn !== sumOut) throw new Error(`inputs (${sumIn}) and outputs + vPub (${sumOut}) differ`);
 
   const nf = ins.map((x) => nullifier(x.keys.nk, x.leaf, x.index));
-  const sealed = outputs.map((o) => {
+  const sealed = [];
+  for (const o of outputs) {
     for (;;) {
       try {
-        return { to: o, ...seal(o.address, ticker, BigInt(o.v), rand(32)) };
+        sealed.push({ to: o, ...(await seal(o.address, ticker, BigInt(o.v), rand(32))) });
+        break;
       } catch (e) {
         if (!/zero tweak/.test(e.message)) throw e; // a new e only helps a zero tweak (p < 2^-250)
       }
     }
-  });
+  }
   const spend = {
     anchorHeight,
     nf,
@@ -111,7 +113,7 @@ export function buildSpend({ wallet, ticker, inputs, paths, root, anchorHeight, 
   const bytes = serializeEnvelope(env);
   const body = bytes.subarray(0, bytes.length - PROOF_BYTES); // every byte before the proof
   const bh = bodyHash(body);
-  const sigs = ins.map((x) => eddsaSign(x.keys.sk, bh));
+  const sigs = await Promise.all(ins.map((x) => eddsaSign(x.keys.sk, bh)));
   ins.forEach((x, i) => { if (!eddsaVerify(x.keys.ak, bh, sigs[i])) throw new Error('signature'); });
 
   const w = {

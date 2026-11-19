@@ -20,7 +20,7 @@ import { toHex, fromHex } from './bytes.js';
 export const ANCHOR_MAX_AGE = 90; // blocks; the indexers accept 100 (anchorWindow)
 
 /** Three outputs in random order, so their positions say nothing about which one is the change. */
-function shuffled(xs) {
+export function shuffled(xs) {
   const a = [...xs];
   for (let i = a.length - 1; i > 0; i--) {
     const j = crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1);
@@ -35,7 +35,7 @@ function anchor(sync, tip) {
   return { anchorHeight: sync.height, root: sync.tree.root };
 }
 
-function spendFrom({ vault, sync, tip, ticker, need, outputs, vPub = 0n, tPub = 0n, envelope }) {
+export async function spendFrom({ vault, sync, tip, ticker, need, outputs, vPub = 0n, tPub = 0n, envelope }) {
   const inputs = pickInputs(vault.state.notes, ticker, need);
   if (!inputs) throw new Error(`not enough ${ticker} in two unspent notes (a spend takes at most two)`);
   const { anchorHeight, root } = anchor(sync, tip);
@@ -43,13 +43,13 @@ function spendFrom({ vault, sync, tip, ticker, need, outputs, vPub = 0n, tPub = 
   const change = inputs.reduce((s, n) => s + BigInt(n.v), 0n) - need;
   const me = vault.wallet;
   const outs = outputs({ change, me: me.address });
-  const built = buildSpend({ wallet: me, ticker, inputs, paths, root, anchorHeight, outputs: outs, vPub, tPub, envelope });
+  const built = await buildSpend({ wallet: me, ticker, inputs, paths, root, anchorHeight, outputs: outs, vPub, tPub, envelope });
   return { ...built, inputs, change, anchorHeight };
 }
 
 /** A private TRANSFER of `amount` of `ticker` to the sh20 address `to` (a string). */
-export function planTransfer({ vault, sync, tip, ticker, amount, to }) {
-  const recipient = decodeAddress(NETWORK_HRP, to.trim()); // every check a payer owes (SPEC-NOTES §2)
+export async function planTransfer({ vault, sync, tip, ticker, amount, to }) {
+  const recipient = await decodeAddress(NETWORK_HRP, to.trim()); // every check a payer owes (SPEC-NOTES §2)
   const v = BigInt(amount);
   if (v <= 0n) throw new Error('the amount must be positive');
   return spendFrom({
@@ -63,7 +63,7 @@ export function planTransfer({ vault, sync, tip, ticker, amount, to }) {
  * A DEPLOY that burns `D` SH20 (docs/SPEC-WIRE.md §5: a spend with vPub = D, tPub = t("SH20")).
  * `d` are the terms as deploy-plan.js checks them; `team` is the opening { npk } of the team note when pre > 0.
  */
-export function planDeployBurn({ vault, sync, tip, d, D, team = null }) {
+export async function planDeployBurn({ vault, sync, tip, d, D, team = null }) {
   if (!(D > 0n)) throw new Error('this profile burns nothing: a DEPLOY carries no spend');
   return spendFrom({
     vault, sync, tip, ticker: GENESIS.ticker, need: D, vPub: D, tPub: tickerT(GENESIS.ticker),
@@ -92,17 +92,17 @@ export async function proveSpend(prover, built) {
  * `utxos` (a PSBT for the wallet), and what the reveal needs once the commit's txid is known.
  * The one-time secret must be saved before the commit is signed (Vault.addPending).
  */
-export function planCarrier({ envelope, payer, utxos, feeRate, tipHeight, secret = oneTimeSecret() }) {
+export function planCarrier({ envelope, payer, utxos, feeRate, tipHeight, secret = oneTimeSecret(), outputs }) {
   const c = commitment(secret, envelope);
   const returnScript = addressToScript(payer.address);
-  const value = commitValue(c, returnScript, feeRate);
+  const value = commitValue(c, returnScript, feeRate, outputs);
   const commit = buildFunded({ fixed: [{ value, script: c.scriptPubKey }], payer, utxos, feeRate, tipHeight });
-  return { commit, c, secret, value, returnScript, feeRate };
+  return { commit, c, secret, value, returnScript, feeRate, outputs };
 }
 
 /** The signed reveal for a commit that pays output 0. */
 export function revealFor(plan, commitTxid) {
-  return signReveal({ secret: plan.secret, c: plan.c, commitTxid, value: plan.value, returnScript: plan.returnScript, feeRate: plan.feeRate });
+  return signReveal({ secret: plan.secret, c: plan.c, commitTxid, value: plan.value, returnScript: plan.returnScript, outputs: plan.outputs, feeRate: plan.feeRate });
 }
 
 /** A DEPLOY without a burn (D = 0): one OP_RETURN transaction, like a MINT. */
@@ -118,6 +118,7 @@ export const pendingRecord = (kind, plan, envelope, inputs) => ({
   secret: toHex(plan.secret),
   value: plan.value.toString(),
   returnScript: toHex(plan.returnScript),
+  outputs: plan.outputs?.map((o) => ({ value: o.value.toString(), script: toHex(o.script) })),
   feeRate: plan.feeRate,
   inputs: inputs.map((n) => n.id),
   status: 'prepared',
@@ -126,5 +127,6 @@ export const pendingRecord = (kind, plan, envelope, inputs) => ({
 /** A carrier plan back from a pending record (to sign the reveal again). */
 export function planFromPending(p) {
   const secret = fromHex(p.secret);
-  return { c: commitment(secret, fromHex(p.envelope)), secret, value: BigInt(p.value), returnScript: fromHex(p.returnScript), feeRate: p.feeRate };
+  const outputs = p.outputs?.map((o) => ({ value: BigInt(o.value), script: fromHex(o.script) }));
+  return { c: commitment(secret, fromHex(p.envelope)), secret, value: BigInt(p.value), returnScript: fromHex(p.returnScript), outputs, feeRate: p.feeRate };
 }

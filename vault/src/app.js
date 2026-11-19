@@ -1,7 +1,7 @@
 // SH-20 vault page. Plain DOM, no framework; data from the network is only
 // ever written with textContent.
 
-import { Vault } from './keys.js';
+import { Vault, LOCK_GAP } from './keys.js';
 import { WALLETS } from './wallets.js';
 import { IndexerApi, Esplora } from './api.js';
 import { buildMint, mintProblems, mintsLeft } from './mint.js';
@@ -15,11 +15,29 @@ import { defaultCache } from './cache.js';
 import { PAY_MODE, PUBLIC_RHO, MINT_BATCH_MAX, noteLeaf, tickerT } from './sh20.js';
 import { toHex, fromHex } from './bytes.js';
 import { loadProver } from './prover.js';
+import { ensureIsolation } from './isolation.js';
+import { available } from './sh20.js';
 import { planTransfer, planDeployBurn, proveSpend, planCarrier, revealFor, pendingRecord, planFromPending, buildPlainDeploy } from './send.js';
+import { poolProblem, claimProblem, planBurn, planList, listOutputs, signOffer, encodeOffer, decodeOffer, offerValid, listingFromChain, buildTake, buildCancel, buildClaim } from './market.js';
 
 if (window.top !== window.self) {
   document.documentElement.textContent = 'The SH-20 vault refuses to run inside a frame.';
   throw new Error('framed');
+}
+
+// On a subdomain gateway the page isolates itself with the service worker and reloads once
+// (isolation.js), before anything else runs; never on a path gateway.
+const isolation = await ensureIsolation();
+if (isolation === 'reloading') await new Promise(() => {});
+
+// Note keys and sealing go through WebCrypto's X25519 (circuit/js/webcrypto.js): without it, stop here.
+if (!(await available())) {
+  document.querySelector('main').replaceChildren();
+  document.getElementById('warnings').textContent = window.isSecureContext
+    ? 'This browser has no X25519 in WebCrypto, which the vault needs for its keys and sealed notes: use Chrome 133, Firefox 130, Safari 17 or newer.'
+    : 'WebCrypto needs a secure context: open the vault over https, or from localhost.';
+  document.getElementById('warnings').className = 'warn err';
+  await new Promise(() => {});
 }
 
 // ---- settings -----------------------------------------------------------------
@@ -235,7 +253,12 @@ function renderWallet() {
       } catch {
         throw new Error(`${ad.name} gave ${acc.address}, which is not a signet address. Switch the wallet to Signet.`);
       }
-      st.wallet = { adapter: ad, ...acc, type };
+      // a second address of the wallet (Xverse's and Leather's taproot one): only a cancel's change goes there
+      let otherAddress = null;
+      try {
+        if (acc.otherAddress && acc.otherAddress !== acc.address) otherAddress = (addressToScript(acc.otherAddress), acc.otherAddress);
+      } catch {}
+      st.wallet = { adapter: ad, ...acc, type, otherAddress };
       renderAll();
     }));
     return b;
@@ -371,7 +394,7 @@ async function prepareMint(shown, feeRate, k, out) {
   let utxos = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
   if (!utxos) utxos = await esplora.utxos(w.address);
   if (!utxos.length) throw new Error(`no UTXO at ${w.address}; get signet coins from a faucet first`);
-  const opening = st.vault.opening(st.vault.state.next); // reserved only when signed
+  const opening = await st.vault.opening(st.vault.state.next); // reserved only when signed
   const m = buildMint({ token, opening, payer: w, utxos, feeRate, tipHeight: tip, k });
 
   const sign = h('button', { type: 'button' }, `Sign with ${w.adapter.name} and broadcast`);
@@ -557,6 +580,7 @@ async function sendDeploy(shown, D, feeRate) {
     result(out, h('p', { class: 'ok' }, `DEPLOY of ${shown.ticker} broadcast (${done.vsize} vB).`), txLink(id));
     return;
   }
+  await checkPool('SH20', D, 'DEPLOY burn');
   const s = await getSyncer();
   await carry({
     kind: 'DEPLOY', out, feeRate, tip,
@@ -600,17 +624,17 @@ async function carry(args) {
   }
 }
 
-async function carryOnce({ kind, out, feeRate, tip, plan, label }) {
+async function carryOnce({ kind, out, feeRate, tip, plan, label, outputs, onRevealed }) {
   const status = (t) => result(out, h('p', { class: 'muted' }, t));
   status('Building the spend: note keys, sealed outputs, signatures…');
   await new Promise((r) => setTimeout(r, 30));
-  const built = plan();
+  const built = await plan();
   const prover = await loadProver({ onStatus: status });
   status(`Proving on ${prover.threads} thread${prover.threads > 1 ? 's' : ''}… keep this tab open.`);
   const t0 = performance.now();
   const envelope = await proveSpend(prover, built);
   const proveS = ((performance.now() - t0) / 1000).toFixed(1);
-  const cp = planCarrier({ envelope, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip });
+  const cp = planCarrier({ envelope, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip, outputs });
   const draft = revealFor(cp, '00'.repeat(32));
   if (!confirm(`${label}: proved in ${proveS} s. Commit ≈ ${cp.commit.vsizeEstimate} vB, reveal ${draft.vsize} vB, network fees ≈ ${sats(cp.commit.fee + draft.fee)}. Sign the commit with ${st.wallet.adapter.name}?`)) {
     status('Not sent.');
@@ -620,6 +644,7 @@ async function carryOnce({ kind, out, feeRate, tip, plan, label }) {
   const done = await signFunded(cp.commit);
   const reveal = revealFor(cp, done.txid);
   await st.vault.updatePending(pid, { commitTxid: done.txid, commitHex: done.hex, revealHex: reveal.hex, revealTxid: reveal.txid, status: 'signed' });
+  await onRevealed?.(reveal);
   await esplora.broadcast(done.hex);
   await st.vault.updatePending(pid, { status: 'commit broadcast' });
   await esplora.broadcast(reveal.hex);
@@ -633,7 +658,7 @@ async function carryOnce({ kind, out, feeRate, tip, plan, label }) {
 
 // ---- send ------------------------------------------------------------------------
 
-const sendForm = { ticker: '', amount: '', to: '', fee: '2' };
+const sendForm = { action: 'transfer', ticker: '', amount: '', to: '', fee: '2', price: '', payTo: '' };
 
 function balances() {
   const out = new Map();
@@ -642,6 +667,15 @@ function balances() {
     out.set(n.ticker, (out.get(n.ticker) ?? 0n) + BigInt(n.v));
   }
   return out;
+}
+
+function proverModeText() {
+  if (isolation === 'headers') return `Prover: thread pool (this page is cross-origin isolated${navigator.serviceWorker?.controller ? ' by its service worker' : ''}).`;
+  return `Prover: one thread, about half a minute a proof (${{
+    'not-a-subdomain-gateway': 'the page is not isolated; on an IPFS subdomain gateway it isolates itself',
+    unavailable: 'no service worker here',
+    refused: 'the browser refused cross-origin isolation',
+  }[isolation] ?? 'not isolated'}).`;
 }
 
 function renderSend() {
@@ -664,25 +698,86 @@ function renderSend() {
   const need = [];
   if (!bal.size) need.push('hold a note that is in the tree and known unspent (sync)');
   if (!st.wallet) need.push('connect a wallet (it pays the network fees)');
-  const b = h('button', { type: 'button', disabled: need.length > 0, name: 'send' }, 'Prove and send');
-  b.addEventListener('click', busy(b, () => sendTransfer('send-out')));
+  if (!f.payTo && st.wallet) f.payTo = st.wallet.address;
+  const action = h('select', { name: 'action' }, [['transfer', 'Send privately (TRANSFER)'], ['burn', 'Burn (BURN)'], ['list', 'Sell for BTC (LIST)']].map(([v, t]) => h('option', { value: v, selected: f.action === v }, t)));
+  action.addEventListener('change', () => { f.action = action.value; renderSend(); });
+  const label = { transfer: 'Prove and send', burn: 'Prove and burn', list: 'Prove and list' }[f.action];
+  const b = h('button', { type: 'button', disabled: need.length > 0, name: 'send' }, label);
+  b.addEventListener('click', busy(b, () => ({ transfer: sendTransfer, burn: sendBurn, list: sendList })[f.action]('send-out')));
   fill('send-body',
-    h('p', { class: 'muted' }, 'A private TRANSFER, proved on this device: the amount, the ticker, the sender and the recipient stay hidden. Your Bitcoin wallet pays the network fees.'),
+    h('p', { class: 'muted' }, {
+      transfer: 'A private TRANSFER, proved on this device: the amount, the ticker, the sender and the recipient stay hidden. Your Bitcoin wallet pays the network fees.',
+      burn: 'A BURN takes tokens out of the supply for good, in public: the amount and the ticker are shown, not which notes paid it.',
+      list: 'A LIST moves the amount into a public escrow with a lock output only this vault can spend; you then share a signed offer, and whoever completes it pays the price to your address and gets the tokens.',
+    }[f.action]),
+    h('p', { class: 'muted', id: 'prover-mode' }, proverModeText()),
     h('div', { class: 'grid' },
+      h('label', {}, 'Action ', action),
       h('label', {}, 'Ticker ', ticker),
       h('label', {}, 'Amount ', input('amount', { inputmode: 'numeric', name: 'amount' })),
+      f.action === 'list' ? h('label', {}, 'Price (sats) ', input('price', { inputmode: 'numeric', name: 'price' })) : null,
       h('label', {}, 'Fee rate (sat/vB) ', input('fee', { type: 'number', min: '0.1', step: '0.1', name: 'fee' }))),
-    h('label', {}, 'To (an sh20 address, tsh20…) ', input('to', { name: 'to', class: 'wide' })),
+    f.action === 'transfer' ? h('label', {}, 'To (an sh20 address, tsh20…) ', input('to', { name: 'to', class: 'wide' })) : null,
+    f.action === 'list' ? h('label', {}, 'Paid to (a signet address) ', input('payTo', { name: 'payTo', class: 'wide' })) : null,
     h('div', { class: 'row' }, b),
     need.length ? h('p', { class: 'muted' }, `First ${need.join(' and ')}.`) : null,
     out);
   renderPending();
+  renderMarket();
+}
+
+const amountOf = (x) => {
+  if (!/^[0-9]{1,20}$/.test(x.trim())) throw new Error('amounts and prices are whole numbers');
+  return BigInt(x.trim());
+};
+
+/**
+ * Before proving a spend that takes `amount` of `ticker` out of the pool: every configured indexer's
+ * /token/:ticker must have room for it (the turnstile), else the spend would be rejected and its fees lost.
+ */
+async function checkPool(ticker, amount, what) {
+  const answers = await Promise.allSettled(indexers.map((a) => a.token(ticker)));
+  const tokens = answers.filter((a) => a.status === 'fulfilled').map((a) => a.value);
+  const problem = poolProblem(tokens, ticker, amount, what);
+  if (problem) throw new Error(`Not sent: ${problem}.`);
+}
+
+async function sendBurn(out) {
+  const f = sendForm;
+  const amount = amountOf(f.amount);
+  await checkPool(f.ticker, amount, 'BURN');
+  const s = await getSyncer();
+  const tip = await esplora.tipHeight();
+  if (!confirm(`Burn ${units(amount)} ${f.ticker}? They leave the supply for good.`)) return;
+  await carry({
+    kind: 'BURN', out, feeRate: Number(f.fee), tip,
+    plan: () => planBurn({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount }),
+    label: `BURN of ${units(amount)} ${f.ticker}`,
+  });
+}
+
+async function sendList(out) {
+  const f = sendForm;
+  const amount = amountOf(f.amount);
+  const price = amountOf(f.price);
+  const payScript = addressToScript(f.payTo.trim());
+  await checkPool(f.ticker, amount, 'LIST');
+  const s = await getSyncer();
+  const tip = await esplora.tipHeight();
+  const lockIndex = await st.vault.reserveLock();
+  const lock = await st.vault.lockOutput(lockIndex);
+  await carry({
+    kind: 'LIST', out, feeRate: Number(f.fee), tip,
+    plan: () => planList({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount, price, payScript, lockKey: lock.key }),
+    outputs: listOutputs(lock.script),
+    label: `LIST of ${units(amount)} ${f.ticker} for ${sats(price)}`,
+    onRevealed: (reveal) => st.vault.addListing({ lockIndex, ticker: f.ticker, amount: amount.toString(), price: price.toString(), payScript: toHex(payScript), listTxid: reveal.txid, state: 'broadcast' }),
+  });
 }
 
 async function sendTransfer(out) {
   const f = sendForm;
-  if (!/^[0-9]{1,20}$/.test(f.amount.trim())) throw new Error('the amount is a whole number of units');
-  const amount = BigInt(f.amount.trim());
+  const amount = amountOf(f.amount);
   const s = await getSyncer();
   const tip = await esplora.tipHeight();
   await carry({
@@ -813,7 +908,7 @@ async function checkOwned(s) {
       continue;
     }
     s.witness(n.pos, leaf); // throws if the local path does not reach the local root
-    const at = s.spentAt(frHex(v.nullifier(n)));
+    const at = s.spentAt(frHex(await v.nullifier(n)));
     await v.updateNote(n.id, { pathAt: s.height, spent: at === undefined ? 'unknown' : at === null ? 'no' : `block ${at}` });
   }
 }
@@ -831,6 +926,7 @@ async function syncNotes({ full = false } = {}) {
   if (st.vault) {
     found = await matchNotes(r.notes);
     await checkOwned(s);
+    await syncListings();
   }
   renderAll();
   staticWarnings();
@@ -857,6 +953,177 @@ function initSettings() {
     esplora = new Esplora(settings.esplora);
     refresh();
   });
+}
+
+// ---- market: the vault's listings, and buying from an offer --------------------------------------
+
+/**
+ * Brings the vault's listings up to date from the indexer's full list (never asking about one
+ * listing of its own), and finds them again after a restore by their lock keys.
+ */
+async function syncListings() {
+  const v = st.vault;
+  if (!v) return;
+  let all;
+  try {
+    all = await indexer.listings();
+  } catch {
+    return; // an indexer without /listings: states stay as they were
+  }
+  const byTxid = new Map(all.filter((l) => l.listTxid).map((l) => [l.listTxid, l]));
+  for (const rec of v.state.listings ?? []) {
+    const l = byTxid.get(rec.listTxid);
+    if (l && l.state !== rec.state) await v.updateListing(rec.id, { state: l.state });
+  }
+  const known = new Set((v.state.listings ?? []).map((r) => r.listTxid));
+  const keys = new Map();
+  for (let i = 0; i < (v.state.nextLock ?? 0) + LOCK_GAP; i++) keys.set(toHex((await v.lockOutput(i)).key), i);
+  for (const l of all) {
+    const i = keys.get(l.lockKey);
+    if (i === undefined || known.has(l.listTxid)) continue;
+    // found again by its lock key: its terms come from the LIST on chain, not from the indexer's word
+    let chain;
+    try {
+      chain = listingFromChain(l.listTxid, await esplora.txHex(l.listTxid), { ...l, amount: String(l.amount), price: String(l.price) });
+    } catch {
+      continue;
+    }
+    if ((v.state.nextLock ?? 0) <= i) v.state.nextLock = i + 1; // before addListing saves: a lock key is never used twice
+    await v.addListing({ lockIndex: i, ticker: chain.ticker, amount: String(chain.amount), price: String(chain.price), payScript: toHex(chain.payScript), listTxid: l.listTxid, state: l.state });
+  }
+}
+
+/** A listing read from the chain and agreed on by every configured indexer (warnings if only one answers). */
+async function checkedListing(listTxid) {
+  const answers = await Promise.allSettled(indexers.map((a) => a.listing(listTxid)));
+  const ok = answers.filter((a) => a.status === 'fulfilled' && a.value).map((a) => a.value);
+  if (!ok.length) throw new Error('no indexer knows this listing');
+  const key = (l) => JSON.stringify(l, (_, x) => (typeof x === 'bigint' ? String(x) : x));
+  if (ok.some((l) => key(l) !== key(ok[0]))) throw new Error('the indexers disagree on this listing');
+  const indexed = ok[0];
+  const l = listingFromChain(listTxid, await esplora.txHex(listTxid), { ...indexed, amount: String(indexed.amount), price: String(indexed.price) });
+  return { l, state: indexed.state, agreed: ok.length };
+}
+
+/**
+ * One of the vault's own listings, from the indexer's full list (asking /listing/:txid would tell
+ * the indexer it is ours) and the LIST transaction this vault sent (else fetched from Esplora).
+ */
+async function ownListing(rec) {
+  const indexed = (await indexer.listings()).find((l) => l.listTxid === rec.listTxid);
+  if (!indexed) throw new Error('the indexer does not list it (yet): sync after the next block');
+  const sent = (st.vault.state.pending ?? []).find((p) => p.revealTxid === rec.listTxid)?.revealHex;
+  const l = listingFromChain(rec.listTxid, sent ?? (await esplora.txHex(rec.listTxid)), { ...indexed, amount: String(indexed.amount), price: String(indexed.price) });
+  return { l, state: indexed.state };
+}
+
+const marketForm = { offer: '', checked: null };
+
+function renderMarket() {
+  if (!st.vault) return fill('market-body', h('p', { class: 'muted' }, 'Unlock the vault to trade.'));
+  const mine = st.vault.state.listings ?? [];
+  const rows = mine.map((rec) => {
+    const act = [];
+    if (rec.state === 'ACTIVE') {
+      const offer = h('button', { type: 'button', class: 'small', name: 'offer' }, 'Copy offer');
+      offer.addEventListener('click', busy(offer, () => copyOffer(rec)));
+      const cancel = h('button', { type: 'button', class: 'small secondary', disabled: !st.wallet, name: 'cancel' }, 'Cancel');
+      cancel.addEventListener('click', busy(cancel, () => sendCancel(rec)));
+      act.push(offer, ' ', cancel);
+    } else if (rec.state === 'CLOSED') {
+      const claim = h('button', { type: 'button', class: 'small', disabled: !st.wallet, name: 'claim' }, 'Claim back');
+      claim.addEventListener('click', busy(claim, () => sendClaim(rec)));
+      act.push(claim);
+    }
+    return h('tr', {},
+      h('td', {}, rec.ticker), h('td', { class: 'num' }, units(rec.amount)), h('td', { class: 'num' }, sats(rec.price)),
+      h('td', {}, rec.state), h('td', { class: 'mono' }, short(rec.listTxid)), h('td', {}, act));
+  });
+  const offer = h('textarea', { rows: '2', name: 'offer', spellcheck: 'false', placeholder: 'sh20offer1:…' }, marketForm.offer);
+  offer.addEventListener('input', () => { marketForm.offer = offer.value; marketForm.checked = null; });
+  const check = h('button', { type: 'button', class: 'secondary', name: 'check' }, 'Check the offer');
+  check.addEventListener('click', busy(check, checkOffer));
+  const c = marketForm.checked;
+  let buy = null;
+  if (c) {
+    buy = h('button', { type: 'button', disabled: !st.wallet || c.state !== 'ACTIVE', name: 'buy' }, `Buy ${units(c.l.amount)} ${c.l.ticker} for ${sats(c.l.price)}`);
+    buy.addEventListener('click', busy(buy, () => sendTake(c)));
+  }
+  fill('market-body',
+    h('h3', {}, 'Your listings'),
+    rows.length
+      ? h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, ['Ticker', 'Amount', 'Price', 'State', 'Listing', ''].map((x) => h('th', {}, x)))), h('tbody', {}, rows)))
+      : h('p', { class: 'muted' }, 'None. List tokens from the panel above (Sell for BTC).'),
+    resultBox('listing-out'),
+    h('h3', {}, 'Buy from an offer'),
+    h('label', {}, 'Offer (a line the seller shared)', offer),
+    h('div', { class: 'row' }, check),
+    c ? h('dl', {},
+      h('dt', {}, 'Tokens'), h('dd', {}, `${units(c.l.amount)} ${c.l.ticker}, as a public note of this vault`),
+      h('dt', {}, 'Price'), h('dd', {}, `${sats(c.l.price)} to ${toHex(c.l.payScript)}`),
+      h('dt', {}, 'State'), h('dd', {}, c.state),
+      h('dt', {}, 'Checked'), h('dd', {}, `the LIST on chain, the seller's signature for this price and payee${c.agreed > 1 ? `, ${c.agreed} indexers agree` : ' (one indexer: add others in Settings to cross-check)'}`)) : null,
+    buy,
+    resultBox('buy-out'));
+}
+
+async function copyOffer(rec) {
+  const { l } = await ownListing(rec);
+  const offer = encodeOffer(rec.listTxid, signOffer((await st.vault.lockOutput(rec.lockIndex)).secret, l));
+  await navigator.clipboard?.writeText(offer).catch(() => {});
+  result('listing-out', h('p', {}, 'Offer (copied): anyone who completes it pays the price to you and gets the tokens. Share it anywhere.'), h('p', { class: 'mono', id: 'offer-text' }, offer));
+}
+
+async function checkOffer() {
+  const { listTxid, sig } = decodeOffer(marketForm.offer);
+  const c = await checkedListing(listTxid);
+  if (!offerValid(c.l, sig)) throw new Error('the offer is not signed by the listing\'s lock key for this price and payee');
+  marketForm.checked = { ...c, sig };
+  renderMarket();
+}
+
+/** Signs a transaction with a pre-signed or vault-signed lock input, broadcasts it, records the public note. */
+async function sendFunded(m, outId, label, note) {
+  const done = await signFunded(m);
+  const id = await esplora.broadcast(done.hex);
+  if (note) await st.vault.addNote({ ...note, txid: id, status: 'broadcast' });
+  renderAll();
+  result(outId, h('p', { class: 'ok' }, `${label}: broadcast (${done.vsize} vB).`), txLink(id), h('p', { class: 'muted' }, 'Sync after the next block to see the note.'));
+}
+
+async function sendTake(c) {
+  const fresh = await checkedListing(c.l.listTxid); // still ACTIVE, same terms, now
+  if (fresh.state !== 'ACTIVE') throw new Error(`the listing is ${fresh.state} now`);
+  const tip = await esplora.tipHeight();
+  const o = await st.vault.reserveNote(); // the tokens come as this public note
+  const m = buildTake({ l: fresh.l, sig: c.sig, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: tip });
+  if (!confirm(`Pay ${sats(fresh.l.price)} plus ${sats(m.fee)} of fees for ${units(fresh.l.amount)} ${fresh.l.ticker}?`)) return;
+  await sendFunded(m, 'buy-out', `TAKE of ${units(fresh.l.amount)} ${fresh.l.ticker}`, { index: o.index, ticker: fresh.l.ticker, v: fresh.l.amount });
+  marketForm.checked = null;
+}
+
+async function sendCancel(rec) {
+  const { l, state } = await ownListing(rec);
+  if (state !== 'ACTIVE') throw new Error(`the listing is ${state}`);
+  if (!confirm(`Take ${units(l.amount)} ${l.ticker} back? The listing ends.`)) return;
+  const o = await st.vault.reserveNote();
+  const m = buildCancel({ l, lockSecret: (await st.vault.lockOutput(rec.lockIndex)).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: await esplora.tipHeight() });
+  await sendFunded(m, 'listing-out', `Cancel of ${units(l.amount)} ${l.ticker}`, { index: o.index, ticker: l.ticker, v: l.amount });
+}
+
+async function sendClaim(rec) {
+  // CLOSED by every configured indexer (their full lists, never a question about this listing), and on
+  // chain: the lock spent by a transaction with no TAKE. Else the CLAIM would be rejected and its fees lost.
+  const lists = await Promise.allSettled(indexers.map((a) => a.listings()));
+  const states = lists.filter((r) => r.status === 'fulfilled').map((r) => r.value.find((x) => x.listTxid === rec.listTxid)?.state ?? 'unknown');
+  if (!states.length || states.some((s) => s !== 'CLOSED')) throw new Error(`not claimed: the indexers say ${[...new Set(states)].join(', ') || 'nothing'}, not CLOSED everywhere`);
+  const { l } = await ownListing(rec);
+  const out = await esplora.outspend(l.listTxid, l.lockVout);
+  const problem = claimProblem(l, out.spent && out.txid ? await esplora.txHex(out.txid) : null);
+  if (problem) throw new Error(`not claimed: ${problem}`);
+  const o = await st.vault.reserveNote();
+  const m = buildClaim({ listTxid: rec.listTxid, lockSecret: (await st.vault.lockOutput(rec.lockIndex)).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: await esplora.tipHeight() });
+  await sendFunded(m, 'listing-out', `CLAIM of ${units(rec.amount)} ${rec.ticker}`, { index: o.index, ticker: rec.ticker, v: BigInt(rec.amount) });
 }
 
 // ---- boot ------------------------------------------------------------------------
