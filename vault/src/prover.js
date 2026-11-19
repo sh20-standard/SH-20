@@ -4,11 +4,11 @@
 // build on a pool of Workers when the page is cross-origin isolated (shared memory), else the
 // single-thread build in one Worker. Nothing is fetched from another origin.
 
-import { importedMemory, sharedMemory } from '../../circuit/web/host.js';
+import { importedMemory, sharedMemory, defaultThreads } from '../../circuit/web/host.js';
 import { SPEND_VK_DIGEST } from './sh20.js';
+import { canShare } from './isolation.js';
 
 const url = (p) => new URL(p, import.meta.url);
-export const canShare = () => globalThis.crossOriginIsolated === true && typeof SharedArrayBuffer === 'function';
 
 async function fetchBytes(path) {
   const r = await fetch(url(path));
@@ -42,7 +42,7 @@ async function start(onStatus) {
   if (mode === 'threads') {
     job.memory = sharedMemory(importedMemory(wasm));
     job.nextTid = new Int32Array(new SharedArrayBuffer(4));
-    job.threads = Math.max(1, Math.min(16, navigator.hardwareConcurrency || 4));
+    job.threads = defaultThreads(); // the cores reported, and at least 6 on an iPhone (circuit/web/host.js)
   }
   const pending = new Map();
   let id = 0;

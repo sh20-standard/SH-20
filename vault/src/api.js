@@ -53,6 +53,22 @@ const hexBytes = (h, n) => {
   return Uint8Array.from(h.match(/../g), (x) => parseInt(x, 16));
 };
 
+const STATES = ['ACTIVE', 'SOLD', 'CANCELLED', 'CLOSED', 'CLAIMED'];
+export function normListing(l) {
+  const hex = (x, n) => (typeof x === 'string' && new RegExp(`^[0-9a-f]{${n}}$`).test(x) ? x : null);
+  return {
+    listTxid: hex(l.listTxid, 64),
+    ticker: typeof l.ticker === 'string' && /^[A-Z0-9]{4}$/.test(l.ticker) ? l.ticker : null,
+    amount: big(l.amount),
+    price: big(l.price),
+    payScript: typeof l.payScript === 'string' && /^([0-9a-f]{2}){1,34}$/.test(l.payScript) ? l.payScript : null,
+    lock: typeof l.lock === 'string' && /^[0-9a-f]{64}:\d+$/.test(l.lock) ? l.lock : null,
+    lockKey: hex(l.lockKey, 64),
+    state: STATES.includes(l.state) ? l.state : null,
+    height: num(l.height),
+  };
+}
+
 /** A tree leaf: MINT / TEAM / TAKE / CLAIM carry a public opening (ticker, v, npk); OUT carries pkEph and ct. */
 export function normNote(n) {
   return {
@@ -84,6 +100,20 @@ export class IndexerApi {
   }
   async tokens() {
     return list(await getJson(`${this.base}/tokens`), 'tokens').map(normToken);
+  }
+  /** One listing (docs/API.md /listing/:txid), or null if the indexer does not know it. */
+  async listing(listTxid) {
+    if (!/^[0-9a-f]{64}$/.test(listTxid)) throw new Error('bad listing id');
+    try {
+      return normListing(await getJson(`${this.base}/listing/${listTxid}`));
+    } catch (e) {
+      if (e.status === 404) return null;
+      throw e;
+    }
+  }
+  /** Every listing, optionally in one state (ACTIVE, SOLD, CANCELLED, CLOSED, CLAIMED). */
+  async listings(state) {
+    return list(await getJson(`${this.base}/listings${state ? `?state=${state}` : ''}`), 'listings').map(normListing);
   }
   async token(ticker) {
     if (!/^[A-Z0-9]{4}$/.test(ticker)) throw new Error('bad ticker');

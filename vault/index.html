@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-7rTJLdhU6/Z/XuAxl7sUPfc679tsaXSwHKVEJbBV3yI=' 'wasm-unsafe-eval' chrome-extension: moz-extension:; worker-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https: http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-7rTJLdhU6/Z/XuAxl7sUPfc679tsaXSwHKVEJbBV3yI=' 'wasm-unsafe-eval' chrome-extension: moz-extension:; worker-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>SH-20 Vault</title>
 <link rel="stylesheet" href="./style.css">
@@ -56,6 +56,11 @@
     <h2>Send privately</h2>
     <div id="send-body"></div>
     <div id="pending-body"></div>
+  </section>
+
+  <section id="market">
+    <h2>Market</h2>
+    <div id="market-body"></div>
   </section>
 
   <section id="settings">

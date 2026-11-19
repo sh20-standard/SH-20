@@ -20,7 +20,7 @@ import { toHex, fromHex } from './bytes.js';
 export const ANCHOR_MAX_AGE = 90; // blocks; the indexers accept 100 (anchorWindow)
 
 /** Three outputs in random order, so their positions say nothing about which one is the change. */
-function shuffled(xs) {
+export function shuffled(xs) {
   const a = [...xs];
   for (let i = a.length - 1; i > 0; i--) {
     const j = crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1);
@@ -35,7 +35,7 @@ function anchor(sync, tip) {
   return { anchorHeight: sync.height, root: sync.tree.root };
 }
 
-function spendFrom({ vault, sync, tip, ticker, need, outputs, vPub = 0n, tPub = 0n, envelope }) {
+export function spendFrom({ vault, sync, tip, ticker, need, outputs, vPub = 0n, tPub = 0n, envelope }) {
   const inputs = pickInputs(vault.state.notes, ticker, need);
   if (!inputs) throw new Error(`not enough ${ticker} in two unspent notes (a spend takes at most two)`);
   const { anchorHeight, root } = anchor(sync, tip);
@@ -92,17 +92,17 @@ export async function proveSpend(prover, built) {
  * `utxos` (a PSBT for the wallet), and what the reveal needs once the commit's txid is known.
  * The one-time secret must be saved before the commit is signed (Vault.addPending).
  */
-export function planCarrier({ envelope, payer, utxos, feeRate, tipHeight, secret = oneTimeSecret() }) {
+export function planCarrier({ envelope, payer, utxos, feeRate, tipHeight, secret = oneTimeSecret(), outputs }) {
   const c = commitment(secret, envelope);
   const returnScript = addressToScript(payer.address);
-  const value = commitValue(c, returnScript, feeRate);
+  const value = commitValue(c, returnScript, feeRate, outputs);
   const commit = buildFunded({ fixed: [{ value, script: c.scriptPubKey }], payer, utxos, feeRate, tipHeight });
-  return { commit, c, secret, value, returnScript, feeRate };
+  return { commit, c, secret, value, returnScript, feeRate, outputs };
 }
 
 /** The signed reveal for a commit that pays output 0. */
 export function revealFor(plan, commitTxid) {
-  return signReveal({ secret: plan.secret, c: plan.c, commitTxid, value: plan.value, returnScript: plan.returnScript, feeRate: plan.feeRate });
+  return signReveal({ secret: plan.secret, c: plan.c, commitTxid, value: plan.value, returnScript: plan.returnScript, outputs: plan.outputs, feeRate: plan.feeRate });
 }
 
 /** A DEPLOY without a burn (D = 0): one OP_RETURN transaction, like a MINT. */
@@ -118,6 +118,7 @@ export const pendingRecord = (kind, plan, envelope, inputs) => ({
   secret: toHex(plan.secret),
   value: plan.value.toString(),
   returnScript: toHex(plan.returnScript),
+  outputs: plan.outputs?.map((o) => ({ value: o.value.toString(), script: toHex(o.script) })),
   feeRate: plan.feeRate,
   inputs: inputs.map((n) => n.id),
   status: 'prepared',
@@ -126,5 +127,6 @@ export const pendingRecord = (kind, plan, envelope, inputs) => ({
 /** A carrier plan back from a pending record (to sign the reveal again). */
 export function planFromPending(p) {
   const secret = fromHex(p.secret);
-  return { c: commitment(secret, fromHex(p.envelope)), secret, value: BigInt(p.value), returnScript: fromHex(p.returnScript), feeRate: p.feeRate };
+  const outputs = p.outputs?.map((o) => ({ value: BigInt(o.value), script: fromHex(o.script) }));
+  return { c: commitment(secret, fromHex(p.envelope)), secret, value: BigInt(p.value), returnScript: fromHex(p.returnScript), outputs, feeRate: p.feeRate };
 }

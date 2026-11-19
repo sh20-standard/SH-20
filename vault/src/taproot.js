@@ -80,25 +80,62 @@ export function envelopeScript(e, envelope) {
   return concat(...parts);
 }
 
+export const SIGHASH_DEFAULT = 0x00;
+/** What a seller's offer signs: its own input and the output at the same index (the price). */
+export const SIGHASH_SINGLE_ANYONECANPAY = 0x83;
+
 /**
- * BIP341 signature message, SIGHASH_DEFAULT, for input `index` of `tx`. `prevouts` are the spent
- * outputs ({ value, script }) of every input; `leaf` is the leaf hash for a script-path spend.
+ * BIP341 signature message for input `index` of `tx`, with SIGHASH_DEFAULT or
+ * SIGHASH_SINGLE | ANYONECANPAY. `prevouts` are the spent outputs ({ value, script }) of every
+ * input (only this input's is read with ANYONECANPAY); `leaf` is the leaf hash of a script-path spend.
  */
-export function sigMsg(tx, index, prevouts, leaf = null) {
+export function sigMsg(tx, index, prevouts, leaf = null, hashType = SIGHASH_DEFAULT) {
+  if (hashType !== SIGHASH_DEFAULT && hashType !== SIGHASH_SINGLE_ANYONECANPAY) throw new Error('unsupported sighash type');
+  const acp = hashType === SIGHASH_SINGLE_ANYONECANPAY;
   const sha = (...p) => sha256(concat(...p));
-  const parts = [
-    Uint8Array.of(0x00, 0x00), // epoch, hash type SIGHASH_DEFAULT
-    u32le(tx.version), u32le(tx.locktime),
-    sha(...tx.vin.map((i) => concat(fromHex(i.txid).reverse(), u32le(i.vout)))),
-    sha(...prevouts.map((o) => u64le(o.value))),
-    sha(...prevouts.map((o) => concat(compactSize(o.script.length), o.script))),
-    sha(...tx.vin.map((i) => u32le(i.sequence))),
-    sha(...tx.vout.map((o) => concat(u64le(o.value), compactSize(o.script.length), o.script))),
-    Uint8Array.of(leaf ? 2 : 0), // spend type: ext_flag 1 for a script path, no annex
-    u32le(index),
-  ];
+  const out = (o) => concat(u64le(o.value), compactSize(o.script.length), o.script);
+  const parts = [Uint8Array.of(0x00, hashType), u32le(tx.version), u32le(tx.locktime)]; // epoch 0
+  if (!acp) {
+    parts.push(
+      sha(...tx.vin.map((i) => concat(fromHex(i.txid).reverse(), u32le(i.vout)))),
+      sha(...prevouts.map((o) => u64le(o.value))),
+      sha(...prevouts.map((o) => concat(compactSize(o.script.length), o.script))),
+      sha(...tx.vin.map((i) => u32le(i.sequence))),
+      sha(...tx.vout.map(out)),
+    );
+  }
+  parts.push(Uint8Array.of(leaf ? 2 : 0)); // spend type: ext_flag 1 for a script path, no annex
+  if (acp) {
+    const i = tx.vin[index];
+    const p = prevouts[index];
+    parts.push(fromHex(i.txid).reverse(), u32le(i.vout), u64le(p.value), compactSize(p.script.length), p.script, u32le(i.sequence));
+    if (!tx.vout[index]) throw new Error('SIGHASH_SINGLE needs an output at the input\'s index');
+    parts.push(sha(out(tx.vout[index])));
+  } else {
+    parts.push(u32le(index));
+  }
   if (leaf) parts.push(leaf, Uint8Array.of(0x00), u32le(0xffffffff)); // key version 0, no OP_CODESEPARATOR
   return concat(...parts);
+}
+
+/**
+ * A key-path-only taproot output for the secret `d` (BIP86: the internal key tweaked with no script
+ * tree): { script, key (x-only output key), secret (the tweaked secret that signs for it) }.
+ */
+export function keyPathOutput(d) {
+  const x = big(d);
+  if (x <= 0n || x >= N) throw new Error('bad secret key');
+  const p = mul(G, x);
+  const internal = be32(p[0]);
+  const even = p[1] & 1n ? N - x : x; // BIP340: the key with an even y
+  const q = tweakKey(internal, null);
+  return { script: concat(Uint8Array.of(0x51, 0x20), q.key), key: q.key, internal, secret: be32((even + q.tweak) % N) };
+}
+
+/** A BIP340 signature by a key-path output's tweaked secret, with its sighash byte unless DEFAULT. */
+export function signKeyPath(secret, msg, hashType = SIGHASH_DEFAULT, aux) {
+  const sig = new Uint8Array(schnorrSign(secret, sigHash(msg), aux ?? crypto.getRandomValues(new Uint8Array(32))));
+  return hashType === SIGHASH_DEFAULT ? sig : concat(sig, Uint8Array.of(hashType));
 }
 
 export const sigHash = (msg) => new Uint8Array(taggedHash('TapSighash', msg));
@@ -129,35 +166,47 @@ export function commitment(secret, envelope) {
   return { e, script, leaf, scriptPubKey: concat(Uint8Array.of(0x51, 0x20), q.key), control: concat(Uint8Array.of(LEAF_VERSION | q.parity), e) };
 }
 
-/** Exact virtual size of the reveal: one script-path input, one output to `returnScript`. */
-export function revealVsize(c, returnScript) {
-  const base = REVEAL_FRAME + 41 + 8 + compactSize(returnScript.length).length + returnScript.length;
+/**
+ * Exact virtual size of the reveal: one script-path input and `outs` (output scripts): the dust
+ * returned to the wallet, or for a LIST the lock output.
+ */
+export function revealVsize(c, outs) {
+  const scripts = Array.isArray(outs) ? outs : [outs];
+  const base = REVEAL_FRAME + 41 + scripts.reduce((n, s) => n + 8 + compactSize(s.length).length + s.length, 0);
   const stack = [new Uint8Array(64), c.script, c.control];
-  const witness = 2 + 1 + stack.reduce((s, x) => s + compactSize(x.length).length + x.length, 0);
+  const witness = 2 + 1 + stack.reduce((n, x) => n + compactSize(x.length).length + x.length, 0);
   return Math.ceil((4 * base + witness) / 4);
 }
 
-/** The commit output's value: the reveal's fee at `feeRate` plus the dust it returns. */
-export function commitValue(c, returnScript, feeRate) {
-  return BigInt(Math.ceil(revealVsize(c, returnScript) * feeRate)) + dustLimit(returnScript);
+/** The reveal's outputs: [the dust back to `returnScript`], unless `outputs` are given (a LIST's lock). */
+const revealOutputs = (returnScript, outputs) => outputs ?? [{ value: dustLimit(returnScript), script: returnScript }];
+
+/** The commit output's value: the reveal's fee at `feeRate` plus what its outputs carry. */
+export function commitValue(c, returnScript, feeRate, outputs) {
+  const outs = revealOutputs(returnScript, outputs);
+  return BigInt(Math.ceil(revealVsize(c, outs.map((o) => o.script)) * feeRate)) + outs.reduce((n, o) => n + o.value, 0n);
 }
 
 /**
- * The signed reveal spending output `vout` of the commit transaction `commitTxid` (worth `value`):
- * returns { tx, hex, txid, vsize }.
+ * The signed reveal spending output `vout` of the commit transaction `commitTxid` (worth `value`).
+ * Its outputs are the dust back to `returnScript` (what is left after the fee), or `outputs` as
+ * given (the fee is then what they leave). Returns { tx, hex, txid, vsize, fee }.
  */
-export function signReveal({ secret, c, commitTxid, vout = 0, value, returnScript, feeRate, aux }) {
-  const fee = BigInt(Math.ceil(revealVsize(c, returnScript) * feeRate));
-  const back = value - fee;
-  if (back < dustLimit(returnScript)) throw new Error('the commit output does not pay the reveal');
+export function signReveal({ secret, c, commitTxid, vout = 0, value, returnScript, outputs, feeRate, aux }) {
+  const outs = revealOutputs(returnScript, outputs).map((o) => ({ ...o }));
+  const size = revealVsize(c, outs.map((o) => o.script));
+  const need = BigInt(Math.ceil(size * feeRate));
+  if (!outputs) outs[0].value = value - need; // all that the fee leaves comes back
+  const fee = value - outs.reduce((n, o) => n + o.value, 0n);
+  if (fee < need || outs.some((o) => o.value < dustLimit(o.script))) throw new Error('the commit output does not pay the reveal');
   const tx = {
     version: 2, locktime: 0,
     vin: [{ txid: commitTxid, vout, sequence: SEQUENCE, scriptSig: new Uint8Array(0), witness: [] }],
-    vout: [{ value: back, script: returnScript }],
+    vout: outs,
   };
   const msg = sigHash(sigMsg(tx, 0, [{ value, script: c.scriptPubKey }], c.leaf));
   const sig = new Uint8Array(schnorrSign(secret, msg, aux ?? crypto.getRandomValues(new Uint8Array(32))));
   tx.vin[0].witness = [sig, c.script, c.control];
   const raw = serializeTx(tx);
-  return { tx, hex: toHex(raw), txid: txidOf(tx), vsize: revealVsize(c, returnScript), fee };
+  return { tx, hex: toHex(raw), txid: txidOf(tx), vsize: size, fee };
 }

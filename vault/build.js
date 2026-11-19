@@ -39,7 +39,7 @@ const REDIRECT = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh
  */
 export function site(reader) {
   const files = new Map();
-  for (const p of ['vault/index.html', 'vault/style.css', ...reader.list('vault/src'), ...INDEXER.map((f) => `indexer/src/${f}`), ...CIRCUIT_JS.map((f) => `circuit/js/${f}`), ...CIRCUIT_WEB.map((f) => `circuit/web/${f}`), PROVING_KEY, ...PROVER.map((f) => `vault/prover/${f}`), 'LICENSE']) {
+  for (const p of ['vault/index.html', 'vault/style.css', 'vault/sw.js', ...reader.list('vault/src'), ...INDEXER.map((f) => `indexer/src/${f}`), ...CIRCUIT_JS.map((f) => `circuit/js/${f}`), ...CIRCUIT_WEB.map((f) => `circuit/web/${f}`), PROVING_KEY, ...PROVER.map((f) => `vault/prover/${f}`), 'LICENSE']) {
     files.set(p, reader.read(p));
   }
   files.set('index.html', Buffer.from(REDIRECT));

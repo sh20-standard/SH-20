@@ -1,0 +1,49 @@
+// Cross-origin isolation on IPFS: the service worker is the phone test page's, unchanged, and is
+// registered on subdomain gateways only, never on a path gateway; the pool size is defaultThreads.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { gatewayKind, ensureIsolation } from '../src/isolation.js';
+import { defaultThreads } from '../../circuit/web/host.js';
+
+const at = (url) => { const u = new URL(url); return { pathname: u.pathname, hostname: u.hostname }; };
+
+test('vault/sw.js is circuit/web/sw.js, byte for byte', () => {
+  assert.ok(readFileSync(new URL('../sw.js', import.meta.url)).equals(readFileSync(new URL('../../circuit/web/sw.js', import.meta.url))));
+});
+
+test('only a subdomain gateway is one: path gateways and other hosts are not', () => {
+  const cid = 'bafybeigfj45xzun5mek5zvqeby6bs76ukwkslx7ifa7ipzdoylfl4pnavi';
+  assert.equal(gatewayKind(at(`https://${cid}.ipfs.dweb.link/vault/`)), 'subdomain');
+  assert.equal(gatewayKind(at(`http://${cid}.ipfs.localhost:8080/vault/`)), 'subdomain');
+  assert.equal(gatewayKind(at('https://vault-sh20.ipns.dweb.link/vault/')), 'subdomain');
+  assert.equal(gatewayKind(at(`https://ipfs.io/ipfs/${cid}/vault/`)), 'path');
+  assert.equal(gatewayKind(at(`https://${cid}.ipfs.dweb.link/ipfs/${cid}/vault/`)), 'path', 'a path inside a subdomain is still a path gateway');
+  assert.equal(gatewayKind(at('http://localhost:8000/vault/')), 'other');
+  assert.equal(gatewayKind(at('https://example.org/vault/')), 'other');
+});
+
+test('the service worker is never registered on a path gateway', async () => {
+  let registered = false;
+  const saved = { ...globalThis };
+  Object.assign(globalThis, {
+    location: { pathname: '/ipfs/bafy/vault/', hostname: 'ipfs.io' },
+    isSecureContext: true,
+    crossOriginIsolated: false,
+  });
+  const nav = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { value: { serviceWorker: { register: async () => { registered = true; return {}; } } }, configurable: true });
+  try {
+    assert.equal(await ensureIsolation(), 'not-a-subdomain-gateway');
+    assert.equal(registered, false);
+  } finally {
+    for (const k of ['location', 'isSecureContext', 'crossOriginIsolated']) if (!(k in saved)) delete globalThis[k];
+    if (nav) Object.defineProperty(globalThis, 'navigator', nav);
+  }
+});
+
+test('the pool size: the cores reported, at least 6 on an iPhone (circuit/web/host.js)', () => {
+  assert.equal(defaultThreads({ hardwareConcurrency: 4, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X)' }), 6);
+  assert.equal(defaultThreads({ hardwareConcurrency: 10, userAgent: 'Mozilla/5.0 (Macintosh)' }), 10);
+  assert.match(readFileSync(new URL('../src/prover.js', import.meta.url), 'utf8'), /defaultThreads\(\)/);
+});

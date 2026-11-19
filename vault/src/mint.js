@@ -54,10 +54,11 @@ function fixedOutputs(token, envelope, k) {
  * Smallest set of UTXOs paying `fixed` outputs plus the fee at `feeRate`,
  * with a change output only when it is above dust.
  */
-export function selectCoins(utxos, fixed, inType, changeScript, feeRate) {
-  const sumFixed = fixed.reduce((s, o) => s + o.value, 0n);
+export function selectCoins(utxos, fixed, inType, changeScript, feeRate, pre = []) {
+  // `pre`: inputs already in the transaction (P2TR key path, signed): they add their value and weight
+  const sumFixed = fixed.reduce((s, o) => s + o.value, 0n) - pre.reduce((s, i) => s + i.value, 0n);
   const scripts = fixed.map((o) => o.script);
-  const fee = (n, change) => BigInt(Math.ceil(feeRate * estimateVsize(Array(n).fill(inType), change ? [...scripts, changeScript] : scripts)));
+  const fee = (n, change) => BigInt(Math.ceil(feeRate * estimateVsize([...pre.map(() => 'p2tr'), ...Array(n).fill(inType)], change ? [...scripts, changeScript] : scripts)));
   const dust = dustLimit(changeScript);
   const settle = (picked) => {
     const total = picked.reduce((s, u) => s + u.value, 0n);
@@ -108,22 +109,29 @@ export function buildMint({ token, opening, payer, utxos, feeRate, tipHeight, k 
  * the wallet: the MINT, the commit of a proof-carrying envelope, a DEPLOY without a burn.
  * payer = { address, publicKey (hex, optional for p2wpkh) }; utxos = [{ txid, vout, value }] there.
  */
-export function buildFunded({ fixed, payer, utxos, feeRate, tipHeight }) {
+export function buildFunded({ fixed, payer, utxos, feeRate, tipHeight, pre = [], locktime = tipHeight, sign }) {
   if (!(feeRate > 0) || feeRate > MAX_FEE_RATE) throw new Error(`fee rate must be between 0 and ${MAX_FEE_RATE} sat/vB`);
   const payScript = addressToScript(payer.address);
   const inType = scriptType(payScript);
   if (!SUPPORTED_INPUTS.includes(inType)) throw new Error(`pay from a native segwit, nested segwit or taproot address, not ${inType}`);
-  const { picked, change, fee } = selectCoins(utxos, fixed, inType, payScript, feeRate);
+  const { picked, change, fee } = selectCoins(utxos, fixed, inType, payScript, feeRate, pre);
 
+  // `pre` inputs come first, at the indexes their signatures expect (a seller's lock at 0)
   const tx = {
     version: 2,
-    locktime: tipHeight, // anti fee-sniping, like Bitcoin Core; valid in the next block
-    vin: picked.map((u) => ({ txid: u.txid, vout: u.vout, sequence: SEQUENCE, scriptSig: new Uint8Array(0), witness: [] })),
+    locktime, // the tip by default: anti fee-sniping, like Bitcoin Core; valid in the next block
+    vin: [
+      ...pre.map((i) => ({ txid: i.txid, vout: i.vout, sequence: i.sequence, scriptSig: new Uint8Array(0), witness: i.witness ?? [] })),
+      ...picked.map((u) => ({ txid: u.txid, vout: u.vout, sequence: SEQUENCE, scriptSig: new Uint8Array(0), witness: [] })),
+    ],
     vout: change > 0n ? [...fixed, { value: change, script: payScript }] : fixed,
   };
+  // a `pre` input signed over the whole transaction (SIGHASH_DEFAULT) is signed now that it is final
+  const prevouts = [...pre.map((i) => ({ value: i.value, script: i.script })), ...picked.map((u) => ({ value: u.value, script: payScript }))];
+  if (sign) pre.forEach((i, k) => { if (!i.witness) tx.vin[k].witness = sign(tx, k, prevouts); });
 
   const pub = payer.publicKey ? fromHex(payer.publicKey) : null;
-  const meta = picked.map((u) => {
+  const meta = [...pre.map((i, k) => ({ witnessUtxo: { value: i.value, script: i.script }, finalScriptWitness: tx.vin[k].witness })), ...picked.map((u) => {
     const m = { witnessUtxo: { value: u.value, script: payScript } };
     if (inType === 'p2sh') {
       if (!pub || pub.length !== 33) throw new Error('nested segwit needs the 33-byte public key from the wallet');
@@ -131,13 +139,13 @@ export function buildFunded({ fixed, payer, utxos, feeRate, tipHeight }) {
     }
     if (inType === 'p2tr' && pub) m.tapInternalKey = pub.length === 33 ? pub.subarray(1) : pub;
     return m;
-  });
+  })];
 
   return {
     tx,
     psbt: createPsbt(tx, meta),
     fee,
-    vsizeEstimate: estimateVsize(picked.map(() => inType), tx.vout.map((o) => o.script)),
-    inputIndexes: picked.map((_, i) => i),
+    vsizeEstimate: estimateVsize([...pre.map(() => 'p2tr'), ...picked.map(() => inType)], tx.vout.map((o) => o.script)),
+    inputIndexes: picked.map((_, i) => pre.length + i), // the wallet signs its own inputs only
   };
 }

@@ -12,7 +12,13 @@ import { NOTE_SCHEME, wallet, publicNote, scanOutput, nullifierOf } from './note
 import { frHex } from './fr.js';
 import { noteLeaf, tickerT, PUBLIC_RHO, masterSecret } from './sh20.js';
 import { newMnemonic, mnemonicToSeed } from './bip39.js';
-import { toHex, fromHex, toBase64, fromBase64, utf8 } from './bytes.js';
+import { keyPathOutput } from './taproot.js';
+import { hmac } from './hash.js';
+
+const SECP_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+/** How many lock keys past the last one used a restored vault looks for among the listings. */
+export const LOCK_GAP = 10;
+import { toHex, fromHex, toBase64, fromBase64, utf8, concat, u32le, bytesToBig, bigTo32 } from './bytes.js';
 
 export const STORAGE_KEY = 'sh20.vault.v0';
 const PBKDF2_ITER = 600000;
@@ -44,6 +50,7 @@ export class Vault {
   #salt;
   #wallet = null; // keys derived from the seed, on first use
   #openings = new Map(); // index -> public opening, cached (each costs two BabyJubJub multiplications, ~170 ms)
+  #locks = new Map(); // index -> lock output (market.js), cached
 
   constructor(storage, state, seed, key, salt, words = null) {
     this.storage = storage;
@@ -229,6 +236,40 @@ export class Vault {
   }
 
   /**
+   * The lock output of listing `index` (market.js): a BIP86 key-path output of
+   * HMAC-SHA512("sh20/vault/lock", m ‖ u32le(index)), so the recovery words restore it.
+   * Returns { script, key, secret } (secret: the tweaked key that signs offers, cancels and claims).
+   */
+  lockOutput(index) {
+    if (this.#locks.has(index)) return this.#locks.get(index);
+    const wide = hmac('sha512', new TextEncoder().encode('sh20/vault/lock'), concat(this.#seed, u32le(index)));
+    const out = keyPathOutput(bigTo32((bytesToBig(wide.subarray(0, 32)) % (SECP_N - 1n)) + 1n));
+    this.#locks.set(index, out);
+    return out;
+  }
+
+  /** Reserves the next lock index (saved at once: a lock key is used for one listing only). */
+  async reserveLock() {
+    const index = this.state.nextLock ?? 0;
+    this.state.nextLock = index + 1;
+    await this.save();
+    return index;
+  }
+
+  /** The vault's listings: { id, lockIndex, ticker, amount, price, payScript, listTxid, state }. */
+  async addListing(rec) {
+    (this.state.listings ??= []).push({ id: `list:${rec.lockIndex}`, ...rec });
+    await this.save();
+  }
+
+  async updateListing(id, patch) {
+    const l = (this.state.listings ?? []).find((x) => x.id === id);
+    if (!l) return;
+    Object.assign(l, patch);
+    await this.save();
+  }
+
+  /**
    * A spend under way (send.js pendingRecord): saved before the wallet signs the commit, since its
    * one-time key is the only way to send the reveal or to take the commit output back.
    */
@@ -289,5 +330,6 @@ export class Vault {
     this.#key = null;
     this.#wallet = null;
     this.#openings.clear();
+    this.#locks.clear();
   }
 }
