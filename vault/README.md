@@ -178,9 +178,10 @@ vout n  change to the payer                                     only if above du
   profile (`activationHeight`, `deployBurn`, the genesis ticker), if one does not know the
   ticker, or if two at the same height report different `digest`s. Indexers a block apart are
   retried, then compared on terms only, with a warning. An unreachable indexer, or a single one,
-  only warns. After every sync, the others are asked for their digest after the synced block
-  (`/digest/:height`): the notes panel shows how many agree next to the balance, and a
-  disagreement in red (the notes come from the primary indexer's leaves).
+  only warns. After every sync, the others are asked for the tree's root and the digest after
+  the synced block (`/roots`, `/digest/:height`), compared with the root the vault rebuilt from the
+  primary's leaves and with the primary's digest: the notes panel shows how many agree next to the
+  balance, and a disagreement in red.
 - After signing, the vault checks that the wallet did not change the transaction, records the
   note, then broadcasts through Esplora. Xverse and Leather return partial signatures and UniSat
   finalizes; `btc.finalizePsbt` handles both.

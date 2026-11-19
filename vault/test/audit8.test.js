@@ -398,20 +398,24 @@ test('8.6 the leaves a vault has not scanned are read again, past the last block
 
 // ---- 8.5: what the vault showed as received rested on one indexer -----------------------------------
 
-test('8.5 every sync compares the digest at the synced block across the indexers, and the page shows it', async () => {
+test('8.5 every sync compares the root and the digest at the synced block across the indexers, and the page shows it', async () => {
   const D = 'ab'.repeat(32);
-  const at = (base, d) => ({ base, digest: async (h) => { assert.equal(h, 15); return d; } });
-  const fails = (base) => ({ base, digest: async () => { throw new Error('unreachable'); } });
-  const agree = await digestAgreement([at('primary', D), at('b', D), at('c', null), fails('d')], 15, D.toUpperCase());
+  const R = '0c'.repeat(32);
+  const at = (base, d, r = d === null ? null : R) => ({ base, digest: async (h) => { assert.equal(h, 15); return d; }, rootAt: async (h) => { assert.equal(h, 15); return r; } });
+  const fails = (base) => ({ base, digest: async () => { throw new Error('unreachable'); }, rootAt: async () => { throw new Error('unreachable'); } });
+  const agree = await digestAgreement([at('primary', D), at('b', D), at('c', null), fails('d')], 15, D.toUpperCase(), R);
   assert.deepEqual(agree, { height: 15, agreed: 2, total: 4, disagree: [], behind: ['c'], down: ['d'] });
   assert.equal(agreementText(agree), '2 of 4 indexers agree on the state at block 15 (1 not there yet, 1 unreachable).');
-  const liar = await digestAgreement([at('primary', D), at('honest', 'cd'.repeat(32))], 15, D);
+  const liar = await digestAgreement([at('primary', D), at('honest', 'cd'.repeat(32))], 15, D, R);
   assert.deepEqual(liar.disagree, ['honest']);
   assert.match(agreementText(liar), /honest disagrees with the primary indexer on the state at block 15: notes shown here may not exist on chain/);
-  assert.match(agreementText(await digestAgreement([at('primary', D)], 15, D)), /One indexer only/);
-  assert.equal((await digestAgreement([at('primary', D), at('b', D)], 15, null)).agreed, 0, 'a primary that reports no digest vouches for nothing');
+  // a lying primary that serves its own leaves and copies the honest digest: the root gives it away
+  const copied = await digestAgreement([at('liar', D), at('honest', D, 'ee'.repeat(32))], 15, D, R);
+  assert.deepEqual([copied.agreed, copied.disagree], [1, ['honest']]);
+  assert.match(agreementText(await digestAgreement([at('primary', D)], 15, D, R)), /One indexer only/);
+  assert.equal((await digestAgreement([at('primary', D), at('b', D)], 15, null, R)).agreed, 0, 'a primary that reports no digest vouches for nothing');
 
-  // against the real API: /digest/:height, the same value as /status at that height
+  // against the real API: /digest/:height and /roots, the same values as /status at that height
   const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n, deployMaturity: 0 }, verifier: mockVerifier() });
   const c = chain(ix);
   c.block(helperTx({ env: deployEnv({ start: 2, unlock: 2 }), prevHeight: c.next - 1 })); // N = 0: the DEPLOY is only setup here
@@ -421,12 +425,14 @@ test('8.5 every sync compares the digest at the synced block across the indexers
     const api = new IndexerApi(`http://127.0.0.1:${server.address().port}`);
     const r = await new Sync(memoryCache(), 'audit85').sync(api);
     assert.equal(await api.digest(r.height), r.digest);
+    assert.equal(await api.rootAt(r.height), r.root, 'the root the vault rebuilt from the leaves');
     assert.equal(await api.digest(r.height + 5), null, 'a block it has not reached');
-    assert.equal((await digestAgreement([api, api], r.height, r.digest)).agreed, 2);
+    assert.equal(await api.rootAt(r.height + 5), null);
+    assert.equal((await digestAgreement([api, api], r.height, r.digest, r.root)).agreed, 2);
   } finally {
     server.close();
   }
   const app = page();
-  assert.match(app, /agreement: await digestAgreement\(indexers, r\.height, r\.digest\)/, 'at every sync');
+  assert.match(app, /agreement: await digestAgreement\(indexers, r\.height, r\.digest, r\.root\)/, 'at every sync');
   assert.match(app, /h\('p', \{ id: 'balance' \}, h\('strong', \{\}, 'Balance: '\), bal \|\| 'nothing spendable yet', agreement/, 'next to the balance');
 });

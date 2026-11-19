@@ -126,8 +126,8 @@ async function checkOwned(s) {
 export async function syncNotes({ full = false } = {}) {
   const s = await getSyncer();
   const r = await s.sync(indexer, { full });
-  // the other indexers' digest after the same block (AUDIT §8.5): shown next to the balance
-  st.sync = { height: r.height, leaves: r.leaves, nullifiersKnown: r.nullifiersKnown, agreement: await digestAgreement(indexers, r.height, r.digest) };
+  // the other indexers' root and digest after the same block (AUDIT §8.5): shown next to the balance
+  st.sync = { height: r.height, leaves: r.leaves, nullifiersKnown: r.nullifiersKnown, agreement: await digestAgreement(indexers, r.height, r.digest, r.root) };
   let found = 0;
   if (st.vault) {
     // a scan that throws leaves the sync's notes unscanned: the next sync reads them again (AUDIT §8.6)

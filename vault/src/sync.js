@@ -128,7 +128,7 @@ export class Sync {
     this.height = H;
     this.unscanned = keep < this.tree.size ? keep : null; // the notes returned stay unscanned until the vault says so
     await this.save();
-    return { height: H, digest: status.digest ?? null, notes, leaves: this.tree.size, nullifiersKnown: this.nullifiersKnown };
+    return { height: H, digest: status.digest ?? null, root: frHex(this.tree.root), notes, leaves: this.tree.size, nullifiersKnown: this.nullifiersKnown };
   }
 
   /** The vault has scanned every note the last sync returned: the next one reads only the last blocks. */

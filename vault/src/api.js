@@ -100,6 +100,15 @@ export class IndexerApi {
   async status() {
     return getJson(`${this.base}/status`);
   }
+  /** The note tree's root after block `height` (hex), or null when the indexer does not report it. */
+  async rootAt(height) {
+    if (!Number.isInteger(height) || height < 0) throw new Error('bad height');
+    const j = list(await getJson(`${this.base}/roots?from=${height}`), 'roots');
+    const r = j.find((x) => x?.height === height);
+    if (!r) return null;
+    if (!/^[0-9a-f]{64}$/i.test(String(r.root))) throw new Error(`${this.base}: a malformed /roots answer`);
+    return String(r.root).toLowerCase();
+  }
   /** The state digest after block `height`, or null when the indexer is not there yet (404). */
   async digest(height) {
     if (!Number.isInteger(height) || height < 0) throw new Error('bad height');
