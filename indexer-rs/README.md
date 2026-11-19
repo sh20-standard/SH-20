@@ -3,17 +3,20 @@
 A Rust indexer for SH-20 draft v0.3, written from [`docs/SPEC-WIRE.md`](../docs/SPEC-WIRE.md) alone, to check that
 the spec is enough to reach the reference indexer's results.
 
-**Clean room.** Read: `docs/SPEC-WIRE.md`, `docs/DESIGN.md`, `indexer/vectors/v0.3.json`, and the root `CLAUDE.md`.
-Never opened: `indexer/src`, `indexer/test`, `indexer/bin`, `explorer/`, `vault/`, `circuit/`. No code is shared
+**Clean room.** Read: `docs/SPEC-WIRE.md`, `docs/DESIGN.md`, `indexer/vectors/v0.3.json`, the root `CLAUDE.md`, and
+`docs/SPEC-GAPS.md` (written here; its resolution table is the maintainer's).
+Never opened: `indexer/` apart from the vectors file, `explorer/`, `vault/`, `circuit/`, `docs/AUDIT.md`. No code is shared
 with the reference: Poseidon is [`light-poseidon`](https://crates.io/crates/light-poseidon) (circom parameters, over
 `ark-bn254`), BIP340 is the [`secp256k1`](https://crates.io/crates/secp256k1) crate (libsecp256k1), SHA-256 is `sha2`.
 
-**Result.** It reproduces every value of `indexer/vectors/v0.3.json`. Where the spec left a choice,
-[`docs/SPEC-GAPS.md`](../docs/SPEC-GAPS.md) says which one was made and whether the vectors confirm it.
+**Result.** It reproduces every value of `indexer/vectors/v0.3.json`: the 11 blocks of the scenario, the `bodyHash`
+of every spend envelope, the nine inputs of every verifier call, the 23 carrier cases and the CLAIM.
+[`docs/SPEC-GAPS.md`](../docs/SPEC-GAPS.md) lists the 28 points the first draft of the spec left open, and the six
+that a recheck against the settled text still found.
 
 ```sh
 cd indexer-rs
-cargo test --release      # 54 tests
+cargo test --release      # 60 tests
 cargo run --release -- replay <folder of `bitcoin-cli getblock <hash> 2` JSON files> [options]
 ```
 
@@ -61,7 +64,7 @@ the digests. The first block where they differ holds the event to look at; `--js
 
 | File | What |
 | --- | --- |
-| `tests/vectors.rs` | replays `v0.3.json`: primitives, then per block the root, the events, `eventsH`, the digest; the refusal; the final state |
+| `tests/vectors.rs` | replays `v0.3.json`: primitives; per block the root, the events, `eventsH`, the digest; the refusals; every verifier call and its nine inputs; the final state; every `bodyHash`; the 23 carrier cases, alone and through the rules; the CLAIM message and signature; `digest_{A−1}` |
 | `tests/codec.rs` | every envelope of the vectors and of the §4 table, byte for byte; the note leaf; what the decoder refuses |
 | `tests/rules.rs` | what the vectors do not cover: carriers at their edges, mint window and payment, DEPLOY conditions, anchors, nullifiers, CANCELLED, CLOSED, CLAIM, team unlocks, reorgs |
 | `tests/replay_cli.rs` | the `replay` command over the scenario written as `getblock` files |

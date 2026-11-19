@@ -128,7 +128,7 @@ pub enum Envelope {
 pub enum DecodeError {
     /// The bytes do not start with `SH20`: not an envelope at all.
     NotSh20,
-    /// `SH20` followed by a version other than `0x00`: ignored (SPEC-GAPS §2.2).
+    /// `SH20` followed by a version other than `0x00`: not counted, no effect (§3).
     UnknownVersion(u8),
     /// An SH-20 v0 envelope the spec rejects.
     Rejected(&'static str),
@@ -278,6 +278,9 @@ impl Envelope {
                 if pay_mode != 2 && !pay_script.is_empty() {
                     return Err(Rejected("payScript without payMode 2"));
                 }
+                if pay_mode == 2 && pay_script.is_empty() {
+                    return Err(Rejected("payMode 2 without a payScript"));
+                }
                 let team_opening = if pre > 0 { Some(r.field("team opening is not a field element")?) } else { None };
                 let spend = if r.left() > 0 { Some(r.spend()?) } else { None };
                 Envelope::Deploy(Deploy {
@@ -322,6 +325,9 @@ impl Envelope {
                 let lock_vout = r.u8()?;
                 let lock_key = r.bytes32()?;
                 let pay_script = r.pay_script()?;
+                if pay_script.is_empty() {
+                    return Err(Rejected("LIST without a payScript"));
+                }
                 Envelope::List { ticker, amount, price, lock_vout, lock_key, pay_script, spend: r.spend()? }
             }
             TYPE_TAKE => Envelope::Take { opening: r.field("opening is not a field element")? },
