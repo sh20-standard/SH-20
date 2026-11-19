@@ -125,7 +125,7 @@ async function sendList(out) {
     plan: () => planList({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount, price, payScript, lockKey: lock.key }),
     outputs: listOutputs(lock.script),
     label: `LIST of ${units(amount)} ${f.ticker} for ${sats(price)}`,
-    onRevealed: (reveal) => st.vault.addListing({ lockIndex, ticker: f.ticker, amount: amount.toString(), price: price.toString(), payScript: toHex(payScript), listTxid: reveal.txid, state: 'broadcast' }),
+    onRevealed: (reveal) => st.vault.addListing({ lockIndex, ticker: f.ticker, amount: amount.toString(), price: price.toString(), payScript: toHex(payScript), listTxid: reveal.txid, state: 'broadcast', source: 'sent' }),
   });
 }
 

@@ -303,7 +303,10 @@ async function main() {
   await waitFor(`!!document.querySelector('#offer-text')`, 'the offer');
   const offer = await evaluate(`document.querySelector('#offer-text').textContent`);
   if (!/^sh20offer1:[0-9a-f]{64}:[0-9a-f]{130}$/.test(offer)) throw new Error('offer: ' + offer);
-  step('offer: ' + offer.slice(0, 40) + '…');
+  const signedFor = await evaluate(`document.querySelector('#listing-out').innerText`);
+  if (!new RegExp(`Offer signed for: 150 ${TICKER} for 5,000 sats, paid to tb1`).test(signedFor) || !/vouched for by the listing this vault sent/.test(signedFor)) throw new Error('the signed terms are not shown: ' + signedFor);
+  if (dialogs.some((d) => d.includes('cannot vouch'))) throw new Error('asked about a listing this vault sent');
+  step('offer: ' + offer.slice(0, 40) + '… (' + signedFor.split('\n')[0] + ')');
   await evaluate(`(() => { const t = document.querySelector('#market-body textarea[name=offer]'); t.value = ${JSON.stringify(offer)}; t.dispatchEvent(new Event('input')); })()`);
   await evaluate(`document.querySelector('#market-body button[name=check]').click()`);
   await waitFor(`!!document.querySelector('#market-body button[name=buy]')`, 'the offer checked');

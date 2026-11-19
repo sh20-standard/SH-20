@@ -134,6 +134,19 @@ export class Sync {
     return { pos, leaf, siblings, root, anchorHeight: this.height };
   }
 
+  /**
+   * The root of the tree at the end of block `height` (a spend's anchor), from the local leaves;
+   * undefined past the synced height.
+   */
+  rootAt(height) {
+    if (this.height === null || height > this.height) return undefined;
+    let k = this.leafHeights.findIndex((h) => h > height);
+    if (k < 0) k = this.leafHeights.length;
+    const t = new NoteTree();
+    for (const leaf of this.tree.leaves.slice(0, k)) t.append(leaf);
+    return t.root;
+  }
+
   /** Block height at which `nf` (hex) was spent, null if not seen, undefined if unknown. */
   spentAt(nf) {
     if (!this.nullifiersKnown) return undefined;

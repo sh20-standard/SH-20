@@ -23,6 +23,8 @@ import { opReturnScript, parseTx, txid as txidOf, scriptType, dustLimit, address
 import { sha256 } from './hash.js';
 import { concat, fromHex, toHex, utf8 } from './bytes.js';
 import { spendFrom, shuffled } from './send.js';
+import { publicInputs } from './spend.js';
+import { frHex } from './fr.js';
 
 export const LOCK_SATS = 330n; // MIN_LOCK_SATS of the indexer
 const OFFER_SEQUENCE = 0xfffffffd;
@@ -136,6 +138,8 @@ export function listingFromChain(listTxid, rawHex, indexed) {
     listTxid, ticker: env.ticker, amount: env.amount, price: env.price, payScript: Uint8Array.from(env.payScript),
     lockVout: env.lockVout, lockValue: lock.value, lockScript: lock.script, lockKey: Uint8Array.from(env.lockKey),
   };
+  // the envelope's spend and signed body, for offerTerms: the witness that carries them is not under the txid
+  Object.defineProperty(l, 'envelope', { value: { env, body: parseEnvelope(found.bytes).body } });
   if (indexed) {
     const bad = [];
     if (indexed.ticker !== l.ticker) bad.push('ticker');
@@ -147,6 +151,52 @@ export function listingFromChain(listTxid, rawHex, indexed) {
     if (bad.length) throw new Error(`the indexer's listing differs from the chain: ${bad.join(', ')}`);
   }
   return l;
+}
+
+/**
+ * The terms an offer may be signed for (docs/AUDIT.md §8.2). `l` is listingFromChain's reading of
+ * the LIST, from the bytes this vault sent or from Esplora. A txid does not cover the witness, and
+ * the LIST envelope is in the witness: a server can return the listing's transaction with another
+ * envelope (another price, another payee) under the same txid. So the vault signs only terms it
+ * can vouch for:
+ *
+ *   'record'  a listing this vault sent (rec.source === 'sent'): the ticker, amount, price and payee
+ *             of its own record, which the chain and the indexer (listingFromChain) must repeat;
+ *             any difference is refused
+ *   'proof'   a listing found again after a restore: one of the envelope's nullifiers is that of a
+ *             note of this vault (`ownNullifiers`, hex), and its proof verifies for its body against
+ *             the root at its anchor (`rootAt`, from the local tree). Only the owner of that note can
+ *             have signed that body; the other input may be an unused one, whose fresh keys no
+ *             wallet recognises
+ *   'ask'     neither: `why` says what is missing, and the page shows the price and payee and asks
+ *
+ * The lock key must be the vault's own for the record's index in every case. Returns { l, vouched, why }.
+ */
+export async function offerTerms({ rec, l, lockKey, ownNullifiers, rootAt, verify }) {
+  if (toHex(l.lockKey) !== toHex(lockKey)) throw new Error(`not signed: the LIST locks to another key than this vault's lock #${rec.lockIndex}`);
+  if (rec.source === 'sent') {
+    const bad = [];
+    if (l.ticker !== rec.ticker) bad.push(`ticker ${l.ticker}, not ${rec.ticker}`);
+    if (l.amount !== BigInt(rec.amount)) bad.push(`amount ${l.amount}, not ${rec.amount}`);
+    if (l.price !== BigInt(rec.price)) bad.push(`price ${l.price} sats, not ${rec.price}`);
+    if (toHex(l.payScript) !== rec.payScript) bad.push(`payee ${toHex(l.payScript)}, not ${rec.payScript}`);
+    if (bad.length) throw new Error(`not signed: the listing on chain and at the indexer differs from the one this vault sent (${bad.join('; ')})`);
+    return { l, vouched: 'record', why: null };
+  }
+  const { env, body } = l.envelope ?? {};
+  if (!env?.spend || !body) return { l, vouched: 'ask', why: 'the LIST envelope could not be read again' };
+  if (!env.spend.nf.some((x) => ownNullifiers.has(frHex(x)))) {
+    return { l, vouched: 'ask', why: 'the LIST spends no note this vault knows (sync first, or the listing was made from notes this vault never held)' };
+  }
+  const root = rootAt(env.spend.anchorHeight);
+  if (root === undefined || root === null) return { l, vouched: 'ask', why: `the local tree does not reach block ${env.spend.anchorHeight}, the LIST's anchor (sync first)` };
+  const publics = publicInputs({ root, env, body, vPub: env.amount, tPub: tickerT(env.ticker) });
+  let ok = false;
+  try {
+    ok = await verify(publics, env.spend.proof);
+  } catch {}
+  if (!ok) return { l, vouched: 'ask', why: 'the LIST\'s proof does not verify for its terms: they may not be the ones this vault signed' };
+  return { l, vouched: 'proof', why: null };
 }
 
 // ---- TAKE, cancel, CLAIM -----------------------------------------------------------------------

@@ -1,12 +1,16 @@
 // The market panel: the vault's listings (offers, cancel, claim) and buying from an offer.
 
 import { toHex } from '../bytes.js';
+import { scriptToAddress } from '../btc.js';
+import { frHex } from '../fr.js';
+import { loadProver } from '../prover.js';
 import { LOCK_GAP } from '../keys.js';
-import { buildCancel, buildClaim, buildTake, claimProblem, decodeOffer, encodeOffer, listingFromChain, offerValid, signOffer } from '../market.js';
+import { buildCancel, buildClaim, buildTake, claimProblem, decodeOffer, encodeOffer, listingFromChain, offerTerms, offerValid, signOffer } from '../market.js';
 import { busy, esplora, fill, h, indexer, indexers, result, resultBox, sats, short, st, units } from './context.js';
 import { renderAll } from './render.js';
 import { sendForm } from './send-panel.js';
 import { signFunded, txLink, walletUtxos } from './spends.js';
+import { getSyncer } from './notes-panel.js';
 
 // ---- market: the vault's listings, and buying from an offer --------------------------------------
 
@@ -42,7 +46,7 @@ export async function syncListings() {
       continue;
     }
     if ((v.state.nextLock ?? 0) <= i) v.state.nextLock = i + 1; // before addListing saves: a lock key is never used twice
-    await v.addListing({ lockIndex: i, ticker: chain.ticker, amount: String(chain.amount), price: String(chain.price), payScript: toHex(chain.payScript), listTxid: l.listTxid, state: l.state });
+    await v.addListing({ lockIndex: i, ticker: chain.ticker, amount: String(chain.amount), price: String(chain.price), payScript: toHex(chain.payScript), listTxid: l.listTxid, state: l.state, source: 'chain' });
   }
 }
 
@@ -120,11 +124,36 @@ export function renderMarket() {
     resultBox('buy-out'));
 }
 
+const payee = (script) => scriptToAddress(script) ?? `script ${toHex(script)}`;
+
+/**
+ * Signs an offer for one of the vault's listings, for terms it can vouch for (market.js offerTerms,
+ * docs/AUDIT.md §8.2): its own record, or the LIST's proof over notes of this vault; failing both,
+ * only once the user has read the price and payee and said yes.
+ */
 async function copyOffer(rec) {
+  const v = st.vault;
   const { l } = await ownListing(rec);
-  const offer = encodeOffer(rec.listTxid, signOffer((await st.vault.lockOutput(rec.lockIndex)).secret, l));
+  const lock = await v.lockOutput(rec.lockIndex);
+  const ownNullifiers = new Set();
+  for (const n of v.state.notes) if (n.pos !== null && n.pos !== undefined) ownNullifiers.add(frHex(await v.nullifier(n)));
+  const s = await getSyncer();
+  const t = await offerTerms({
+    rec, l, lockKey: lock.key, ownNullifiers, rootAt: (a) => s.rootAt(a),
+    verify: async (publics, proof) => (await loadProver({ onStatus: (x) => result('listing-out', h('p', { class: 'muted' }, `Checking the LIST's proof: ${x}`)) })).verify(publics, proof),
+  });
+  const terms = `${units(l.amount)} ${l.ticker} for ${sats(l.price)}, paid to ${payee(l.payScript)}`;
+  if (t.vouched === 'ask' && !confirm(`This vault cannot vouch for the terms of this listing: ${t.why}.\n\nSign an offer that sells\n\n${terms}?\n\nWhoever holds the offer can take the tokens by paying that price to that address. Sign only if this is the listing you made.`)) {
+    result('listing-out', h('p', { class: 'muted' }, 'No offer signed.'));
+    return;
+  }
+  const offer = encodeOffer(rec.listTxid, signOffer(lock.secret, l));
   await navigator.clipboard?.writeText(offer).catch(() => {});
-  result('listing-out', h('p', {}, 'Offer (copied): anyone who completes it pays the price to you and gets the tokens. Share it anywhere.'), h('p', { class: 'mono', id: 'offer-text' }, offer));
+  const by = { record: 'the listing this vault sent', proof: 'the LIST\'s proof, which spends notes of this vault', ask: 'your confirmation only' }[t.vouched];
+  result('listing-out',
+    h('p', {}, h('strong', {}, 'Offer signed for: '), terms, '.'),
+    h('p', { class: 'muted' }, `Terms vouched for by ${by}. Anyone who completes the offer pays that price to that address and gets the tokens. Share it anywhere.`),
+    h('p', { class: 'mono', id: 'offer-text' }, offer));
 }
 
 async function checkOffer() {
