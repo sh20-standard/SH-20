@@ -540,8 +540,7 @@ impl Indexer {
                 if lock_out.value < LOCK_MIN_SATS {
                     return Err("lock output below 330 sats");
                 }
-                // §5 says a LIST txid is unique (BIP30, BIP34), and so gives no rule for a second
-                // listing under one txid; it is refused here (SPEC-GAPS R4)
+                // a LIST whose txid already names a listing (a chain built by hand) is refused (§5)
                 if self.listings.contains_key(&txid) {
                     return Err("a listing with this txid exists");
                 }

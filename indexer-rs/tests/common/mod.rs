@@ -69,11 +69,11 @@ pub fn control_block() -> Vec<u8> {
 }
 
 pub fn input(n: u64) -> TxIn {
-    TxIn { prevout: Some((txid(1_000_000 + n), 0)), witness: Vec::new() }
+    TxIn { prevout: Some((txid(1_000_000 + n), 0)), coinbase: false, witness: Vec::new() }
 }
 
 pub fn spending(prev: [u8; 32], vout: u32) -> TxIn {
-    TxIn { prevout: Some((prev, vout)), witness: Vec::new() }
+    TxIn { prevout: Some((prev, vout)), coinbase: false, witness: Vec::new() }
 }
 
 /// A transaction with the envelope in an OP_RETURN output carrying `value` sats.

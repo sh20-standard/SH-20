@@ -117,9 +117,10 @@ fn scenario() {
 
     let blocks = sc["blocks"].as_array().unwrap();
     let after = sc["after"].as_array().unwrap();
-    assert_eq!(blocks.len(), 11);
+    assert_eq!(blocks.len(), 13);
     assert_eq!(blocks.len(), after.len());
     let mut rejected: Vec<(u64, String)> = Vec::new();
+    let mut accepted_spends = 0;
     // (height, the nine inputs) of every call the verifier got, in order
     let mut calls: Vec<(u64, Vec<String>)> = Vec::new();
 
@@ -139,6 +140,14 @@ fn scenario() {
         for r in &got.rejected {
             rejected.push((u64::from(h), hex(&r.txid)));
         }
+        accepted_spends += got
+            .events
+            .iter()
+            .filter(|e| {
+                use sh20_indexer::Event::*;
+                matches!(e, Transfer { .. } | Burn { .. } | List { .. } | Deploy { burn: Some(_), .. })
+            })
+            .count();
         for inputs in asked.borrow_mut().drain(..) {
             calls.push((u64::from(h), inputs.as_fields().iter().map(fr_hex).collect()));
         }
@@ -151,13 +160,16 @@ fn scenario() {
         .iter()
         .map(|r| (r["height"].as_u64().unwrap(), s(r, "txid").to_string()))
         .collect();
-    assert_eq!(want_rejected.len(), 3);
+    assert_eq!(want_rejected.len(), 5);
     assert_eq!(rejected, want_rejected);
 
     // the verifier: the same calls, in the same order, each with the same nine inputs
     let want_calls = sc["verifierCalls"].as_array().unwrap();
-    assert_eq!(want_calls.len(), 7);
+    assert_eq!(want_calls.len(), 11);
     assert_eq!(calls.len(), want_calls.len(), "number of verifier calls");
+    // the proof is checked last and every proof of the scenario is the valid one: the calls
+    // are the accepted spends, no more
+    assert_eq!(calls.len(), accepted_spends);
     for ((height, inputs), want) in calls.iter().zip(want_calls) {
         let want_inputs: Vec<&str> =
             want["publicInputs"].as_array().unwrap().iter().map(|x| x.as_str().unwrap()).collect();
@@ -189,10 +201,16 @@ fn scenario() {
     let mut want_listings: Vec<(String, &str)> =
         f["listings"].as_object().unwrap().iter().map(|(id, st)| (id.clone(), st.as_str().unwrap())).collect();
     want_listings.sort();
-    assert_eq!(want_listings.len(), 3);
+    assert_eq!(want_listings.len(), 7);
     assert_eq!(listings, want_listings);
-    for status in [ListingStatus::Sold, ListingStatus::Claimed, ListingStatus::Cancelled] {
-        assert_eq!(indexer.listings().filter(|(_, l)| l.status == status).count(), 1, "{}", status.name());
+    for (status, count) in [
+        (ListingStatus::Sold, 2),
+        (ListingStatus::Claimed, 1),
+        (ListingStatus::Cancelled, 1),
+        (ListingStatus::Closed, 3),
+        (ListingStatus::Active, 0),
+    ] {
+        assert_eq!(indexer.listings().filter(|(_, l)| l.status == status).count(), count, "{}", status.name());
     }
 
     // the genesis token is the one the vectors describe
@@ -207,30 +225,32 @@ fn scenario() {
 }
 
 /// Every envelope of the scenario is in the `envelopes` section, and every envelope of that
-/// section is carried by the scenario. A transaction carries one envelope or none (block 10
-/// has a lock spent with no envelope).
+/// section is carried by the scenario. A transaction carries one envelope, none (block 10 has
+/// a lock spent with no envelope) or two (block 13).
 #[test]
 fn scenario_carries_the_listed_envelopes() {
     let v = vectors();
     let listed: Vec<Vec<u8>> =
         v["envelopes"].as_object().unwrap().values().map(|e| unhex(s(e, "hex")).unwrap()).collect();
     let mut carried: Vec<Vec<u8>> = Vec::new();
-    let mut bare = 0;
+    let (mut bare, mut several) = (0, 0);
     for b in v["scenario"]["blocks"].as_array().unwrap() {
         for tx in block_from_vector(b).unwrap().txs {
             let found = counted_envelopes(&tx);
-            assert!(found.len() <= 1, "at most one envelope per scenario transaction");
-            match found.first() {
-                Some(env) => {
-                    assert!(listed.contains(env));
-                    assert!(Envelope::decode(env).is_ok());
-                    carried.push(env.clone());
-                }
-                None => bare += 1,
+            assert_eq!(found, envelopes(&tx), "no envelope of another version in the scenario");
+            match found.len() {
+                0 => bare += 1,
+                1 => {}
+                _ => several += 1,
+            }
+            for env in found {
+                assert!(listed.contains(&env));
+                assert!(Envelope::decode(&env).is_ok());
+                carried.push(env);
             }
         }
     }
-    assert_eq!(bare, 1);
+    assert_eq!((bare, several), (1, 1));
     assert!(listed.iter().all(|e| carried.contains(e)));
 }
 
@@ -249,7 +269,7 @@ fn body_hashes() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 8);
+    assert_eq!(checked, 12);
 }
 
 /// The 23 carrier cases: what a transaction carries, as §3 counts it. `expect` is the one
@@ -426,4 +446,93 @@ fn scenario_closes_cancels_and_claims() {
     // the forged CLAIM comes first in the block and leaves the listing CLOSED for the signed one
     let block11 = block_from_vector(&sc["blocks"][10]).unwrap();
     assert_eq!(results[10].rejected[0].txid, block11.txs[0].txid);
+}
+
+/// Blocks 12 and 13. Block 12: four listings, the first anchored below `A` (checked against
+/// the empty root). Block 13: a transaction with two envelopes is refused and still closes the
+/// lock it spends; a CLAIM in the transaction that spends the lock is refused, and the listing
+/// is CLOSED after it; a TAKE that spends two locks takes the first and closes the other.
+#[test]
+fn scenario_blocks_12_and_13() {
+    use sh20_indexer::events::Outcome;
+    use sh20_indexer::Event;
+    let v = vectors();
+    let sc = &v["scenario"];
+    let asked = Rc::new(RefCell::new(Vec::new()));
+    let mut indexer = Indexer::new(scenario_profile(sc), Box::new(Recording(asked.clone())));
+    let blocks: Vec<sh20_indexer::Block> =
+        sc["blocks"].as_array().unwrap().iter().map(|b| block_from_vector(b).unwrap()).collect();
+    for b in &blocks[..11] {
+        indexer.apply_block(b).unwrap();
+    }
+    asked.borrow_mut().clear();
+
+    let r12 = indexer.apply_block(&blocks[11]).unwrap();
+    let lists: Vec<[u8; 32]> = r12
+        .events
+        .iter()
+        .map(|e| match e {
+            Event::List { txid, .. } => *txid,
+            other => panic!("{}", other.name()),
+        })
+        .collect();
+    assert_eq!(lists.len(), 4);
+    assert!(r12.rejected.is_empty());
+    // the first LIST is anchored at block 0, below A = 1: the empty root; the others at block 11
+    let Envelope::List { spend, .. } = Envelope::decode(&envelopes(&blocks[11].txs[0])[0]).unwrap() else { panic!() };
+    assert_eq!(spend.anchor_height, 0);
+    let roots: Vec<Fr> = asked.borrow().iter().map(|i| i.root).collect();
+    let r11 = indexer.root_at(11).unwrap();
+    assert_eq!(roots, [Tree::new().empty_root(), r11, r11, r11]);
+    assert_ne!(r11, Tree::new().empty_root());
+
+    let pool_before = indexer.token(&Ticker::parse("GENE").unwrap()).unwrap().pool;
+    let r13 = indexer.apply_block(&blocks[12]).unwrap();
+    let [two, early, take] = blocks[12].txs.as_slice() else { panic!() };
+    assert_eq!(counted_envelopes(two).len(), 2);
+    assert_eq!(
+        r13.events,
+        [
+            // two envelopes: none applied, the lock it spends still closes
+            Event::Closed { txid: two.txid, list_txid: lists[0] },
+            // a CLAIM in the transaction that spends the lock: refused, then CLOSED
+            Event::Closed { txid: early.txid, list_txid: lists[1] },
+            // two locks spent: the first in input order is taken (paid: SOLD), the other CLOSED
+            Event::Take { txid: take.txid, list_txid: lists[2], outcome: Outcome::Sold, pos: 41 },
+            Event::Closed { txid: take.txid, list_txid: lists[3] },
+        ]
+    );
+    let refused: Vec<[u8; 32]> = r13.rejected.iter().map(|x| x.txid).collect();
+    assert_eq!(refused, [two.txid, early.txid]);
+    // nothing of the two envelopes was applied: no mint, and only the taken listing came back
+    assert_eq!(indexer.token(&Ticker::SH20).unwrap().mints, 3);
+    assert_eq!(indexer.token(&Ticker::parse("GENE").unwrap()).unwrap().pool, pool_before + 100);
+    assert_eq!(indexer.tree_size(), 42);
+    assert!(indexer.supply_holds());
+}
+
+/// `sections` describes each part of the file: every part it names exists, and what it says
+/// of the carrier cases and of the verifier calls is what the tests above rely on.
+#[test]
+fn sections_describe_the_parts() {
+    let v = vectors();
+    let sections = v["sections"].as_object().unwrap();
+    for name in sections.keys() {
+        let part = name.split('.').fold(&v, |at, key| &at[key]);
+        assert!(!part.is_null(), "sections names {name}, which is not in the file");
+    }
+    for name in ["envelopes", "claim", "preActivation", "carriers", "scenario.verifierCalls", "scenario.after"] {
+        assert!(sections.contains_key(name), "{name} has no description");
+    }
+    // the input of a coinbase is written {"coinbase": true}
+    let coinbase: Vec<&Value> = v["carriers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|c| c["tx"]["vin"].as_array().unwrap())
+        .filter(|i| i.get("coinbase").is_some())
+        .collect();
+    assert_eq!(coinbase.len(), 1);
+    assert_eq!(coinbase[0]["coinbase"], Value::Bool(true));
+    assert!(tx_from_vector(&serde_json::json!({"vin": [{"coinbase": true}], "vout": []})).unwrap().vin[0].coinbase);
 }

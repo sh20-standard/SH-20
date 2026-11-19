@@ -50,6 +50,8 @@ without opening `indexer/` (read: `SPEC-WIRE.md`, the table above, `indexer/vect
 
 ### Still open
 
+All six are settled since: see [the second recheck](#second-recheck-2026-11-19-after-r1-to-r6).
+
 Six points where the text can still be read two ways, or where the vectors need a guess. None changes a digest on
 a chain of ordinary transactions.
 
@@ -79,6 +81,41 @@ The table's last column is right for most rows. For these, the vectors pin part 
   a reorg.
 
 Each of these has a test in `indexer-rs/tests/rules.rs` or `tests/codec.rs`; they state this implementation's reading.
+
+## Second recheck (2026-11-19, after R1 to R6)
+
+`indexer-rs` was re-read against `SPEC-WIRE.md` as it settles R1 to R6, and against the vectors with blocks 12 and
+13 and their `sections` part, again without opening `indexer/`.
+
+- **It replays the vectors in full**: the 13 blocks (roots, events, `eventsH`, digests), the 5 refusals, the final
+  state with its 7 listings, the `bodyHash` of the 12 spend envelopes, the 11 verifier calls with their nine inputs
+  each, the 23 carrier cases, the CLAIM and `digest_{A−1}`.
+- **Nothing in the text is left unclear** for an indexer, as far as this reading goes. **No contradiction** between
+  the text and the vectors.
+
+| # | Settled in | What `indexer-rs` does now | Pinned by the vectors |
+| --- | --- | --- | --- |
+| R1 | §3, "minimal push" | **Changed back**: `OP_PUSHDATA4` is the minimal push above 65,535 bytes, and only there | no carrier case is that long |
+| R2 | §5, "Every spend" | Unchanged: the proof is checked last | `verifierCalls`: 11 calls, which are the 11 accepted spends |
+| R3 | §3, last paragraph | **Changed**: the witness of a coinbase input is not looked at | the coinbase case has no witness |
+| R4 | §5 Details, "Listings" | Unchanged: a LIST whose txid already names a listing is refused | cannot be, on a valid chain |
+| R5 | `sections` in the vectors | Every guess was right, but one was written wrongly above: the input of a coinbase is `{"coinbase": true}`, a boolean, not the string `"true"` | — |
+| R6 | first lines | — | — |
+
+Blocks 12 and 13 pin four things that had no vector: an anchor below `A` checked against the empty root, a
+transaction with two envelopes (refused, and the lock it spends still closes), a CLAIM in the transaction that
+spends the lock (refused, then CLOSED), and a TAKE that spends two locks (the first taken, the other CLOSED).
+
+**Still with no vector.** These are clear in the text; only `indexer-rs`'s own tests cover them (and nothing
+covers a full tree, which no test can reach):
+
+- a push above 65,535 bytes (R1), and a coinbase whose input has a witness shaped like a script-path spend (R3);
+- a field element at or above `r` (1.2), a `payMode` above 2 (3.1), an empty or too long `payScript` (3.2);
+- a refused DEPLOY for each of its conditions, `unlock < start` with `pre = 0` (4.4), a spend with `D = 0` (4.5);
+- payMode 2, an unpaid mint, a mint outside its window, a minted-out token, the last batch that gets what is left;
+- the anchor window at its bounds, a reused or zero nullifier, a zero leaf, a refused proof;
+- two team notes in one block (4.13), a spend carried by an OP_RETURN (2.6), a full tree of 2^32 leaves (4.6);
+- a block below `A` (the file has no place for one), and a reorg.
 
 The sections below are the record of the first pass, before the resolution. They are left as written.
 

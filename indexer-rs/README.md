@@ -9,14 +9,14 @@ Never opened: `indexer/` apart from the vectors file, `explorer/`, `vault/`, `ci
 with the reference: Poseidon is [`light-poseidon`](https://crates.io/crates/light-poseidon) (circom parameters, over
 `ark-bn254`), BIP340 is the [`secp256k1`](https://crates.io/crates/secp256k1) crate (libsecp256k1), SHA-256 is `sha2`.
 
-**Result.** It reproduces every value of `indexer/vectors/v0.3.json`: the 11 blocks of the scenario, the `bodyHash`
+**Result.** It reproduces every value of `indexer/vectors/v0.3.json`: the 13 blocks of the scenario, the `bodyHash`
 of every spend envelope, the nine inputs of every verifier call, the 23 carrier cases and the CLAIM.
-[`docs/SPEC-GAPS.md`](../docs/SPEC-GAPS.md) lists the 28 points the first draft of the spec left open, and the six
-that a recheck against the settled text still found.
+[`docs/SPEC-GAPS.md`](../docs/SPEC-GAPS.md) lists the 28 points the first draft of the spec left open and the six a
+recheck still found, all settled in the spec since, and what the vectors still do not pin.
 
 ```sh
 cd indexer-rs
-cargo test --release      # 60 tests
+cargo test --release      # 62 tests
 cargo run --release -- replay <folder of `bitcoin-cli getblock <hash> 2` JSON files> [options]
 ```
 

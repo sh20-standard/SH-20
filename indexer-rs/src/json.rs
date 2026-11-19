@@ -65,12 +65,9 @@ pub fn block_from_getblock(text: &str) -> Res<Block> {
         let txid = txid_of(str_of(t, "txid")?)?;
         let mut vin = Vec::new();
         for i in array_of(t, "vin")? {
-            let prevout = if i.get("coinbase").is_some() {
-                None
-            } else {
-                Some((txid_of(str_of(i, "txid")?)?, u32_of(i, "vout")?))
-            };
-            vin.push(TxIn { prevout, witness: witness_of(i.get("txinwitness"))? });
+            let coinbase = i.get("coinbase").is_some();
+            let prevout = if coinbase { None } else { Some((txid_of(str_of(i, "txid")?)?, u32_of(i, "vout")?)) };
+            vin.push(TxIn { prevout, coinbase, witness: witness_of(i.get("txinwitness"))? });
         }
         let mut vout = Vec::new();
         for o in array_of(t, "vout")? {
@@ -97,8 +94,8 @@ pub fn block_from_vector(b: &Value) -> Res<Block> {
 }
 
 /// A transaction as the vectors write it, in the scenario or in a carrier case. A carrier case
-/// has no txid (32 zero bytes here), and an input may have no outpoint (`"coinbase"`, or
-/// nothing but its witness): it then spends nothing.
+/// has no txid (32 zero bytes here) and its inputs give their witness only: they spend
+/// nothing. `{"coinbase": true}` is the input of a coinbase.
 pub fn tx_from_vector(t: &Value) -> Res<Tx> {
     let txid = match t.get("txid") {
         Some(_) => txid_of(str_of(t, "txid")?)?,
@@ -106,11 +103,12 @@ pub fn tx_from_vector(t: &Value) -> Res<Tx> {
     };
     let mut vin = Vec::new();
     for i in array_of(t, "vin")? {
+        let coinbase = i.get("coinbase").is_some_and(|c| c.as_bool() != Some(false));
         let prevout = match i.get("txid") {
-            Some(_) if i.get("coinbase").is_none() => Some((txid_of(str_of(i, "txid")?)?, u32_of(i, "vout")?)),
+            Some(_) if !coinbase => Some((txid_of(str_of(i, "txid")?)?, u32_of(i, "vout")?)),
             _ => None,
         };
-        vin.push(TxIn { prevout, witness: witness_of(i.get("witness"))? });
+        vin.push(TxIn { prevout, coinbase, witness: witness_of(i.get("witness"))? });
     }
     let mut vout = Vec::new();
     for o in array_of(t, "vout")? {
@@ -149,6 +147,7 @@ mod tests {
         assert_eq!(b.height, 7);
         assert_eq!(b.txs.len(), 2);
         assert_eq!(b.txs[0].vin[0].prevout, None);
+        assert!(b.txs[0].vin[0].coinbase && !b.txs[1].vin[0].coinbase);
         assert_eq!(b.txs[0].vout[0].value, 5_000_000_000);
         assert_eq!(b.txs[1].vin[0].prevout, Some(([0x11; 32], 3)));
         assert_eq!(b.txs[1].vin[0].witness, vec![vec![0xaa], vec![0xbb]]);
