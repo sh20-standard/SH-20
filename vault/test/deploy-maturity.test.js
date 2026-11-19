@@ -90,7 +90,10 @@ test('the notes a DEPLOY burn reserved are reserved while it waits, and given ba
 
 test('no path of the page broadcasts a DEPLOY reveal before its commit is N blocks deep', async () => {
   const { readFileSync } = await import('node:fs');
-  const app = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
+  // the page's code, every module of it (app.js and src/ui/)
+  const { readdirSync } = await import('node:fs');
+  const app = ['app.js', ...readdirSync(new URL('../src/ui/', import.meta.url)).sort().map((f) => `ui/${f}`)]
+    .map((f) => readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8')).join('\n');
   const gate = app.slice(app.indexOf('async function broadcastDeployReveal'), app.indexOf('async function processDeploys'));
   assert.match(gate, /revealSchedule\(/);
   assert.match(gate, /if \(sched\.state !== 'ready'\) throw/);
@@ -98,12 +101,13 @@ test('no path of the page broadcasts a DEPLOY reveal before its commit is N bloc
   const calls = [...app.matchAll(/await esplora\.broadcast\((p\.revealHex|reveal\.hex)\)/g)].map((m) => m.index);
   assert.equal(calls.length, 3);
   const inGate = (i) => i > app.indexOf('async function broadcastDeployReveal') && i < app.indexOf('async function processDeploys');
-  const carry = app.slice(app.indexOf('async function carryOnce'), app.indexOf('// ---- send ---'));
+  const spends = readFileSync(new URL('../src/ui/spends.js', import.meta.url), 'utf8');
+  const carry = spends.slice(spends.indexOf('async function carryOnce'));
   assert.ok(carry.indexOf('if (deploy) {') < carry.indexOf('await esplora.broadcast(reveal.hex)'), 'carry returns before the reveal for a DEPLOY');
   assert.match(carry, /if \(deploy\) \{[\s\S]*?await processDeploys\(\);\s*return;\s*\}/);
   for (const i of calls.filter((x) => !inGate(x))) {
     const before = app.slice(Math.max(0, i - 200), i);
-    assert.ok(/else $/.test(before.trimEnd() + ' ') || app.slice(app.indexOf('async function carryOnce'), app.indexOf('// ---- send ---')).includes(app.slice(i, i + 40)), 'a non-DEPLOY path');
+    assert.ok(/else $/.test(before.trimEnd() + ' ') || carry.includes(app.slice(i, i + 40)), 'a non-DEPLOY path');
   }
   assert.match(app, /if \(p\.kind === 'DEPLOY'\) await broadcastDeployReveal\(/, 'Broadcast again goes through the gate for a DEPLOY');
 });

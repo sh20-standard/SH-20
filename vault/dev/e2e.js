@@ -132,7 +132,7 @@ async function main() {
       if (await evaluate(expr)) return;
       await sleep(100);
     }
-    throw new Error(`timeout waiting for ${what}; page says: ${await evaluate('document.body.innerText')}`);
+    throw new Error(`timeout waiting for ${what}; page problems: ${problems.join(' | ') || 'none'}; page says: ${await evaluate('document.body.innerText')}`);
   };
   const click = (sel, text) => evaluate(`(() => { const b = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.textContent.includes(${JSON.stringify(text)})); if (!b) throw new Error('no button ${text}'); if (b.disabled) throw new Error('button ${text} disabled: ' + b.title); b.click(); return true; })()`);
 

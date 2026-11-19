@@ -424,7 +424,13 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | Path | What |
 | --- | --- |
 | `index.html`, `style.css` | the page |
-| `src/app.js` | UI: vault, wallet, tickers, mint, deploy, notes, send, market, settings |
+| `src/app.js` | the page's checks (frame, isolation, WebCrypto), then the boot of the panels |
+| `src/ui/context.js` | what the panels share: the servers, the state, the DOM helpers, the warnings |
+| `src/ui/vault-panel.js`, `tokens-panel.js` | the vault and wallet; the tickers and the mint |
+| `src/ui/deploy-panel.js` | the deploy screen and the DEPLOYs waiting for their commit to mature |
+| `src/ui/send-panel.js`, `spends.js` | TRANSFER, BURN, LIST, the spends sent; proving, the commit and the reveal |
+| `src/ui/notes-panel.js`, `market-panel.js` | the notes and the private sync; listings and buying from an offer |
+| `src/ui/settings-panel.js`, `render.js` | the servers; `renderAll` |
 | `src/keys.js` | master secret, recovery words, encrypted storage, backup, the vault's notes, spends under way |
 | `src/bip39.js`, `src/bip39-english.js` | the 12 recovery words |
 | `src/send.js` | a TRANSFER or a DEPLOY with a burn, end to end: plan, prove, commit and reveal |
