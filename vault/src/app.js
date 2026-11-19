@@ -4,7 +4,8 @@
 
 import { ensureIsolation, gatewayKind, ownOrigins } from './isolation.js';
 import { available } from './sh20.js';
-import { initContext, setIsolation, busy, $, h, staticWarnings } from './ui/context.js';
+import { STORAGE_KEY } from './keys.js';
+import { initContext, setIsolation, busy, $, h, st, staticWarnings } from './ui/context.js';
 import { initSettings } from './ui/settings-panel.js';
 import { renderAll } from './ui/render.js';
 import { refresh } from './ui/tokens-panel.js';
@@ -25,7 +26,7 @@ if (gatewayKind() === 'path') {
   const link = (u) => h('a', { href: u, class: 'mono', rel: 'noreferrer' }, u);
   let stored = false;
   try {
-    stored = localStorage.getItem('sh20.vault.v0') !== null;
+    stored = localStorage.getItem(STORAGE_KEY) !== null;
   } catch {}
   document.querySelector('main').replaceChildren(h('section', { id: 'path-gateway' },
     h('h2', {}, 'Open the vault from its own origin'),
@@ -68,3 +69,16 @@ $('rescan').addEventListener('click', busy($('rescan'), () => syncNotes({ full: 
 // extensions inject their providers a little after load
 setTimeout(renderWallet, 600);
 startDeployTimer();
+
+// Another tab of this browser wrote the vault (a passphrase set or changed, notes recorded): this
+// tab's copy is stale, and writing it back would undo that. It locks, to be unlocked again.
+window.addEventListener('storage', (ev) => {
+  if (ev.key !== STORAGE_KEY || !st.vault) return;
+  st.vault.lock();
+  st.vault = null;
+  st.showWords = false;
+  st.vaultForm = null;
+  st.vaultFormNode = null;
+  renderAll();
+  $('warnings').append(h('div', { class: 'warn' }, 'The vault was changed in another tab of this browser: this tab locked it. Unlock it again to see the same state.'));
+});

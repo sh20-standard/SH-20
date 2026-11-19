@@ -277,6 +277,28 @@ test('8.4 no backup in clear; a passphrase can be added, and changed with the cu
   assert.ok(!(await again.checkPassphrase('first')));
 });
 
+test('8.4 a tab that holds the vault from before a passphrase change cannot write it back', async () => {
+  const st = memStorage();
+  const stale = await Vault.fromWords(st, WORDS); // tab A: unlocked, in clear
+  const other = await Vault.open(st); // tab B, same record
+  await other.setPassphrase('set in tab B');
+  const encrypted = st.getItem(STORAGE_KEY);
+  await assert.rejects(stale.reserveNote(), /changed in another tab/, 'tab A would have written the record back in clear');
+  assert.equal(st.getItem(STORAGE_KEY), encrypted);
+  assert.throws(() => stale.address, /locked/, 'and tab A is locked');
+  await assert.rejects(stale.setPassphrase('from tab A'), /locked|changed in another tab/);
+
+  const a = await Vault.open(st, 'set in tab B');
+  const b = await Vault.open(st, 'set in tab B');
+  await b.setPassphrase('changed in tab B', 'set in tab B');
+  const changed = st.getItem(STORAGE_KEY);
+  await assert.rejects(a.reserveNote(), /changed in another tab/, 'nor under the old passphrase');
+  assert.equal(st.getItem(STORAGE_KEY), changed);
+  assert.ok(await Vault.open(st, 'changed in tab B'));
+  await b.reserveNote(); // the tab that changed it goes on writing
+  assert.match(page(), /addEventListener\('storage', \(ev\) => \{\n\s+if \(ev\.key !== STORAGE_KEY \|\| !st\.vault\) return;\n\s+st\.vault\.lock\(\);/, 'the page locks a tab when another one writes the vault');
+});
+
 test('8.4 a clear backup restored with a passphrase is encrypted with it, never kept in clear under it', async () => {
   const old = memStorage();
   await Vault.fromWords(old, WORDS);

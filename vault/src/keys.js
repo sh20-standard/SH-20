@@ -193,11 +193,12 @@ export class Vault {
    */
   async setPassphrase(passphrase, current = '') {
     if (!passphrase) throw new Error('the passphrase cannot be empty');
+    this.#checkUnchanged();
     if (this.#key && !(await this.checkPassphrase(current))) throw new Error('wrong current passphrase');
     const salt = crypto.getRandomValues(new Uint8Array(16));
     this.#key = await aesKey(passphrase, salt);
     this.#salt = salt;
-    await this.save();
+    await this.#write();
   }
 
   async #record() {
@@ -208,8 +209,35 @@ export class Vault {
     return { v: 0, salt: toBase64(this.#salt), iv: toBase64(iv), ct: toBase64(new Uint8Array(ct)) };
   }
 
+  /**
+   * Writes the state, but never over a record this instance did not write: if another tab set or
+   * changed the passphrase, the record there has another salt (or is no longer in clear), and an
+   * older key here would rewrite it in clear or under the old passphrase. The vault locks instead.
+   */
   async save() {
+    this.#checkUnchanged();
+    await this.#write();
+  }
+
+  async #write() {
     this.storage.setItem(STORAGE_KEY, JSON.stringify(await this.#record()));
+  }
+
+  #checkUnchanged() {
+    if (!this.#seed) throw new Error('the vault is locked');
+    const text = this.storage.getItem(STORAGE_KEY);
+    if (text === null) return; // nothing stored yet (a new or restored vault)
+    let salt;
+    try {
+      const rec = JSON.parse(text);
+      salt = rec.plain ? null : rec.salt;
+    } catch {
+      salt = undefined;
+    }
+    if (salt !== (this.#key ? toBase64(this.#salt) : null)) {
+      this.lock();
+      throw new Error('the vault was changed in another tab (its passphrase): this one is locked, unlock it again');
+    }
   }
 
   /**
@@ -386,7 +414,7 @@ export class Vault {
   }
 
   lock() {
-    this.#seed.fill(0);
+    this.#seed?.fill(0);
     this.#seed = null;
     this.#words = null;
     this.#key = null;
