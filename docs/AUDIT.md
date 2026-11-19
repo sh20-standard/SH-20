@@ -6,7 +6,8 @@ are tested, how to rebuild everything, and where its author would look first.
 Status: draft v0.3, nothing is activated on any network. The code in scope was written in November
 2026, largely by an AI coding agent working under the maintainer (the "circuit session" of
 [`CLAUDE.md`](../CLAUDE.md)). **Nobody else has reviewed it.** Line numbers below are those of `main`
-at `e8b4450`; the commit that adds this file changes no rule and no gate.
+at `e5b0f42`, which includes the LIST fix of §6.1 (PR #20); the commit that adds this file changes
+no rule and no gate.
 
 Background, in this order: [`DESIGN.md`](DESIGN.md) (why), [`SPEC-WIRE.md`](SPEC-WIRE.md) (bytes and
 rules, normative for indexers), [`SPEC-NOTES.md`](SPEC-NOTES.md) (keys, addresses and sealing,
@@ -141,6 +142,7 @@ A proof alone does not make a spend valid. [`indexer/src/indexer.js`](../indexer
 | R7 | turnstile: a spend with `vPub > pool[ticker]` is rejected before its proof is looked at | `_outOfPool` l. 297, called at l. 319, 361, 375 |
 | R8 | the verifying key must hash to the pinned digest | `adapters/plonk.js` l. 26–27 |
 | R9 | one envelope per transaction; the default verifier rejects every spend | `carrier.js`; `rejectAllVerifier` l. 22 |
+| R10 | the lock of a LIST is the output `OP_1 <lockKey>`, for the `lockKey` its body names (PR #20, §6.1) | `_list` l. 373; `codec.js` l. 231 |
 
 ### The proof system
 
@@ -189,7 +191,7 @@ consensus, the victim's device.
 | --- | --- | --- |
 | G1, no inflation | for every ticker, the sum of unspent note amounts never exceeds what was issued in public and not taken out in public | C1 (one `t`), C2, C8, C9, C10; C4 and C5 (the inputs exist in the tree); R2, R6; soundness of the proof; and the public rules for MINT, TAKE, CLAIM |
 | G2, no double spend | a note is consumed at most once | C3 and C4 (one `nk` per note: `NK` is inside `npk`, and `nk < l`); C5 and C6 (the position is the one in the tree); R1, R3 |
-| G3, no theft | only the holder of a note's two secrets moves it, and only to the outputs it chose | C4 (`npk` binds `Ak` and `NK`), C6 (needs `nk`), C7 (a signature over `m`), R5 (`m` covers every byte before the proof). **A LIST breaks this today: §6.1** |
+| G3, no theft | only the holder of a note's two secrets moves it, and only to the outputs it chose | C4 (`npk` binds `Ak` and `NK`), C6 (needs `nk`), C7 (a signature over `m`), R5 (`m` covers every byte before the proof), and that every value an envelope gives away is named in those bytes: the output leaves, `payScript`, and for a LIST the key of its lock (R10). Until PR #20 the lock was not: §6.1 |
 | G4, no link | from what is published, nobody learns which notes a spend consumed, who receives the outputs, their amounts, or the ticker of a TRANSFER | zero-knowledge of the proof; `nf` is a PRF under `nk`, which the sender of the note does not have; sealing (`SPEC-NOTES.md` §3, §6) |
 
 ### What is public, and what a lying indexer can do
@@ -225,11 +227,12 @@ would tell the indexer which notes are its own. None of this is cryptographicall
 | real proofs through the indexer | `I/plonk.test.js`: `real TRANSFER and BURN proofs are accepted, and only once`, `a proof does not carry over to an altered envelope`, `a TRANSFER proof cannot be replayed as a BURN` | no real LIST or DEPLOY-burn proof |
 | the rules around a proof | `I/indexer.test.js` `TRANSFER: anchor window, nullifiers, proof`; `the default verifier accepts no proof at all`; `I/codec.test.js` `strict parsing rejects malformed envelopes`, `carrier rules: one envelope per transaction` | with a test verifier that accepts a tag |
 | the turnstile (PR #16) | `I/indexer.test.js` `turnstile: no spend takes more of a ticker out of the pool than went in, even with a broken circuit` and `turnstile: TAKE, CLAIM and team unlocks bring units back into the pool, and a rollback restores it` | it bounds what leaves in public, not who loses (§6.5) |
+| a copied LIST cannot take the lock (PR #20) | `I/indexer.test.js` `a LIST copied into another transaction cannot point its lock at the copier`, `LIST needs a P2TR lock to its lockKey, of at least 330 sats`; `I/codec.test.js` | with the test verifier. That a rewritten `lockKey` changes the body hash is shown for other fields by `a proof does not carry over to an altered envelope`; no real LIST proof exists |
 | reorgs | `I/reorg.test.js` (three tests) | — |
 | sealing and scanning | `T/notes.rs` (7 tests) and `J/notes.test.js`, on vectors written by the Rust model; each JavaScript test runs on `node:crypto` and on WebCrypto; `scanning refuses anything altered`, `a note whose plaintext lies about its leaf is ignored` | X25519, HKDF and AES-GCM are the platform's; Safari and Firefox not run |
 | the wallet's spend values | `J/vectors.test.js`, `J/reference.test.js`; `the_wallet_vectors_are_the_ones_the_model_writes` | — |
 
-Counts: `cargo test --release` 28, `indexer` 54 (those of `plonk.test.js` are skipped without the
+Counts: `cargo test --release` 28, `indexer` 55 (those of `plonk.test.js` are skipped without the
 verifier module), `circuit/js` 44.
 
 ## 5. Reproducing everything from zero
@@ -259,7 +262,7 @@ The three digests are constants of `circuit/src/lib.rs` (`SRS_SHA256`, `VK_DIGES
 ```sh
 cd circuit && cargo test --release           # 28 tests
 ./build-wasm.sh                              # needs the targets wasm32-unknown-unknown and wasm32-wasip1-threads
-cd ../indexer && npm test                    # 54 tests; those of plonk.test.js need the module just built
+cd ../indexer && npm test                    # 55 tests; those of plonk.test.js need the module just built
 cd ../circuit/js && npm test                 # 44 tests
 npm run test:browser                         # the WebCrypto primitives in headless Chrome
 ```
@@ -289,37 +292,61 @@ rejected`; `circom accepts the Rust witness; public signals identical`.
 
 Ranked from the most serious down. These are the author's own doubts, not findings of a review.
 
-### 6.1 The lock of a LIST is not covered by the proof — theft by copying
+### 6.1 The lock of a LIST was not covered by the proof — fixed by PR #20, to be verified
 
-A LIST moves `amount` out of the pool into a listing controlled by a Bitcoin output, the lock:
-output `lockVout` of the transaction that carries the envelope. Whoever spends the lock decides: a
-TAKE that pays is a sale, a TAKE that does not pay is a cancellation, and in both cases the tokens
-go to the opening the TAKE names (`_take`, `indexer.js` l. 389).
+**Status: fixed** by PR #20 (`0287b62`, "LIST binds its lock key in the signed body"). The problem
+is kept here in full so that the fix can be checked against it.
 
-The envelope holds the index `lockVout`, not the lock's key. The proof signs the envelope body, and
-none of its nine public inputs depends on the transaction's outputs. So the same envelope is valid
+**The problem, as it stood at `e8b4450`.** A LIST moves `amount` out of the pool into a listing
+controlled by a Bitcoin output, the lock: output `lockVout` of the transaction that carries the
+envelope. Whoever spends the lock decides: a TAKE that pays is a sale, a TAKE that does not pay is a
+cancellation, and in both cases the tokens go to the opening the TAKE names (`_take`, `indexer.js`
+l. 389).
+
+The envelope held the index `lockVout`, not the lock's key. The proof signs the envelope body, and
+none of its nine public inputs depends on the transaction's outputs. So the same envelope was valid
 in any transaction:
 
 1. the seller broadcasts its LIST;
 2. someone copies the envelope from the mempool into a transaction of their own, whose output
    `lockVout` pays their own Taproot key, and gets it mined first;
-3. `_list` (l. 368–386) records the copier's key as the lock; the seller's own transaction is then
-   rejected, because its nullifiers are spent;
+3. `_list` recorded the key of that output as the lock; the seller's own transaction was then
+   rejected, because its nullifiers were spent;
 4. the copier spends its lock with a TAKE that pays nothing, and receives `amount` as a public note.
 
-Reproduced on 2026-11-19 against the reference indexer with its test verifier: the copy is accepted
-with the copier's key, and the cancelling TAKE gives the copier the note. With the real verifier
-the proof bytes and the public inputs are the same, so it verifies the same.
+Reproduced on 2026-11-19 against the reference indexer at `e8b4450` with its test verifier: the copy
+was accepted with the copier's key, and the cancelling TAKE gave the copier the note. It is under
+the threat model (transaction order, copied envelopes) and broke G3.
 
-This is under the threat model (transaction order, copied envelopes) and breaks G3. One way to
-close it: put the lock's 32-byte output key in the LIST body, where the body hash covers it, and
-have the indexer require output `lockVout` to pay that key. That is a wire change (32 more bytes)
-and the maintainer's decision.
+**The fix.** The LIST body now carries `lockKey`, the 32-byte x-only output key of the lock, after
+`lockVout` (`SPEC-WIRE.md` §4; `codec.js` l. 231 and l. 295), so the body hash the proof signs
+covers it. `_list` rejects the envelope unless output `lockVout` is exactly `OP_1 <lockKey>`
+(`indexer.js` l. 373), and records the key from the envelope, not from the transaction (l. 382). A
+CLAIM is verified against that recorded key (`_claim`, l. 406). A LIST is 32 bytes longer.
 
-Among the envelopes that carry a proof, LIST is the only one that takes something from the
-transaction that its body does not name. A copied TRANSFER, BURN or DEPLOY burn does what its
-author signed for. MINT, TAKE and CLAIM carry no proof: a MINT and a TAKE are paid for by whoever
-broadcasts them, and a CLAIM is signed by the lock key over the opening it names.
+The same experiment against PR #20: the copy is rejected with "lock output must be P2TR to lockKey"
+and the seller's LIST is accepted under the seller's key.
+
+**What to verify.**
+
+- That `lockKey` is inside `body`: it is read before `payScript` and the spend section, and `body`
+  ends where the proof starts (`codec.js` `readSpend`, `bodyEnd`).
+- That nothing else of the lock comes from the transaction alone. The amount of sats on the lock
+  does (at least 330), and so does the index; neither gives control of the listing.
+- That a copy which also rewrites `lockKey` fails. It changes `m`, so the proof no longer verifies.
+  The indexer's tests show this with a real proof for other fields of a body
+  (`a proof does not carry over to an altered envelope`), not for a LIST: no real LIST proof exists
+  in the fixtures.
+- `lockKey` is any 32 bytes; it is not checked to be a point of secp256k1. A seller who names a key
+  nobody can sign for has locked its own tokens for good. That is the seller's choice, but a wallet
+  should not let it happen by accident.
+
+**The rule behind it.** Among the envelopes that carry a proof, LIST was the only one that took
+something from the transaction that its body did not name. A copied TRANSFER, BURN or DEPLOY burn
+does what its author signed for. MINT, TAKE and CLAIM carry no proof: a MINT and a TAKE are paid for
+by whoever broadcasts them, and a CLAIM is signed by the lock key over the opening it names.
+`DESIGN.md` now states the rule ("Copied envelopes"); an auditor should check it envelope by
+envelope rather than take this list on trust.
 
 ### 6.2 Under-constrained gadgets cannot be ruled out by the tests
 
@@ -427,5 +454,6 @@ width.
 
 ## 7. Not final
 
-The verifying-key digest moves with any change to the gates, and is not frozen. The fixes suggested
-in 6.1 and 6.4 would each change bytes or the key. `SPEC-WIRE.md` §7 lists what else is open.
+The verifying-key digest moves with any change to the gates, and is not frozen. The fix of 6.1
+added 32 bytes to a LIST (PR #20); the check suggested in 6.4 would change the key. `SPEC-WIRE.md`
+§7 lists what else is open.

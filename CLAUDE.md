@@ -106,11 +106,6 @@ Not done: an audit; a mid-range phone; an outside review of the note sealing (`d
 today); a relayer; a second independent indexer; the
 profile constants (activation height, `D`).
 
-**Known problem (2026-11-19).** The lock of a LIST is not covered by its proof: the same envelope is valid in a transaction
-with another lock output, so whoever gets a copy mined first owns the listing and can cancel it into a note of their own.
-Found while writing `docs/AUDIT.md` (§6.1) and reproduced on the reference indexer. The fix is a wire change (the lock's
-key inside the LIST body, where the body hash covers it) and waits for the maintainer.
-
 ## Next task: the phone figures, then the vault
 
 The relation, the proof system, the verifier and a prover that runs in a browser exist, and a recent iPhone proves in
