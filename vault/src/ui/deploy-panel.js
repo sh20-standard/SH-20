@@ -5,7 +5,7 @@ import { addressToScript } from '../btc.js';
 import { fromHex, toHex } from '../bytes.js';
 import { planDeploy } from '../deploy-plan.js';
 import { frFromHex, frHex } from '../fr.js';
-import { planDeployBurn, planPlainDeploy, revealSchedule } from '../send.js';
+import { planDeployBurn, planPlainDeploy, revealSchedule, tickerState } from '../send.js';
 import { busy, esplora, fill, h, indexers, report, result, resultBox, st, units } from './context.js';
 import { getSyncer, syncNotes } from './notes-panel.js';
 import { checkPool, renderPending } from './send-panel.js';
@@ -198,8 +198,12 @@ export async function processDeploys() {
       if (sched.state !== 'ready') continue;
       // the ticker may have been taken meanwhile (another DEPLOY confirmed first): then the reveal would be rejected.
       // From the full lists: asking /token/<ticker> would tell the indexer the ticker before the reveal shows it.
-      const lists = await Promise.allSettled(indexers.map((a) => a.tokens()));
-      if (lists.some((r) => r.status === 'fulfilled' && r.value.some((t) => t.ticker === p.deploy.ticker))) {
+      const ticker = tickerState(await Promise.allSettled(indexers.map((a) => a.tokens())), p.deploy.ticker);
+      if (ticker === 'unknown') {
+        await v.updatePending(p.id, { schedule: 'no indexer answered: the reveal waits' }); // never revealed blind
+        continue;
+      }
+      if (ticker === 'taken') {
         await v.releaseInputs(p.inputs);
         await v.updatePending(p.id, { status: 'ticker taken' });
         continue;

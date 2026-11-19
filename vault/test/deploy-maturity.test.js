@@ -3,9 +3,10 @@
 // and proves again if the proof's anchor would leave the window W meanwhile.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { Indexer } from '../../indexer/src/indexer.js';
 import { chain, deployEnv, tx as helperTx } from '../../indexer/test/helpers.js';
-import { revealSchedule, planPlainDeploy, planCarrier, revealFor, pendingRecord } from '../src/send.js';
+import { revealSchedule, planPlainDeploy, planCarrier, revealFor, pendingRecord, tickerState } from '../src/send.js';
 import { keyPathOutput, sigMsg, sigHash } from '../src/taproot.js';
 import { txid as txidOf } from '../src/btc.js';
 import { schnorrVerify } from '../src/sh20.js';
@@ -110,4 +111,16 @@ test('no path of the page broadcasts a DEPLOY reveal before its commit is N bloc
     assert.ok(/else $/.test(before.trimEnd() + ' ') || carry.includes(app.slice(i, i + 40)), 'a non-DEPLOY path');
   }
   assert.match(app, /if \(p\.kind === 'DEPLOY'\) await broadcastDeployReveal\(/, 'Broadcast again goes through the gate for a DEPLOY');
+});
+
+test('before a reveal the ticker must be known free: no indexer answering holds it back', () => {
+  const ok = (list) => ({ status: 'fulfilled', value: list });
+  const down = { status: 'rejected', reason: new Error('connection refused') };
+  assert.equal(tickerState([down, down], 'SNIP'), 'unknown', 'every /tokens failed: never reveal blind');
+  assert.equal(tickerState([], 'SNIP'), 'unknown');
+  assert.equal(tickerState([down, ok([{ ticker: 'SH20' }])], 'SNIP'), 'free', 'one answer is enough to say free');
+  assert.equal(tickerState([ok([{ ticker: 'SH20' }]), ok([{ ticker: 'SNIP' }])], 'SNIP'), 'taken', 'any indexer listing it: taken');
+  assert.equal(tickerState([{ status: 'fulfilled', value: null }], 'SNIP'), 'unknown', 'a malformed answer is no answer');
+  const app = readFileSync(new URL('../src/ui/deploy-panel.js', import.meta.url), 'utf8');
+  assert.match(app, /if \(ticker === 'unknown'\) \{[\s\S]{0,200}continue;/, 'processDeploys waits on unknown');
 });

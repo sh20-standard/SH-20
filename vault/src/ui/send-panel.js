@@ -168,7 +168,9 @@ export function renderPending() {
         return h('tr', {}, h('td', {}, p.kind), h('td', {}, p.status), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', {}, '—'), h('td', {}));
       }
       if (p.status === 'waiting maturity') {
-        const left = p.schedule === 'unconfirmed' || p.revealIn === undefined ? 'the commit is not confirmed yet' : `reveal in ${p.revealIn} block${p.revealIn === 1 ? '' : 's'}`;
+        const left = p.schedule === 'unconfirmed' || p.revealIn === undefined ? 'the commit is not confirmed yet'
+          : /no indexer answered/.test(p.schedule ?? '') ? 'due, but no indexer answered: the reveal waits for one to say the ticker is free'
+          : `reveal in ${p.revealIn} block${p.revealIn === 1 ? '' : 's'}`;
         const commitAgain = h('button', { type: 'button', class: 'small secondary' }, 'Broadcast the commit again');
         commitAgain.addEventListener('click', busy(commitAgain, async () => {
           try { await esplora.broadcast(p.commitHex); } catch (e) { if (!/already|known|exists|conflict/i.test(e.message)) throw e; }

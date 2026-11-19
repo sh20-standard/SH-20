@@ -113,6 +113,18 @@ function sweepInput(p) {
 }
 
 /**
+ * Whether a DEPLOY's ticker is still free before its reveal goes out, from every configured
+ * indexer's /tokens (Promise.allSettled results): 'taken' if any lists it, 'free' if at least one
+ * answered and none lists it, 'unknown' if none answered. An unknown answer holds the reveal back:
+ * nobody said the ticker is free, and a reveal for a taken ticker is rejected and loses its fees.
+ */
+export function tickerState(settled, ticker) {
+  const answers = settled.filter((r) => r.status === 'fulfilled' && Array.isArray(r.value)).map((r) => r.value);
+  if (answers.some((list) => list.some((t) => t.ticker === ticker))) return 'taken';
+  return answers.length ? 'free' : 'unknown';
+}
+
+/**
  * When a DEPLOY's reveal may go out (SPEC-WIRE §5, DEPLOY maturity): its commit must be confirmed
  * at a height ≤ H − N, H being the reveal's block, and a DEPLOY that burns D SH20 carries a proof
  * anchored at `anchorHeight`, valid while H − W ≤ anchorHeight. The reveal lands at tip + 1 at the
