@@ -1,9 +1,12 @@
 // Cross-origin isolation, which gives the page shared memory and so the prover's thread pool
 // (4.7 s a proof on a laptop instead of 26 s on one thread). Servers that send COOP/COEP isolate
 // the page themselves; public IPFS gateways do not. On a subdomain gateway (<cid>.ipfs.<host>,
-// one origin per CID) the vault registers the phone test page's service worker (vault/sw.js, the
-// same bytes as circuit/web/sw.js), which re-serves the page's own responses with the headers, and
-// reloads once. Never on a path gateway (…/ipfs/<cid>/): there every site shares one origin, and a
+// one origin per CID) the vault registers the phone test page's service worker (the same bytes as
+// circuit/web/sw.js), which re-serves the page's own responses with the headers, and reloads once.
+// It is served at the root of the site (the build copies vault/sw.js there) with the root as its
+// scope: the pool's threads are circuit/web/thread-worker.js, outside vault/, and a worker the
+// service worker does not control would get no headers and no shared memory. On a subdomain
+// gateway the root is the CID's: it covers this site's files and nothing else. Never on a path gateway (…/ipfs/<cid>/): there every site shares one origin, and a
 // service worker of ours would sit in front of all of them.
 
 export const canShare = () => globalThis.crossOriginIsolated === true && typeof SharedArrayBuffer === 'function';
@@ -25,7 +28,7 @@ export async function ensureIsolation() {
   if (gatewayKind() !== 'subdomain') return 'not-a-subdomain-gateway';
   if (!globalThis.isSecureContext || !('serviceWorker' in navigator)) return 'unavailable';
   try {
-    const registration = await navigator.serviceWorker.register(new URL('../sw.js', import.meta.url));
+    const registration = await navigator.serviceWorker.register(new URL('../../sw.js', import.meta.url), { scope: new URL('../../', import.meta.url).href });
     if (navigator.serviceWorker.controller) return 'refused'; // already controlled and still not isolated
     if (sessionStorage.getItem('sh20-isolation-reload')) return 'refused';
     sessionStorage.setItem('sh20-isolation-reload', '1');

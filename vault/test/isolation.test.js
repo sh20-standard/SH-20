@@ -5,11 +5,18 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { gatewayKind, ensureIsolation } from '../src/isolation.js';
 import { defaultThreads } from '../../circuit/web/host.js';
+import { site, fsReader } from '../build.js';
 
 const at = (url) => { const u = new URL(url); return { pathname: u.pathname, hostname: u.hostname }; };
 
-test('vault/sw.js is circuit/web/sw.js, byte for byte', () => {
-  assert.ok(readFileSync(new URL('../sw.js', import.meta.url)).equals(readFileSync(new URL('../../circuit/web/sw.js', import.meta.url))));
+test('the service worker is circuit/web/sw.js, byte for byte, at the root of the site', () => {
+  const reference = readFileSync(new URL('../../circuit/web/sw.js', import.meta.url));
+  assert.ok(readFileSync(new URL('../sw.js', import.meta.url)).equals(reference));
+  const files = new Map(site(fsReader()));
+  assert.ok(files.get('sw.js').equals(reference), 'served at the root');
+  assert.ok(!files.has('vault/sw.js'));
+  // registered with the root as its scope: the pool's threads (circuit/web/thread-worker.js) are outside vault/
+  assert.match(readFileSync(new URL('../src/isolation.js', import.meta.url), 'utf8'), /register\(new URL\('\.\.\/\.\.\/sw\.js', import\.meta\.url\), \{ scope: new URL\('\.\.\/\.\.\/', import\.meta\.url\)\.href \}\)/);
 });
 
 test('only a subdomain gateway is one: path gateways and other hosts are not', () => {

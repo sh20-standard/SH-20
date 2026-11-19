@@ -42,6 +42,8 @@ export function normToken(t) {
     payScript: typeof t.payScript === 'string' ? t.payScript.toLowerCase() : '',
     mints: big(t.mints),
     burned: big(t.burned),
+    // the turnstile (SPEC-WIRE §5): what the shielded pool holds of the ticker; null if not reported
+    pool: t.pool === undefined || t.pool === null ? null : big(t.pool),
     deployTxid: t.deployTxid ?? null,
     deployHeight: t.deployHeight ?? null,
     genesis: t.genesis === true, // SH20, from the profile: no DEPLOY (checked against profile.js)

@@ -16,8 +16,9 @@ import { PAY_MODE, PUBLIC_RHO, MINT_BATCH_MAX, noteLeaf, tickerT } from './sh20.
 import { toHex, fromHex } from './bytes.js';
 import { loadProver } from './prover.js';
 import { ensureIsolation } from './isolation.js';
+import { available } from './sh20.js';
 import { planTransfer, planDeployBurn, proveSpend, planCarrier, revealFor, pendingRecord, planFromPending, buildPlainDeploy } from './send.js';
-import { planBurn, planList, listOutputs, signOffer, encodeOffer, decodeOffer, offerValid, listingFromChain, buildTake, buildCancel, buildClaim } from './market.js';
+import { poolProblem, planBurn, planList, listOutputs, signOffer, encodeOffer, decodeOffer, offerValid, listingFromChain, buildTake, buildCancel, buildClaim } from './market.js';
 
 if (window.top !== window.self) {
   document.documentElement.textContent = 'The SH-20 vault refuses to run inside a frame.';
@@ -28,6 +29,16 @@ if (window.top !== window.self) {
 // (isolation.js), before anything else runs; never on a path gateway.
 const isolation = await ensureIsolation();
 if (isolation === 'reloading') await new Promise(() => {});
+
+// Note keys and sealing go through WebCrypto's X25519 (circuit/js/webcrypto.js): without it, stop here.
+if (!(await available())) {
+  document.querySelector('main').replaceChildren();
+  document.getElementById('warnings').textContent = window.isSecureContext
+    ? 'This browser has no X25519 in WebCrypto, which the vault needs for its keys and sealed notes: use Chrome 133, Firefox 130, Safari 17 or newer.'
+    : 'WebCrypto needs a secure context: open the vault over https, or from localhost.';
+  document.getElementById('warnings').className = 'warn err';
+  await new Promise(() => {});
+}
 
 // ---- settings -----------------------------------------------------------------
 
@@ -378,7 +389,7 @@ async function prepareMint(shown, feeRate, k, out) {
   let utxos = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
   if (!utxos) utxos = await esplora.utxos(w.address);
   if (!utxos.length) throw new Error(`no UTXO at ${w.address}; get signet coins from a faucet first`);
-  const opening = st.vault.opening(st.vault.state.next); // reserved only when signed
+  const opening = await st.vault.opening(st.vault.state.next); // reserved only when signed
   const m = buildMint({ token, opening, payer: w, utxos, feeRate, tipHeight: tip, k });
 
   const sign = h('button', { type: 'button' }, `Sign with ${w.adapter.name} and broadcast`);
@@ -564,6 +575,7 @@ async function sendDeploy(shown, D, feeRate) {
     result(out, h('p', { class: 'ok' }, `DEPLOY of ${shown.ticker} broadcast (${done.vsize} vB).`), txLink(id));
     return;
   }
+  await checkPool('SH20', D, 'DEPLOY burn');
   const s = await getSyncer();
   await carry({
     kind: 'DEPLOY', out, feeRate, tip,
@@ -611,7 +623,7 @@ async function carryOnce({ kind, out, feeRate, tip, plan, label, outputs, onReve
   const status = (t) => result(out, h('p', { class: 'muted' }, t));
   status('Building the spend: note keys, sealed outputs, signatures…');
   await new Promise((r) => setTimeout(r, 30));
-  const built = plan();
+  const built = await plan();
   const prover = await loadProver({ onStatus: status });
   status(`Proving on ${prover.threads} thread${prover.threads > 1 ? 's' : ''}… keep this tab open.`);
   const t0 = performance.now();
@@ -714,9 +726,21 @@ const amountOf = (x) => {
   return BigInt(x.trim());
 };
 
+/**
+ * Before proving a spend that takes `amount` of `ticker` out of the pool: every configured indexer's
+ * /token/:ticker must have room for it (the turnstile), else the spend would be rejected and its fees lost.
+ */
+async function checkPool(ticker, amount, what) {
+  const answers = await Promise.allSettled(indexers.map((a) => a.token(ticker)));
+  const tokens = answers.filter((a) => a.status === 'fulfilled').map((a) => a.value);
+  const problem = poolProblem(tokens, ticker, amount, what);
+  if (problem) throw new Error(`Not sent: ${problem}.`);
+}
+
 async function sendBurn(out) {
   const f = sendForm;
   const amount = amountOf(f.amount);
+  await checkPool(f.ticker, amount, 'BURN');
   const s = await getSyncer();
   const tip = await esplora.tipHeight();
   if (!confirm(`Burn ${units(amount)} ${f.ticker}? They leave the supply for good.`)) return;
@@ -732,10 +756,11 @@ async function sendList(out) {
   const amount = amountOf(f.amount);
   const price = amountOf(f.price);
   const payScript = addressToScript(f.payTo.trim());
+  await checkPool(f.ticker, amount, 'LIST');
   const s = await getSyncer();
   const tip = await esplora.tipHeight();
   const lockIndex = await st.vault.reserveLock();
-  const lock = st.vault.lockOutput(lockIndex);
+  const lock = await st.vault.lockOutput(lockIndex);
   await carry({
     kind: 'LIST', out, feeRate: Number(f.fee), tip,
     plan: () => planList({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount, price, payScript }),
@@ -878,7 +903,7 @@ async function checkOwned(s) {
       continue;
     }
     s.witness(n.pos, leaf); // throws if the local path does not reach the local root
-    const at = s.spentAt(frHex(v.nullifier(n)));
+    const at = s.spentAt(frHex(await v.nullifier(n)));
     await v.updateNote(n.id, { pathAt: s.height, spent: at === undefined ? 'unknown' : at === null ? 'no' : `block ${at}` });
   }
 }
@@ -947,7 +972,7 @@ async function syncListings() {
   }
   const known = new Set((v.state.listings ?? []).map((r) => r.listTxid));
   const keys = new Map();
-  for (let i = 0; i < (v.state.nextLock ?? 0) + LOCK_GAP; i++) keys.set(toHex(v.lockOutput(i).key), i);
+  for (let i = 0; i < (v.state.nextLock ?? 0) + LOCK_GAP; i++) keys.set(toHex((await v.lockOutput(i)).key), i);
   for (const l of all) {
     const i = keys.get(l.lockKey);
     if (i === undefined || known.has(l.listTxid)) continue;
@@ -1032,7 +1057,7 @@ function renderMarket() {
 
 async function copyOffer(rec) {
   const { l } = await ownListing(rec);
-  const offer = encodeOffer(rec.listTxid, signOffer(st.vault.lockOutput(rec.lockIndex).secret, l));
+  const offer = encodeOffer(rec.listTxid, signOffer((await st.vault.lockOutput(rec.lockIndex)).secret, l));
   await navigator.clipboard?.writeText(offer).catch(() => {});
   result('listing-out', h('p', {}, 'Offer (copied): anyone who completes it pays the price to you and gets the tokens. Share it anywhere.'), h('p', { class: 'mono', id: 'offer-text' }, offer));
 }
@@ -1070,13 +1095,13 @@ async function sendCancel(rec) {
   if (state !== 'ACTIVE') throw new Error(`the listing is ${state}`);
   if (!confirm(`Take ${units(l.amount)} ${l.ticker} back? The listing ends.`)) return;
   const o = await st.vault.reserveNote();
-  const m = buildCancel({ l, lockSecret: st.vault.lockOutput(rec.lockIndex).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: await esplora.tipHeight() });
+  const m = buildCancel({ l, lockSecret: (await st.vault.lockOutput(rec.lockIndex)).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: await esplora.tipHeight() });
   await sendFunded(m, 'listing-out', `Cancel of ${units(l.amount)} ${l.ticker}`, { index: o.index, ticker: l.ticker, v: l.amount });
 }
 
 async function sendClaim(rec) {
   const o = await st.vault.reserveNote();
-  const m = buildClaim({ listTxid: rec.listTxid, lockSecret: st.vault.lockOutput(rec.lockIndex).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: await esplora.tipHeight() });
+  const m = buildClaim({ listTxid: rec.listTxid, lockSecret: (await st.vault.lockOutput(rec.lockIndex)).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: await esplora.tipHeight() });
   await sendFunded(m, 'listing-out', `CLAIM of ${units(rec.amount)} ${rec.ticker}`, { index: o.index, ticker: rec.ticker, v: BigInt(rec.amount) });
 }
 

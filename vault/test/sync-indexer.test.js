@@ -42,7 +42,7 @@ test('sync finds the vault note, its path and its spend through the real API', a
   const pos = r2.events[0].pos;
   const note = await vault.addNote({ index: o.index, ticker: 'GENE', v: 1000n, txid: txid(m.tx), status: 'in tree', pos });
   const leaf = BigInt('0x' + note.leaf);
-  const nf = vault.nullifier(note);
+  const nf = await vault.nullifier(note);
 
   const server = await listen(idx, { port: 0 });
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -58,7 +58,7 @@ test('sync finds the vault note, its path and its spend through the real API', a
     const sp = spend(2);
     sp.nf[0] = nf;
     // output 1 is sealed to the vault: 400 GENE (the 32-byte X25519 pk_eph of wire v0.3)
-    const sealed = seal(decodeAddress('tsh20', vault.address), 'GENE', 400n, new Uint8Array(32).fill(5));
+    const sealed = await seal(await decodeAddress('tsh20', vault.address), 'GENE', 400n, new Uint8Array(32).fill(5));
     sp.outs[1] = { leaf: sealed.leaf, pkEph: sealed.pkEph, ct: sealed.ct };
     const r3 = c.block(helperTx({ env: { type: 'TRANSFER', spend: sp }, carrier: 'witness' }));
     assert.equal(r3.events[0]?.type, 'TRANSFER', JSON.stringify(r3.rejected));
@@ -73,7 +73,7 @@ test('sync finds the vault note, its path and its spend through the real API', a
     const received = got[1];
     assert.equal(received.leaf, frHex(sealed.leaf));
     assert.deepEqual(s.witness(received.pos, sealed.leaf).siblings, idx.tree.path(received.pos), 'its path, computed here');
-    assert.equal(s.spentAt(frHex(vault.nullifier(received))), null, 'and its nullifier, computed here, is unspent');
+    assert.equal(s.spentAt(frHex(await vault.nullifier(received))), null, 'and its nullifier, computed here, is unspent');
   } finally {
     server.close();
   }

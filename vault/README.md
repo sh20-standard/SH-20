@@ -28,7 +28,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 81 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 82 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development)
 npm run release          # a verifiable release from the current commit (below)
 ```
@@ -93,10 +93,13 @@ folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
 - **Threads need isolation:** the thread pool needs shared memory, which browsers give only to pages
   served with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy:
   require-corp`. IPFS gateways do not send them. On a **subdomain gateway** (`<cid>.ipfs.dweb.link`,
-  one origin per CID) the vault registers `vault/sw.js`, the phone test page's service worker
-  (byte for byte `circuit/web/sw.js`, which a test checks), which re-serves the page's own responses
-  with the headers; the page reloads once and proves on the pool (4.7 s instead of 26 s on a
-  laptop). On a **path gateway** (`…/ipfs/<cid>/`) it never does: every site there shares one
+  one origin per CID) the vault registers the phone test page's service worker (byte for byte
+  `circuit/web/sw.js`, which a test checks), which re-serves the page's own responses with the
+  headers; the page reloads once and proves on the pool (4.7 s instead of 26 s on a laptop). The
+  build puts it at the root of the site (`sw.js`, from `vault/sw.js`), with the root as its scope: the
+  pool's threads (`circuit/web/thread-worker.js`) are outside `vault/`, and a worker it did not
+  control would get neither the headers nor the shared memory. On a subdomain gateway that root is
+  the CID's own. On a **path gateway** (`…/ipfs/<cid>/`) it never does: every site there shares one
   origin, and a service worker would sit in front of all of them (`src/isolation.js`). The pool has
   `defaultThreads()` threads (`circuit/web/host.js`): the cores the browser reports, and at least 6
   on an iPhone, whose Safari reports 4.
@@ -241,6 +244,11 @@ control block, signature message) is checked against the BIP341 vectors (`test/t
 
 `src/market.js`, with the same spend machinery as a transfer for the two proof-carrying envelopes:
 
+- **The turnstile** (SPEC-WIRE §5): the indexers keep `pool[ticker]`, what the shielded pool holds of
+  a ticker, and reject a BURN, a LIST or a DEPLOY burn that takes out more. Before proving one, the
+  vault reads `pool` in `/token/:ticker` from every configured indexer and refuses, saying so, when
+  the amount is above the lowest: the transaction would be rejected and its fees lost. Another
+  spend in the same block can still lower the pool before this one confirms.
 - **BURN** (send panel, "Burn"): a spend with `vPub` = the amount and `tPub = t(ticker)`; the change
   and two unused outputs are sealed to the vault. 842-byte envelope, 342 vB reveal.
 - **LIST** (send panel, "Sell for BTC"): a spend that moves the amount into a public escrow
@@ -311,9 +319,8 @@ checks every request the page sends). Instead `src/sync.js`:
   zero" ignores the cache; a restored vault always rescans everything to find its notes.
 
 Loading a cached tree recomputes it (about 0.2 ms per leaf) to check it against the cached root.
-Measured in Node under the browser shims: a public note key costs about 170 ms (two BabyJubJub
-multiplications in `circuit/js`), so a new vault spends about 8 s once on its first 50 keys,
-which it then keeps in its encrypted state; opening someone else's sealed output costs about 1.3 ms.
+A public note key costs about 170 ms (two BabyJubJub multiplications in `circuit/js`), so a new
+vault spends about 8 s once on its first 50 keys, which it then keeps in its encrypted state.
 
 ## Note keys and the sh20 address
 
@@ -336,7 +343,8 @@ The vault reads the API of `indexer/bin/follow.js` ([`docs/API.md`](../docs/API.
 
 - `GET /status` → `network` (must be `signet`), `height`, `digest`, `verifier`, `activationHeight`,
   `deployBurn`, `genesis`
-- `GET /tokens`, `GET /token/:ticker` → the reference indexer's token records (SH20 first, `genesis: true`)
+- `GET /tokens`, `GET /token/:ticker` → the reference indexer's token records (SH20 first, `genesis: true`;
+  `pool`, the turnstile, read from every indexer before a BURN, LIST or DEPLOY burn)
 - `GET /notes?from&limit` → `{ from, total, notes }`, read page by page (5,000 per page); public
   notes carry `ticker`, `v`, `npk`, sealed ones (`OUT`) `pkEph` (32 bytes) and `ct` (28 bytes)
 - `GET /nullifiers?from=H` → every nullifier spent from block `H` on
@@ -353,21 +361,25 @@ and never recomputes them, so the byte encoding of the events (SPEC-WIRE §6) do
 
 ## Reusing the indexer and circuit code in the browser
 
-`src/sh20.js` imports `indexer/src/carrier.js`, `codec.js`, `constants.js`, `notes.js`, `poseidon.js`
-and `tree.js`, and `circuit/js/address.js`, `babyjub.js`, `notes.js` and `seal.js`, all
-**unchanged**. Two shims make that possible, which the import map in `index.html` puts in place:
+`src/sh20.js` imports `indexer/src/carrier.js`, `codec.js`, `constants.js`, `notes.js`, `poseidon.js`,
+`schnorr.js` and `tree.js`, and `circuit/js/webcrypto.js`, the wallet reference's browser entry point,
+all **unchanged**. Everything that touches a secret goes through the platform's WebCrypto there
+(`circuit/js/subtle.js`): X25519 for the viewing key and sealing, HKDF, AES-256-GCM, HMAC-SHA512 for
+the master secret and the lock keys, and the EdDSA nonce's SHA-256. What stays in JavaScript is
+BabyJubJub and Poseidon, which no browser offers (BigInt, not constant time), and the public hashes.
+At start the page calls `available()` and stops with a message if the browser has no X25519 in
+WebCrypto (Chrome 133, Firefox 130, Safari 17 or newer) or no secure context. Two shims, which the
+import map in `index.html` puts in place:
 
 - `src/shim/buffer.js`: the subset of Node's `Buffer` those files use;
-- `src/shim/node-crypto.js`: Node's synchronous `createHash` (SHA-256, SHA-512), `createHmac`,
-  `hkdfSync`, AES-256-GCM ciphers and X25519 keys, in plain JavaScript (`src/hash.js`,
-  `src/aesgcm.js`, `src/x25519.js`). WebCrypto has all of them, but only asynchronously, and
-  `circuit/js` calls them synchronously. Like `circuit/js` itself, this code is **not constant
-  time** (BigInt and table lookups); SPEC-NOTES §6 says so for the reference too.
+- `src/shim/node-crypto.js`: `createHash('sha256')`, which the indexer's constants call when they
+  load (`src/hash.js`). `circuit/js/address.js` and `seal.js` import the names of their synchronous
+  functions too; the vault calls none of them, and in the shim they throw.
 
-`test/shim.test.js` compares every shimmed function with Node's own on random inputs, and runs the
-indexer's vectors and all of `circuit/js/vectors.json` (RFC 7748, wallets, addresses a payer must
-refuse, sealed outputs, public notes, a whole spend) through that exact setup (no global `Buffer`,
-`node:crypto` remapped). The build keeps the repository layout (`dist/vault/`, `dist/indexer/src/`,
+`test/shim.test.js` checks the shim's SHA-256 against Node's, and runs the indexer's vectors and all
+of `circuit/js/vectors.json` (RFC 7748, `available()`, wallets, addresses a payer must refuse, sealed
+outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup (no global `Buffer`,
+`node:crypto` remapped, Node's `crypto.subtle`). The build keeps the repository layout (`dist/vault/`, `dist/indexer/src/`,
 `dist/circuit/js/`) so the relative imports stay valid.
 
 ## Layout
@@ -380,7 +392,7 @@ refuse, sealed outputs, public notes, a whole spend) through that exact setup (n
 | `src/bip39.js`, `src/bip39-english.js` | the 12 recovery words |
 | `src/send.js` | a TRANSFER or a DEPLOY with a burn, end to end: plan, prove, commit and reveal |
 | `src/market.js` | BURN, LIST, offers, TAKE, cancel and CLAIM |
-| `src/isolation.js`, `sw.js` | cross-origin isolation on subdomain gateways (the test page's service worker) |
+| `src/isolation.js`, `sw.js` | cross-origin isolation on subdomain gateways (the test page's service worker, served at the site's root) |
 | `src/spend.js` | inputs, dummy inputs, sealed outputs, body, signatures and the prover's witness |
 | `src/prover.js`, `src/prover-worker.js` | the WebAssembly prover, threads or one thread (circuit/web/host.js) |
 | `src/taproot.js` | the witness carrier: commit output, reveal, BIP341 signature message |
@@ -395,8 +407,7 @@ refuse, sealed outputs, public notes, a whole spend) through that exact setup (n
 | `src/btc.js` | addresses, transactions, PSBT v0, finalization, size estimates |
 | `src/wallets.js` | Xverse, UniSat, Leather adapters (injected providers, no SDK) |
 | `src/api.js` | indexer API and Esplora clients |
-| `src/hash.js`, `src/bytes.js`, `src/fr.js` | SHA-256, RIPEMD-160, SHA-512, HMAC, HKDF, bytes, field elements |
-| `src/aesgcm.js`, `src/x25519.js` | AES-256-GCM and X25519, synchronous, for the `node:crypto` shim |
+| `src/hash.js`, `src/bytes.js`, `src/fr.js` | SHA-256 and RIPEMD-160 (public data), bytes, field elements |
 | `src/sh20.js`, `src/shim/` | the reused indexer and `circuit/js` modules and their browser shims |
 | `build.js` | the site's file set; `npm run build` writes `dist/` |
 | `release.js`, `tools/pack.js` | reproducible release: tar, SHA-256, IPFS CID, `RELEASES.md` |

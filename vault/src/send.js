@@ -35,7 +35,7 @@ function anchor(sync, tip) {
   return { anchorHeight: sync.height, root: sync.tree.root };
 }
 
-export function spendFrom({ vault, sync, tip, ticker, need, outputs, vPub = 0n, tPub = 0n, envelope }) {
+export async function spendFrom({ vault, sync, tip, ticker, need, outputs, vPub = 0n, tPub = 0n, envelope }) {
   const inputs = pickInputs(vault.state.notes, ticker, need);
   if (!inputs) throw new Error(`not enough ${ticker} in two unspent notes (a spend takes at most two)`);
   const { anchorHeight, root } = anchor(sync, tip);
@@ -43,13 +43,13 @@ export function spendFrom({ vault, sync, tip, ticker, need, outputs, vPub = 0n, 
   const change = inputs.reduce((s, n) => s + BigInt(n.v), 0n) - need;
   const me = vault.wallet;
   const outs = outputs({ change, me: me.address });
-  const built = buildSpend({ wallet: me, ticker, inputs, paths, root, anchorHeight, outputs: outs, vPub, tPub, envelope });
+  const built = await buildSpend({ wallet: me, ticker, inputs, paths, root, anchorHeight, outputs: outs, vPub, tPub, envelope });
   return { ...built, inputs, change, anchorHeight };
 }
 
 /** A private TRANSFER of `amount` of `ticker` to the sh20 address `to` (a string). */
-export function planTransfer({ vault, sync, tip, ticker, amount, to }) {
-  const recipient = decodeAddress(NETWORK_HRP, to.trim()); // every check a payer owes (SPEC-NOTES §2)
+export async function planTransfer({ vault, sync, tip, ticker, amount, to }) {
+  const recipient = await decodeAddress(NETWORK_HRP, to.trim()); // every check a payer owes (SPEC-NOTES §2)
   const v = BigInt(amount);
   if (v <= 0n) throw new Error('the amount must be positive');
   return spendFrom({
@@ -63,7 +63,7 @@ export function planTransfer({ vault, sync, tip, ticker, amount, to }) {
  * A DEPLOY that burns `D` SH20 (docs/SPEC-WIRE.md §5: a spend with vPub = D, tPub = t("SH20")).
  * `d` are the terms as deploy-plan.js checks them; `team` is the opening { npk } of the team note when pre > 0.
  */
-export function planDeployBurn({ vault, sync, tip, d, D, team = null }) {
+export async function planDeployBurn({ vault, sync, tip, d, D, team = null }) {
   if (!(D > 0n)) throw new Error('this profile burns nothing: a DEPLOY carries no spend');
   return spendFrom({
     vault, sync, tip, ticker: GENESIS.ticker, need: D, vPub: D, tPub: tickerT(GENESIS.ticker),

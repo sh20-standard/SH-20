@@ -52,7 +52,8 @@ async function setup(verifier) {
   const c = chain(ix);
   c.block(helperTx({ env: deployEnv({ start: 2, unlock: 2 }) }));
   const seller = await vaultOf(cv.wallets[0].m);
-  const b = c.block(...[0, 1].map((i) => helperTx({ env: { type: 'MINT', ticker: 'GENE', npk: seller.opening(i).npk }, burnSats: 1000n })));
+  const npks = [(await seller.opening(0)).npk, (await seller.opening(1)).npk];
+  const b = c.block(...npks.map((npk) => helperTx({ env: { type: 'MINT', ticker: 'GENE', npk }, burnSats: 1000n })));
   for (const [k, e] of b.events.filter((x) => x.type === 'MINT').entries()) {
     const n = await seller.addNote({ index: k, ticker: 'GENE', v: 1000n, txid: null, status: 'in tree', pos: e.pos });
     await seller.updateNote(n.id, { spent: 'no' });
@@ -64,8 +65,8 @@ const fakeSigned = (t) => ({ ...t, vin: t.vin.map((i, k) => (i.witness?.length ?
 /** A LIST of 600 GENE for 5,000 sats, revealed and mined; `prove` makes the proof. */
 async function list(ix, c, seller, prove) {
   const lockIndex = await seller.reserveLock();
-  const lock = seller.lockOutput(lockIndex);
-  const built = planList({ vault: seller, sync: localSync(ix), tip: c.next - 1, ticker: 'GENE', amount: 600n, price: 5000n, payScript: SELLER_PAY });
+  const lock = await seller.lockOutput(lockIndex);
+  const built = await planList({ vault: seller, sync: localSync(ix), tip: c.next - 1, ticker: 'GENE', amount: 600n, price: 5000n, payScript: SELLER_PAY });
   const envelope = await prove(built);
   const cp = planCarrier({ envelope, payer: { address: WPKH }, utxos: [{ txid: '33'.repeat(32), vout: lockIndex, value: 100000n }], feeRate: 1, tipHeight: c.next - 1, outputs: listOutputs(lock.script) });
   const reveal = revealFor(cp, 'c2'.repeat(32));
@@ -83,7 +84,7 @@ test('BURN and LIST with real proofs; an offer that another vault TAKEs, paying 
   const p = nodeProver();
 
   // BURN 300 of a 1,000 note: the change of 700 comes back sealed
-  const burn = planBurn({ vault: seller, sync: localSync(ix), tip: c.next - 1, ticker: 'GENE', amount: 300n });
+  const burn = await planBurn({ vault: seller, sync: localSync(ix), tip: c.next - 1, ticker: 'GENE', amount: 300n });
   assert.equal(burn.change, 700n);
   const envelope = await proveSpend(p, burn);
   assert.equal(envelope.length, 842);
@@ -112,7 +113,7 @@ test('BURN and LIST with real proofs; an offer that another vault TAKEs, paying 
 
   // another vault takes it: lock at input 0, the price at output 0, its npk in the TAKE
   const buyer = await vaultOf(cv.wallets[2].m);
-  const npk = buyer.opening(0).npk;
+  const npk = (await buyer.opening(0)).npk;
   const t = buildTake({ l, sig, npk, payer: { address: WPKH }, utxos: [{ txid: '55'.repeat(32), vout: 1, value: 50000n }], feeRate: 1, tipHeight: c.next - 1 });
   assert.equal(t.tx.vin[0].txid, reveal.txid);
   assert.deepEqual(t.inputIndexes, [1], 'the wallet signs only its own inputs');
@@ -131,7 +132,7 @@ test('the seller cancels with a TAKE of its own: the tokens come back as its pub
   const { ix, c, seller } = await setup(mockVerifier());
   const { lock, reveal, listing } = await list(ix, c, seller, fakeProve);
   const l = listingFromChain(reveal.txid, reveal.hex, { ...listing, amount: String(listing.amount), price: String(listing.price) });
-  const npk = seller.opening(5).npk;
+  const npk = (await seller.opening(5)).npk;
   const t = buildCancel({ l, lockSecret: lock.secret, npk, payer: { address: WPKH }, utxos: [{ txid: '66'.repeat(32), vout: 0, value: 20000n }], feeRate: 1, tipHeight: c.next - 1 });
   assert.equal(t.tx.vin[0].witness.length, 1, 'the lock is signed by the vault');
   const r = c.block(ixTx(fakeSigned(t.tx), 'e1'.repeat(32)));
@@ -147,7 +148,7 @@ test('a lock spent with no TAKE closes the listing; the seller CLAIMs it back wi
   // the lock spent by a transaction that carries no envelope
   const r1 = c.block({ txid: 'f1'.repeat(32), vin: [{ txid: reveal.txid, vout: 0, witness: [Buffer.alloc(64)] }], vout: [{ value: 0n, script: Buffer.from(addressToScript(WPKH)) }] });
   assert.equal(r1.events[0].type, 'CLOSED');
-  const npk = seller.opening(6).npk;
+  const npk = (await seller.opening(6)).npk;
   assert.equal(toHex(claimMessage(reveal.txid, npk)), Indexer.claimMessage(reveal.txid, npk).toString('hex'), 'the message the indexer checks');
   const cl = buildClaim({ listTxid: reveal.txid, lockSecret: lock.secret, npk, payer: { address: WPKH }, utxos: [{ txid: '77'.repeat(32), vout: 0, value: 20000n }], feeRate: 1, tipHeight: c.next - 1 });
   assert.equal(cl.envelope.length, 134);
@@ -159,7 +160,7 @@ test('a lock spent with no TAKE closes the listing; the seller CLAIMs it back wi
   // another key's claim is refused
   const { reveal: rv2 } = await list(ix, c, seller, fakeProve);
   c.block({ txid: 'f3'.repeat(32), vin: [{ txid: rv2.txid, vout: 0, witness: [Buffer.alloc(64)] }], vout: [] });
-  const wrong = buildClaim({ listTxid: rv2.txid, lockSecret: seller.lockOutput(99).secret, npk, payer: { address: WPKH }, utxos: [{ txid: '88'.repeat(32), vout: 0, value: 20000n }], feeRate: 1, tipHeight: c.next - 1 });
+  const wrong = buildClaim({ listTxid: rv2.txid, lockSecret: (await seller.lockOutput(99)).secret, npk, payer: { address: WPKH }, utxos: [{ txid: '88'.repeat(32), vout: 0, value: 20000n }], feeRate: 1, tipHeight: c.next - 1 });
   assert.deepEqual(c.block(ixTx(fakeSigned(wrong.tx), 'f4'.repeat(32))).rejected.map((x) => x.reason), ['bad CLAIM signature']);
   assert.equal(frHex(npk).length, 64);
 });
@@ -167,8 +168,27 @@ test('a lock spent with no TAKE closes the listing; the seller CLAIMs it back wi
 test('lock keys come from the master secret: the same after a restore, one per listing', async () => {
   const a = await vaultOf(cv.wallets[0].m);
   const b = await vaultOf(cv.wallets[0].m);
-  assert.equal(toHex(a.lockOutput(3).script), toHex(b.lockOutput(3).script));
-  assert.notEqual(toHex(a.lockOutput(3).key), toHex(a.lockOutput(4).key));
+  assert.equal(toHex((await a.lockOutput(3)).script), toHex((await b.lockOutput(3)).script));
+  assert.notEqual(toHex((await a.lockOutput(3)).key), toHex((await a.lockOutput(4)).key));
   assert.equal(await a.reserveLock(), 0);
   assert.equal(await a.reserveLock(), 1);
+});
+
+test('the turnstile: a BURN or LIST above the pool is refused before proving, as the indexer would refuse it', async () => {
+  const { poolProblem } = await import('../src/market.js');
+  const { normToken } = await import('../src/api.js');
+  const { ix, c, seller } = await setup(mockVerifier());
+  const json = (x) => JSON.parse(JSON.stringify(x, (_, v) => (typeof v === 'bigint' ? v.toString() : v)));
+  const token = normToken(json(ix.token('GENE')));
+  assert.equal(token.pool, 2000n, 'two mints of 1,000 went in');
+  assert.equal(poolProblem([token], 'GENE', 2000n, 'BURN'), null);
+  assert.match(poolProblem([token], 'GENE', 2001n, 'BURN'), /holds only 2000 GENE: a BURN of 2001 would be rejected .* fees lost/);
+  assert.match(poolProblem([token, { ...token, pool: 500n }], 'GENE', 600n, 'LIST'), /holds only 500/, 'the lowest of the indexers');
+  assert.match(poolProblem([{ ...token, pool: null }], 'GENE', 1n, 'LIST'), /does not report the pool/);
+  assert.match(poolProblem([], 'GENE', 1n, 'LIST'), /no indexer/);
+  // what the indexer does with a spend above the pool: rejected before its proof is looked at
+  const built = await planBurn({ vault: seller, sync: localSync(ix), tip: c.next - 1, ticker: 'GENE', amount: 1000n });
+  const over = { ...built.env, vPub: 2001n };
+  const r = c.block(helperTx({ env: { ...over, spend: { ...over.spend, proof: testProof() } }, carrier: 'witness' }));
+  assert.deepEqual(r.rejected.map((x) => x.reason), ['more than the pool holds of this ticker']);
 });

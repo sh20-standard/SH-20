@@ -10,10 +10,9 @@
 
 import { NOTE_SCHEME, wallet, publicNote, scanOutput, nullifierOf } from './notekeys.js';
 import { frHex } from './fr.js';
-import { noteLeaf, tickerT, PUBLIC_RHO, masterSecret } from './sh20.js';
+import { noteLeaf, tickerT, PUBLIC_RHO, masterSecret, hmacSha512 } from './sh20.js';
 import { newMnemonic, mnemonicToSeed } from './bip39.js';
 import { keyPathOutput } from './taproot.js';
-import { hmac } from './hash.js';
 
 const SECP_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
 /** How many lock keys past the last one used a restored vault looks for among the listings. */
@@ -35,8 +34,8 @@ async function aesKey(passphrase, salt) {
 }
 
 /** Opening of public note `index` (SPEC-NOTES §5): npk alone, rho = 0. */
-export function noteOpening(seed, index) {
-  const { npk, secrets } = publicNote(wallet(seed), index);
+export async function noteOpening(seed, index) {
+  const { npk, secrets } = await publicNote(await wallet(seed), index);
   return { index, npk, rho: PUBLIC_RHO, secrets, scheme: NOTE_SCHEME };
 }
 
@@ -68,8 +67,15 @@ export class Vault {
     }
   }
 
+  /** Derives the keys (asynchronous: WebCrypto); every constructor path awaits it. */
+  async #init() {
+    this.#wallet = await wallet(this.#seed);
+    return this;
+  }
+
   get #w() {
-    return (this.#wallet ??= wallet(this.#seed));
+    if (!this.#wallet) throw new Error('the vault is locked');
+    return this.#wallet;
   }
 
   /** The keys, for building a spend (send.js); they never leave the page. */
@@ -102,10 +108,10 @@ export class Vault {
    */
   static async fromWords(storage, words, passphrase = '') {
     if (Vault.exists(storage)) throw new Error('a vault already exists on this device');
-    const m = Uint8Array.from(masterSecret(await mnemonicToSeed(words)));
+    const m = Uint8Array.from(await masterSecret(await mnemonicToSeed(words)));
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const key = passphrase ? await aesKey(passphrase, salt) : null;
-    const v = new Vault(storage, { v: 0, network: 'signet', scheme: NOTE_SCHEME, next: 0, notes: [] }, m, key, salt, words.normalize('NFKD').trim().toLowerCase().split(/\s+/).join(' '));
+    const v = await new Vault(storage, { v: 0, network: 'signet', scheme: NOTE_SCHEME, next: 0, notes: [] }, m, key, salt, words.normalize('NFKD').trim().toLowerCase().split(/\s+/).join(' ')).#init();
     await v.save();
     return v;
   }
@@ -138,7 +144,7 @@ export class Vault {
       inner = JSON.parse(new TextDecoder().decode(clear));
     }
     const { seed, words = null, ...state } = inner;
-    return new Vault(storage, state, fromHex(seed), key, salt ?? crypto.getRandomValues(new Uint8Array(16)), words);
+    return new Vault(storage, state, fromHex(seed), key, salt ?? crypto.getRandomValues(new Uint8Array(16)), words).#init();
   }
 
   /** Restores a backup file on this device (replaces nothing: fails if a vault exists). */
@@ -178,29 +184,29 @@ export class Vault {
    * npk (hex) of public note `index`. Computed once and kept in the (encrypted) state: deriving it
    * takes about 170 ms in a browser, and a sync looks at the next RESTORE_GAP of them.
    */
-  npkAt(index) {
+  async npkAt(index) {
     const cache = (this.state.npks ??= []);
-    if (!cache[index]) cache[index] = frHex(this.opening(index).npk);
+    if (!cache[index]) cache[index] = frHex((await this.opening(index)).npk);
     return cache[index];
   }
 
-  opening(index) {
+  async opening(index) {
     if (!this.#openings.has(index)) {
-      const { npk, secrets } = publicNote(this.#w, index);
+      const { npk, secrets } = await publicNote(this.#w, index);
       this.#openings.set(index, { index, npk, rho: PUBLIC_RHO, secrets, scheme: NOTE_SCHEME });
     }
     return this.#openings.get(index);
   }
 
   /** Nullifier of an owned note at its position; the nullifier key never leaves the vault. */
-  nullifier(note) {
-    const secrets = note.tauN ? { tauA: BigInt(note.tauA), tauN: BigInt(note.tauN) } : this.opening(note.index).secrets;
+  async nullifier(note) {
+    const secrets = note.tauN ? { tauA: BigInt(note.tauA), tauN: BigInt(note.tauN) } : (await this.opening(note.index)).secrets;
     return nullifierOf(this.#w, secrets, BigInt('0x' + note.leaf), note.pos);
   }
 
   /** Records a public note the vault created (MINT): ticker, v and the expected leaf (rho = 0). */
   async addNote({ index, ticker, v, txid, status, pos = null }) {
-    const { npk, secrets } = this.opening(index);
+    const { npk, secrets } = await this.opening(index);
     const leaf = noteLeaf(tickerT(ticker), v, npk, PUBLIC_RHO);
     // a second leaf with this npk (anyone can make one: SPEC-NOTES §6) is a second note, told apart by its position
     const id = this.state.notes.some((n) => n.id === `pub:${index}`) ? `pub:${index}@${pos}` : `pub:${index}`;
@@ -223,7 +229,7 @@ export class Vault {
   async receive(out) {
     const id = `out:${out.pos}`;
     if (this.state.notes.some((n) => n.id === id)) return null;
-    const got = scanOutput(this.#w, { leaf: out.leaf, pkEph: out.pkEph, ct: out.ct });
+    const got = await scanOutput(this.#w, { leaf: out.leaf, pkEph: out.pkEph, ct: out.ct });
     if (!got || got.v === 0n) return null;
     const note = {
       id, kind: 'sealed', index: null, scheme: NOTE_SCHEME, ticker: got.ticker, v: got.v.toString(), npk: frHex(got.npk),
@@ -240,9 +246,9 @@ export class Vault {
    * HMAC-SHA512("sh20/vault/lock", m ‖ u32le(index)), so the recovery words restore it.
    * Returns { script, key, secret } (secret: the tweaked key that signs offers, cancels and claims).
    */
-  lockOutput(index) {
+  async lockOutput(index) {
     if (this.#locks.has(index)) return this.#locks.get(index);
-    const wide = hmac('sha512', new TextEncoder().encode('sh20/vault/lock'), concat(this.#seed, u32le(index)));
+    const wide = await hmacSha512(new TextEncoder().encode('sh20/vault/lock'), concat(this.#seed, u32le(index)));
     const out = keyPathOutput(bigTo32((bytesToBig(wide.subarray(0, 32)) % (SECP_N - 1n)) + 1n));
     this.#locks.set(index, out);
     return out;
@@ -313,13 +319,13 @@ export class Vault {
     const n = this.state.next + gap;
     const todo = Array.from({ length: n }, (_, i) => i).filter((i) => !this.state.npks?.[i]);
     for (const [k, i] of todo.entries()) {
-      this.npkAt(i);
+      await this.npkAt(i);
       onProgress?.(k + 1, todo.length);
       await yieldEvery();
     }
     if (todo.length) await this.save();
     const out = new Map();
-    for (let i = 0; i < n; i++) out.set(this.npkAt(i), i);
+    for (let i = 0; i < n; i++) out.set(await this.npkAt(i), i);
     return out;
   }
 

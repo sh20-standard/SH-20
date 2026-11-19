@@ -36,6 +36,7 @@ function setup(over) {
 }
 
 const seed = new Uint8Array(32).fill(9);
+const OPEN0 = await noteOpening(seed, 0); // the vault's public note 0 (WebCrypto: asynchronous)
 
 for (const [label, over, payer] of [
   ['payMode 1 (burn), taproot payer', { payMode: 1, price: 1000n }, { address: TR, publicKey: PUB }],
@@ -43,10 +44,10 @@ for (const [label, over, payer] of [
   ['payMode 2 below dust is raised to dust and still accepted', { payMode: 2, price: 100n, payScript: Buffer.from('0014' + '66'.repeat(20), 'hex') }, { address: WPKH }],
   ['payMode 0 (free)', { payMode: 0, price: 0n }, { address: TR, publicKey: PUB }],
 ]) {
-  test(`MINT accepted by the indexer: ${label}`, () => {
+  test(`MINT accepted by the indexer: ${label}`, async () => {
     const { idx, c } = setup(over);
     const token = normToken(idx.token('GENE'));
-    const opening = noteOpening(seed, 0);
+    const opening = OPEN0;
     const m = buildMint({ token, opening, payer, utxos: [utxo(3000n, 0), utxo(100000n, 1), utxo(20000n, 2)], feeRate: 2, tipHeight: c.next - 1 });
 
     // the envelope is the 42-byte MINT of wire v0.3 (npk alone) and parses back with the indexer codec
@@ -73,17 +74,17 @@ for (const [label, over, payer] of [
   });
 }
 
-test('pre-flight refuses mints the indexer would reject (no refund)', () => {
+test('pre-flight refuses mints the indexer would reject (no refund)', async () => {
   const { idx, c } = setup({ start: 5, end: 6, unlock: 5, max: 3000n, lim: 1000n });
   const t = normToken(idx.token('GENE'));
   assert.match(mintProblems(t, 4).join(), /opens at block 5/);
   assert.deepEqual(mintProblems(t, 5), []);
   assert.match(mintProblems(t, 7).join(), /closed/);
   assert.match(mintProblems({ ...t, mints: 3n }, 5).join(), /sold out/);
-  assert.throws(() => buildMint({ token: t, opening: noteOpening(seed, 0), payer: { address: WPKH }, utxos: [utxo(1e5)], feeRate: 1, tipHeight: c.next - 1 }), /opens at block 5/);
+  assert.throws(() => buildMint({ token: t, opening: OPEN0, payer: { address: WPKH }, utxos: [utxo(1e5)], feeRate: 1, tipHeight: c.next - 1 }), /opens at block 5/);
 });
 
-test('coin selection: smallest single input, no change when it would be dust, several inputs if needed', () => {
+test('coin selection: smallest single input, no change when it would be dust, several inputs if needed', async () => {
   const s = addressToScript(WPKH);
   const fixed = [{ value: 1000n, script: new Uint8Array(76).fill(0x6a) }];
   const one = selectCoins([utxo(50000n, 0), utxo(5000n, 1), utxo(900n, 2)], fixed, 'p2wpkh', s, 1);
@@ -97,21 +98,21 @@ test('coin selection: smallest single input, no change when it would be dust, se
   assert.throws(() => selectCoins([utxo(500n)], fixed, 'p2wpkh', s, 1), /not enough BTC/);
 });
 
-test('mainnet or legacy payers are refused', () => {
+test('mainnet or legacy payers are refused', async () => {
   const { idx, c } = setup({});
   const t = normToken(idx.token('GENE'));
-  const args = { token: t, opening: noteOpening(seed, 0), utxos: [utxo(1e5)], feeRate: 1, tipHeight: c.next };
+  const args = { token: t, opening: OPEN0, utxos: [utxo(1e5)], feeRate: 1, tipHeight: c.next };
   assert.throws(() => buildMint({ ...args, payer: { address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4' } }), /not a signet address/);
   assert.throws(() => buildMint({ ...args, payer: { address: 'tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7' } }), /native segwit, nested segwit or taproot/);
 });
 
-test('fee rate above the hard cap is refused', () => {
+test('fee rate above the hard cap is refused', async () => {
   const { idx, c } = setup({});
   const t = normToken(idx.token('GENE'));
-  assert.throws(() => buildMint({ token: t, opening: noteOpening(seed, 0), payer: { address: WPKH }, utxos: [utxo(10n ** 8n)], feeRate: 5000, tipHeight: c.next }), /fee rate must be between/);
+  assert.throws(() => buildMint({ token: t, opening: OPEN0, payer: { address: WPKH }, utxos: [utxo(10n ** 8n)], feeRate: 5000, tipHeight: c.next }), /fee rate must be between/);
 });
 
-test('batch MINT (wire v0.3): k mints in a 43-byte envelope, paid k × price, one note of k × lim', () => {
+test('batch MINT (wire v0.3): k mints in a 43-byte envelope, paid k × price, one note of k × lim', async () => {
   for (const [over, payer] of [
     [{ payMode: 1, price: 1000n }, { address: TR, publicKey: PUB }],
     [{ payMode: 2, price: 5000n, payScript: Buffer.from('0014' + '66'.repeat(20), 'hex') }, { address: WPKH }],
@@ -119,7 +120,7 @@ test('batch MINT (wire v0.3): k mints in a 43-byte envelope, paid k × price, on
   ]) {
     const { idx, c } = setup(over);
     const token = normToken(idx.token('GENE'));
-    const opening = noteOpening(seed, 0);
+    const opening = OPEN0;
     const m = buildMint({ token, opening, payer, utxos: [utxo(100000n, 1)], feeRate: 2, tipHeight: c.next - 1, k: 3 });
     assert.equal(m.envelope.length, 43);
     assert.equal(parseEnvelope(Buffer.from(m.envelope)).env.k, 3);
@@ -135,10 +136,10 @@ test('batch MINT (wire v0.3): k mints in a 43-byte envelope, paid k × price, on
   }
 });
 
-test('batch MINT: never more than 10, nor more than what is left (an indexer keeps the overpayment)', () => {
+test('batch MINT: never more than 10, nor more than what is left (an indexer keeps the overpayment)', async () => {
   const { idx, c } = setup({ max: 5000n, lim: 1000n, payMode: 1, price: 1000n });
   const t = normToken(idx.token('GENE'));
-  const args = { token: t, opening: noteOpening(seed, 0), payer: { address: WPKH }, utxos: [utxo(10n ** 6n)], feeRate: 1, tipHeight: c.next - 1 };
+  const args = { token: t, opening: OPEN0, payer: { address: WPKH }, utxos: [utxo(10n ** 6n)], feeRate: 1, tipHeight: c.next - 1 };
   assert.throws(() => buildMint({ ...args, k: 6 }), /only 5 mint\(s\) left/);
   assert.throws(() => buildMint({ ...args, k: 11 }), /1 to 10/);
   assert.throws(() => buildMint({ ...args, k: 0 }), /1 to 10/);

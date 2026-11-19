@@ -16,9 +16,9 @@ const memStorage = () => {
 
 // The vault's seed is SPEC-NOTES' master secret m: from the vectors' m, the vault must give the
 // vectors' keys, signet address and public notes (circuit/js/vectors.json, written by the Rust model).
-test('the vault derives the vector wallets: keys, signet address, public notes (rho = 0)', () => {
+test('the vault derives the vector wallets: keys, signet address, public notes (rho = 0)', async () => {
   for (const w of vectors.wallets) {
-    const k = wallet(fromHex(w.m));
+    const k = await wallet(fromHex(w.m));
     assert.equal(k.ask.toString(), w.ask);
     assert.equal(k.nsk.toString(), w.nsk);
     assert.equal(toHex(k.ivk), w.ivk);
@@ -28,7 +28,7 @@ test('the vault derives the vector wallets: keys, signet address, public notes (
   const seeds = Object.fromEntries(vectors.wallets.map((w) => [w.name, fromHex(w.m)]));
   assert.ok(vectors.publicNotes.length >= 4);
   for (const p of vectors.publicNotes) {
-    const o = noteOpening(seeds[p.wallet], p.i);
+    const o = await noteOpening(seeds[p.wallet], p.i);
     assert.equal(o.npk.toString(), p.npk, `${p.wallet} #${p.i}`);
     assert.equal(o.rho, 0n);
     assert.equal(o.secrets.tauA.toString(), p.tauA);
@@ -56,7 +56,7 @@ test('the vault opens the sealed outputs sent to it, refuses the others, and com
       assert.equal(got.id, 'out:9');
       assert.equal(await v.receive(out), null, 'one note per position');
       assert.equal(await v.receive({ ...out, ct: Uint8Array.from(out.ct, (x, i) => (i ? x : x ^ 1)) }), null);
-      assert.ok(v.nullifier(got) > 0n);
+      assert.ok((await v.nullifier(got)) > 0n);
       assert.ok(byName[s.to]);
     }
   }
@@ -69,16 +69,16 @@ test('nullifiers of the vector spend: the vault gives the circuit\'s', async () 
   const st = memStorage();
   st.setItem(STORAGE_KEY, JSON.stringify({ v: 0, plain: { v: 0, network: 'signet', scheme: NOTE_SCHEME, next: 0, notes: [], seed: w.m } }));
   const v = await Vault.open(st);
-  sp.inputs.forEach((inp, k) => {
+  for (const [k, inp] of sp.inputs.entries()) {
     assert.equal(inp.rho, '0');
-    const note = { kind: 'public', index: inp.publicNote, pos: Number(inp.index), leaf: frHex(noteLeaf(tickerT(sp.ticker), BigInt(inp.v), v.opening(inp.publicNote).npk, 0n)) };
-    assert.equal(v.nullifier(note).toString(), sp.nf[k], `input ${k}`);
-  });
+    const note = { kind: 'public', index: inp.publicNote, pos: Number(inp.index), leaf: frHex(noteLeaf(tickerT(sp.ticker), BigInt(inp.v), (await v.opening(inp.publicNote)).npk, 0n)) };
+    assert.equal((await v.nullifier(note)).toString(), sp.nf[k], `input ${k}`);
+  }
   assert.equal(RESTORE_GAP, 50);
   // the vault's shortcut (nk = nsk + τn mod l) is circuit/js spendKeys' nk
-  const k = wallet(fromHex(w.m));
+  const k = await wallet(fromHex(w.m));
   for (let i = 0; i < 3; i++) {
-    const { secrets } = publicNote(k, i);
+    const { secrets } = await publicNote(k, i);
     assert.equal(nullifierOf(k, secrets, 77n, 5), nullifier(spendKeys(k, secrets).nk, 77n, 5));
   }
 });
@@ -91,7 +91,7 @@ test('a vault of the provisional v0.2 keys keeps its notes aside and starts agai
   assert.equal(v.state.next, 0);
   assert.deepEqual(v.state.notes, []);
   assert.equal(v.state.obsolete.length, 1);
-  assert.ok(frFromHex(frHex(v.opening(0).npk)) > 0n);
+  assert.ok(frFromHex(frHex((await v.opening(0)).npk)) > 0n);
 });
 
 test('vault in clear: create, reserve, reopen, never reuse an index', async () => {
@@ -107,7 +107,7 @@ test('vault in clear: create, reserve, reopen, never reuse an index', async () =
   assert.match(v.address, /^tsh201[02-9ac-hj-np-z]{162}$/);
   const again = await Vault.open(st);
   assert.equal(again.state.next, 2);
-  assert.equal(again.opening(0).npk, o0.npk);
+  assert.equal((await again.opening(0)).npk, o0.npk);
   await assert.rejects(Vault.create(st), /already exists/);
 });
 
@@ -125,7 +125,7 @@ test('vault with passphrase: seed not stored in clear, wrong passphrase fails, b
   await assert.rejects(Vault.open(st), /needs its passphrase/);
   const st2 = memStorage();
   const r = await Vault.restore(st2, v.exportBackup(), 'correct horse');
-  assert.equal(r.opening(0).npk, o.npk);
+  assert.equal((await r.opening(0)).npk, o.npk);
   assert.equal(r.state.notes[0].ticker, 'GENE');
   assert.ok((await r.npkWindow({ gap: 5, yieldEvery: async () => {} })).has(r.state.notes[0].npk));
   assert.equal(r.state.npks.length, 6, 'derived keys are kept in the state');

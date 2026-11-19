@@ -135,7 +135,8 @@ createServer(async (req, res) => {
   // /ipfs/<cid>/… is served like a path gateway would (the same files), to check the page never
   // registers its service worker there; <cid>.ipfs.localhost:<port> is a subdomain gateway
   const pathname = new URL(req.url, 'http://x').pathname.replace(/^\/ip[fn]s\/[^/]+(?=\/)/, '');
-  const path = normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, '');
+  // the site's root sw.js (build.js puts vault/sw.js there): the repository root has none
+  const path = pathname === '/sw.js' ? '/vault/sw.js' : normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, '');
   let file = join(root, path);
   if (!file.startsWith(root)) return res.writeHead(403).end();
   if (file.endsWith('/')) file = join(file, 'index.html');

@@ -29,8 +29,24 @@ const OFFER_SEQUENCE = 0xfffffffd;
 const OFFER_VERSION = 2;
 const OFFER_LOCKTIME = 0; // an offer fixes the version and locktime of the transaction that takes it
 
+/**
+ * Why a spend taking `amount` of a ticker out of the pool (a BURN, a LIST, the DEPLOY burn of D
+ * SH20) would be rejected by the turnstile of SPEC-WIRE §5, from what each indexer reports in
+ * /token/:ticker; null when every one has room. Checked before proving: a rejected spend's fees
+ * are lost. `tokens` are normToken records, one per indexer that answered.
+ */
+export function poolProblem(tokens, ticker, amount, what) {
+  if (!tokens.length) return `no indexer reports ${ticker}`;
+  if (tokens.some((t) => t.pool === null)) return `an indexer does not report the pool of ${ticker} (it predates the turnstile of SPEC-WIRE §5), so the vault cannot tell whether a ${what} would be accepted`;
+  const pool = tokens.reduce((m, t) => (t.pool < m ? t.pool : m), tokens[0].pool);
+  if (BigInt(amount) > pool) {
+    return `the shielded pool holds only ${pool} ${ticker}: a ${what} of ${amount} would be rejected by the indexers (SPEC-WIRE §5, the turnstile), and its fees lost`;
+  }
+  return null;
+}
+
 /** A BURN of `amount` of `ticker`: a spend with vPub = amount, tPub = t(ticker). */
-export function planBurn({ vault, sync, tip, ticker, amount }) {
+export async function planBurn({ vault, sync, tip, ticker, amount }) {
   const v = BigInt(amount);
   if (v <= 0n) throw new Error('the amount must be positive');
   return spendFrom({
@@ -41,7 +57,7 @@ export function planBurn({ vault, sync, tip, ticker, amount }) {
 }
 
 /** A LIST of `amount` of `ticker` for `price` sats paid to `payScript`; the lock is `lockScript` at output 0. */
-export function planList({ vault, sync, tip, ticker, amount, price, payScript }) {
+export async function planList({ vault, sync, tip, ticker, amount, price, payScript }) {
   const v = BigInt(amount);
   const p = BigInt(price);
   if (v <= 0n || p <= 0n) throw new Error('the amount and the price must be positive');
