@@ -10,7 +10,7 @@ export { extractEnvelope } from '../../indexer/src/carrier.js';
 export { FR, MAGIC, PAY_MODE, DOMAIN, TREE_DEPTH, PROOF_BYTES, MINT_BATCH_MAX, SPEND_VK_DIGEST } from '../../indexer/src/constants.js';
 export { noteLeaf, tickerT, PUBLIC_RHO } from '../../indexer/src/notes.js';
 export { poseidon2 } from '../../indexer/src/poseidon.js';
-export { rootFromPath } from '../../indexer/src/tree.js';
+export { NoteTree, rootFromPath } from '../../indexer/src/tree.js';
 export { sign as schnorrSign, verify as schnorrVerify, publicKey as schnorrPublicKey, taggedHash } from '../../indexer/src/schnorr.js';
 // circuit/js/webcrypto.js: everything that touches a secret (X25519, HKDF, AES-GCM, HMAC-SHA512, the
 // EdDSA nonce) is asynchronous and runs in the platform's WebCrypto. BabyJubJub and Poseidon stay in JS.

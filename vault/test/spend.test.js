@@ -10,7 +10,7 @@ import { plonkVerifier } from '../../indexer/src/adapters/plonk.js';
 import { chain, deployEnv, tx as helperTx } from '../../indexer/test/helpers.js';
 import { nodeProver, WASM } from './prover-node.js';
 import { buildSpend, withProof, publicInputs, pickInputs, WITNESS_BYTES } from '../src/spend.js';
-import { LocalTree } from '../src/tree.js';
+import { NoteTree } from '../src/sh20.js';
 import { Vault, STORAGE_KEY } from '../src/keys.js';
 import { NOTE_SCHEME, wallet as walletOf } from '../src/notekeys.js';
 import { commitment, commitValue, signReveal, oneTimeSecret } from '../src/taproot.js';
@@ -32,13 +32,13 @@ const parts = (hex) => {
 test('the vault computes the public inputs of the circuit\'s own TRANSFER and BURN (plonk-scenario.json)', async () => {
   const p = nodeProver();
   assert.equal(p.vkDigest, SPEND_VK_DIGEST, 'the committed module and the shipped key give the pinned verifying key');
-  const tree = new LocalTree();
-  tree.append(scenario.mints.map((m) => noteLeaf(GENE, 1000n, BigInt(m.npk), 0n)));
+  const tree = new NoteTree();
+  for (const m of scenario.mints) tree.append(noteLeaf(GENE, 1000n, BigInt(m.npk), 0n));
   const transfer = parts(scenario.transfer);
   assert.equal(transfer.env.spend.anchorHeight, 2);
   const tp = publicInputs({ root: tree.root, ...transfer });
   assert.equal(await p.verify(tp, transfer.env.spend.proof), true);
-  tree.append(transfer.env.spend.outs.map((o) => o.leaf));
+  for (const o of transfer.env.spend.outs) tree.append(o.leaf);
   const burn = parts(scenario.burn);
   const bp = publicInputs({ root: tree.root, ...burn, vPub: burn.env.vPub, tPub: GENE });
   assert.equal(await p.verify(bp, burn.env.spend.proof), true);
@@ -78,8 +78,8 @@ test('a TRANSFER built and proved by the vault is accepted by the indexer with t
   const anchorHeight = c.next - 1;
 
   // the local tree, as a sync rebuilds it
-  const tree = new LocalTree();
-  tree.append(ix.tree.leaves);
+  const tree = new NoteTree();
+  for (const leaf of ix.tree.leaves) tree.append(leaf);
   assert.equal(tree.root, ix.tree.root);
 
   const me = await walletOf(fromHex(cv.wallets[0].m));

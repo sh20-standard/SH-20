@@ -4,7 +4,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NoteTree, rootFromPath } from '../../indexer/src/tree.js';
-import { LocalTree } from '../src/tree.js';
 import { Sync, REORG_MARGIN } from '../src/sync.js';
 import { memoryCache } from '../src/cache.js';
 import { IndexerApi } from '../src/api.js';
@@ -12,25 +11,30 @@ import { frHex } from '../src/fr.js';
 
 const leafOf = (i) => BigInt(i) * 7919n + 13n;
 
-test('local tree matches indexer/src/tree.js: roots and paths, append and truncate', () => {
+// The vault's tree is the indexer's NoteTree itself (src/sh20.js): what the sync does with it, the
+// same cases the vault's own copy was tested on: appends in batches, paths, and a reorg's truncation.
+test('the sync\'s tree (indexer/src/tree.js NoteTree): batched appends, paths, truncation then appends', () => {
+  const s = new Sync(memoryCache(), 'tree');
   const ref = new NoteTree();
-  const mine = new LocalTree();
-  assert.equal(mine.root, ref.root, 'empty roots');
+  assert.equal(s.tree.root, ref.root, 'empty roots');
   for (const batch of [1, 2, 5, 1, 9]) {
     const xs = Array.from({ length: batch }, (_, k) => leafOf(ref.size + k));
     xs.forEach((x) => ref.append(x));
-    mine.append(xs);
-    assert.equal(mine.root, ref.root);
+    xs.forEach((x) => s.tree.append(x));
+    assert.equal(s.tree.root, ref.root);
   }
   for (let p = 0; p < ref.size; p++) {
-    assert.deepEqual(mine.path(p), ref.path(p));
-    assert.equal(rootFromPath(mine.leaf(p), p, mine.path(p)), ref.root);
+    assert.deepEqual(s.tree.path(p), ref.path(p));
+    assert.equal(rootFromPath(s.tree.leaves[p], p, s.tree.path(p)), ref.root);
   }
-  mine.truncate(7);
+  s.tree.restore({ size: 7 });
   const ref7 = new NoteTree();
   for (let i = 0; i < 7; i++) ref7.append(leafOf(i));
-  assert.equal(mine.root, ref7.root, 'truncate gives the shorter tree');
-  assert.deepEqual(mine.path(6), ref7.path(6));
+  assert.equal(s.tree.root, ref7.root, 'truncate gives the shorter tree');
+  assert.deepEqual(s.tree.path(6), ref7.path(6));
+  for (let i = 7; i < 30; i++) { s.tree.append(leafOf(i)); ref7.append(leafOf(i)); }
+  assert.equal(s.tree.root, ref7.root, 'and appends after it give the same tree');
+  for (const p of [0, 6, 7, 29]) assert.deepEqual(s.tree.path(p), ref7.path(p));
 });
 
 // A chain served the way the indexer API does, with a request log.

@@ -336,9 +336,9 @@ Asking an indexer `/path/:pos` or `/nullifier/:hex` for your own notes tells it 
 yours. The vault never does (`test/page.test.js` fails if any source calls them, and the e2e run
 checks every request the page sends). Instead `src/sync.js`:
 
-- downloads **every leaf** (`/notes`, paged) and rebuilds the tree locally (`src/tree.js`: same tree
-  as `indexer/src/tree.js`, keeping every level, so appending k leaves costs about 2k + 32 Poseidon
-  hashes and a Merkle path costs none). The local root must equal the indexer's `root` at the same
+- downloads **every leaf** (`/notes`, paged) and rebuilds the tree locally with the indexer's own
+  `NoteTree` (`indexer/src/tree.js`, in the bundle: an append hashes only the subtrees it completes,
+  about one Poseidon hash per leaf, a Merkle path is 32 lookups, a reorg a truncation). The local root must equal the indexer's `root` at the same
   height, or the sync fails: an indexer whose leaves do not hash to its own root is refused;
 - downloads **every spent nullifier** (`/nullifiers?from=H`, docs/API.md) and checks the vault's
   notes against that set on the device. An indexer without the route shows spends as "unknown";
@@ -435,7 +435,7 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | `src/taproot.js` | the witness carrier: commit output, reveal, BIP341 signature message |
 | `prover/`, `tools/prover.sh` | the two prover modules, built from `circuit/` with remapped paths |
 | `src/notekeys.js` | note keys, address, scanning, nullifiers: `circuit/js`, nothing of its own |
-| `src/sync.js`, `src/tree.js`, `src/cache.js` | private sync: local tree, paths, spends, IndexedDB cache |
+| `src/sync.js`, `src/cache.js` | private sync: the local tree (the indexer's `NoteTree`), paths, spends, IndexedDB cache |
 | `src/mint.js` | MINT pre-flight checks, coin selection, transaction and PSBT |
 | `src/deploy.js` | checks the indexer's mint terms against the DEPLOY transaction, or SH20's against the profile |
 | `src/profile.js` | profile constants the vault knows itself: the genesis token, the activation height |

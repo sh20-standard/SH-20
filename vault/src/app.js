@@ -1024,7 +1024,7 @@ async function checkOwned(s) {
   for (const n of [...v.state.notes]) {
     if (n.pos === null || n.pos === undefined) continue;
     const leaf = BigInt('0x' + n.leaf);
-    if (n.pos >= s.tree.size || s.tree.leaf(n.pos) !== leaf) {
+    if (n.pos >= s.tree.size || s.tree.leaves[n.pos] !== leaf) {
       if (n.kind === 'sealed') await v.dropNote(n.id); // scanning finds it again wherever it now is
       else await v.updateNote(n.id, { status: 'not in tree (reorg?)', pos: null, pathAt: null, spent: undefined });
       continue;
