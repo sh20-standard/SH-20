@@ -1,7 +1,7 @@
 //! The state machine: acceptance rules (SPEC-WIRE §5), block processing and digest (§6),
 //! and the per-block undo log for reorgs.
 
-use crate::chain::{burned_sats, envelopes, p2tr_key, paid_to, Block, Tx};
+use crate::chain::{burned_sats, envelopes, is_p2tr_to, paid_to, Block, Tx};
 use crate::envelope::{body_hash_of, DecodeError, Deploy, Envelope, Spend, Ticker, VERSION};
 use crate::events::{encode_all, Event, Outcome, Spent};
 use crate::field::{fr_from_le, fr_to_le, public_leaf, sha256, Bytes32};
@@ -85,7 +85,7 @@ pub struct Listing {
     pub pay_script: Vec<u8>,
     /// `(txid, lockVout)` of the LIST transaction.
     pub lock: (Bytes32, u32),
-    /// The output key of the P2TR lock.
+    /// The output key of the P2TR lock: the `lockKey` of the LIST.
     pub lock_key: Bytes32,
     pub status: ListingStatus,
 }
@@ -522,7 +522,7 @@ impl Indexer {
                 Ok(Event::Burn { txid, ticker: *ticker, v_pub: *v_pub, spent })
             }
 
-            Envelope::List { ticker, amount, price, lock_vout, pay_script, spend } => {
+            Envelope::List { ticker, amount, price, lock_vout, lock_key, pay_script, spend } => {
                 let t = self.tokens.get(ticker).ok_or("ticker not deployed")?;
                 if *amount == 0 {
                     return Err("amount is zero");
@@ -534,7 +534,9 @@ impl Indexer {
                     return Err("price is zero");
                 }
                 let lock_out = tx.vout.get(*lock_vout as usize).ok_or("no output at lockVout")?;
-                let lock_key = p2tr_key(&lock_out.script).ok_or("lock output is not P2TR")?;
+                if !is_p2tr_to(&lock_out.script, lock_key) {
+                    return Err("lock output is not P2TR to lockKey");
+                }
                 if lock_out.value < LOCK_MIN_SATS {
                     return Err("lock output below 330 sats");
                 }
@@ -554,7 +556,7 @@ impl Indexer {
                         price: *price,
                         pay_script: pay_script.clone(),
                         lock,
-                        lock_key,
+                        lock_key: *lock_key,
                         status: ListingStatus::Active,
                     },
                 );

@@ -67,10 +67,11 @@ fn vector_envelopes_decode_to_the_expected_fields() {
     assert_eq!(spend.proof, valid_proof);
 
     let (bytes, env) = vector_envelope(&v, "list");
-    let Envelope::List { ticker, amount, price, lock_vout, pay_script, spend } = env else { panic!() };
+    let Envelope::List { ticker, amount, price, lock_vout, lock_key, pay_script, spend } = env else { panic!() };
     assert_eq!((ticker, amount, price, lock_vout), (Ticker::SH20, 1000, 5000, 0));
+    assert_eq!(hex(&lock_key), "abdc60eb9a25f0d97db71b0fc34b8f9fdb6bed43d241e4b2dffad16bf8d07311");
     assert_eq!(hex(&pay_script), "00149350872d712a127c494d7dc35e46b0bc9e62e288");
-    assert_eq!(bytes.len(), 852 + pay_script.len());
+    assert_eq!(bytes.len(), 884 + pay_script.len());
     assert_eq!(spend.anchor_height, 1);
 
     let (bytes, env) = vector_envelope(&v, "take");
@@ -133,11 +134,12 @@ fn sizes_of_the_table() {
         amount: 1,
         price: 1,
         lock_vout: 255,
+        lock_key: [0xff; 32],
         pay_script: vec![0xab; ps],
         spend: spend(1, 4),
     };
-    assert_eq!(size(list(0)), 852);
-    assert_eq!(size(list(34)), 852 + 34);
+    assert_eq!(size(list(0)), 884);
+    assert_eq!(size(list(34)), 884 + 34);
     assert_eq!(size(Envelope::Take { opening: fe(5) }), 38);
     assert_eq!(size(Envelope::Claim { list_txid: [0xff; 32], opening: fe(6), sig: [0xff; 64] }), 134);
     assert_eq!(SPEND_LEN, 824);
@@ -153,6 +155,48 @@ fn claim_layout() {
     assert_eq!(&bytes[6..38], &list_txid);
     assert_eq!(&bytes[38..70], &opening);
     assert_eq!(&bytes[70..], &sig);
+}
+
+/// `ticker(4) amount(8) price(8) lockVout(1) lockKey(32) psLen(1) payScript spend`: the lock key
+/// sits before the proof, so it is inside `body` and the spend's signature covers it.
+#[test]
+fn list_layout() {
+    let lock_key = fe(7);
+    let s = spend(9, 1);
+    let env = Envelope::List {
+        ticker: tk("ABCD"),
+        amount: 0x0102_0304_0506_0708,
+        price: 0x1112_1314_1516_1718,
+        lock_vout: 2,
+        lock_key,
+        pay_script: vec![0xa1, 0xa2, 0xa3],
+        spend: s.clone(),
+    };
+    let bytes = env.encode();
+    assert_eq!(&bytes[..6], b"SH20\x00\x05");
+    assert_eq!(&bytes[6..10], b"ABCD");
+    assert_eq!(bytes[10..18], 0x0102_0304_0506_0708u64.to_le_bytes());
+    assert_eq!(bytes[18..26], 0x1112_1314_1516_1718u64.to_le_bytes());
+    assert_eq!(bytes[26], 2);
+    assert_eq!(bytes[27..59], lock_key);
+    assert_eq!(bytes[59], 3);
+    assert_eq!(bytes[60..63], [0xa1, 0xa2, 0xa3]);
+    assert_eq!(bytes[63..67], 9u32.to_le_bytes());
+    assert_eq!(bytes[67..99], s.nf[0]);
+    assert_eq!(bytes.len(), 884 + 3);
+    assert_eq!(Envelope::decode(&bytes), Ok(env));
+
+    // another lock key is another body, hence another bodyHash: the signature does not carry over
+    let mut other = bytes.clone();
+    other[27] ^= 1;
+    assert_ne!(body_hash_of(&other), body_hash_of(&bytes));
+    // the key is opaque to the decoder: any 32 bytes
+    other[27..59].copy_from_slice(&[0xff; 32]);
+    assert!(Envelope::decode(&other).is_ok());
+    // a LIST of the earlier layout (no lockKey) is 32 bytes short
+    let mut old = bytes[..27].to_vec();
+    old.extend_from_slice(&bytes[59..]);
+    assert!(rejected(&old));
 }
 
 #[test]
@@ -224,6 +268,7 @@ fn trailing_and_missing_bytes() {
             amount: 1,
             price: 1,
             lock_vout: 0,
+            lock_key: [3; 32],
             pay_script: vec![1, 2],
             spend: spend(1, 1),
         }
@@ -333,6 +378,7 @@ fn deploy_layout_rules() {
             amount: 1,
             price: 1,
             lock_vout: 0,
+            lock_key: [3; 32],
             pay_script: vec![1; n],
             spend: spend(1, 1),
         }

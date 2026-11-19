@@ -14,9 +14,9 @@ what was unclear, what `indexer-rs` does, why, and whether the vectors confirm i
 - **28 points were left open by the spec.** The vectors confirm 6 of them, four only in part; one (3.4) is a remark.
   The other 21 are choices made here that the reference indexer may have made differently. Five points could be met
   on a public signet by ordinary wallets (marked **signet** below); the rest need a transaction built on purpose.
-- **One weakness of the rules themselves** turned up on the way: a LIST can be front-run, because its spend is not
-  tied to its lock output ([section 7](#7-found-on-the-way-a-list-can-be-front-run)). It is not a gap: the text is
-  clear, and `indexer-rs` applies it as written.
+- **One weakness of the rules themselves** turned up on the way, and is **fixed**: a LIST could be front-run,
+  because its spend was not tied to its lock output ([section 7](#7-fixed-a-list-could-be-front-run)). The LIST now
+  carries `lockKey` in its signed body, and `indexer-rs` follows the new text and the new vectors.
 - The vectors do not exercise a large part of §5 (list in [section 5](#5-what-the-vectors-do-not-cover)). Agreement
   on the vectors therefore says nothing about CLAIM, CLOSED, CANCELLED, payMode 2, the one-envelope rule or reorgs.
 
@@ -328,28 +328,33 @@ this implementation's reading only.
   figure `CLAUDE.md` gives for the reference follower.
 
 
-## 7. Found on the way: a LIST can be front-run
+## 7. Fixed: a LIST could be front-run
 
-This is not an unclear point. The text is clear, `indexer-rs` follows it, and the reference presumably does too.
-It is a weakness of the rule, seen while implementing it from the text alone. It needs the maintainer: the fix
-changes bytes.
+**Status: fixed in the spec (2026-11-19, "LIST binds its lock key in the signed body").** `SPEC-WIRE.md` §4 and §5
+now read: a LIST is `ticker(4) amount(8) price(8) lockVout(1) lockKey(32) psLen(1) payScript(psLen) spend`
+(884 bytes + `payScript`), output `lockVout` must be `OP_1 <lockKey>` with at least 330 sats, and a CLAIM is signed
+by `lockKey`. `indexer-rs` was updated from that text alone and replays the new vectors: the same roots, `eventsH`
+and digests as before, and two refusals, the copied LIST of block 2 and the over-burn of block 8.
+Tests: `scenario_refuses_the_copied_list` (`tests/vectors.rs`), `list_layout` (`tests/codec.rs`),
+`a_copied_list_is_refused` (`tests/rules.rs`).
 
-- **What the spec binds.** The authorisation of a spend signs `bodyHash`, and `body` is the envelope before the
-  proof. For a LIST that is `ticker`, `amount`, `price`, `lockVout`, `payScript`, the anchor, the nullifiers and
-  the outputs. `lockVout` is an index. The script at that index, and so the key that controls the lock, is in the
+Sections 1 to 6 were written before this fix and are left as they were. Where they speak of "the one refusal" or
+of the lock key read from the lock output's script (4.8, 4.10), read: two refusals, and the `lockKey` of the envelope.
+
+What was found, for the record:
+
+- **What the spec bound.** The authorisation of a spend signs `bodyHash`, and `body` is the envelope before the
+  proof. For a LIST that was `ticker`, `amount`, `price`, `lockVout`, `payScript`, the anchor, the nullifiers and
+  the outputs. `lockVout` is an index. The script at that index, and so the key that controls the lock, was in the
   transaction and not in `body`.
-- **What follows.** A LIST envelope is valid in any transaction whose output `lockVout` is P2TR with 330 sats. It
-  is public as soon as its reveal transaction is in a mempool. Someone who copies it into a transaction of their
-  own, with a lock they control, and confirms first (a higher fee, or a miner) gets the listing: the seller's
-  transaction is then refused (nullifiers already seen). The holder of the lock spends it with an unpaid TAKE,
-  which is CANCELLED and creates the note `(t, amount, npk)` for the `npk` in that TAKE. Or they spend it with no
-  envelope and CLAIM. Either way the listed amount is theirs, and `payScript` and `price` protect nothing because
-  no sale takes place.
+- **What followed.** A LIST envelope was valid in any transaction whose output `lockVout` was P2TR with 330 sats.
+  It is public as soon as its reveal transaction is in a mempool. Someone who copied it into a transaction of their
+  own, with a lock they controlled, and confirmed first (a higher fee, or a miner) got the listing: the seller's
+  transaction was then refused (nullifiers already seen). The holder of the lock could spend it with an unpaid
+  TAKE, which is CANCELLED and creates the note `(t, amount, npk)` for the `npk` in that TAKE, or spend it with no
+  envelope and CLAIM. Either way the listed amount was theirs.
 - **Scope.** LIST only, as far as this reading goes. A copied TRANSFER, BURN or DEPLOY has the same effect whoever
   publishes it; a copied MINT pays for the first minter's `npk`; a CLAIM is signed over `listTxid` and `npk`.
-  This was derived from `SPEC-WIRE.md` alone; `SPEC-NOTES.md` was not read, but a wallet rule could not close it,
-  since indexers accept the copy.
-- **Shown by.** `a_list_is_not_bound_to_its_lock_output` in `indexer-rs/tests/rules.rs`.
-- **Possible fix.** Put the lock's 32-byte output key in the LIST body (`… lockVout(1) lockKey(32) …`, 32 more
-  bytes, about 8 vB) and accept the LIST only when output `lockVout` is `OP_1 <lockKey>`. The signature then covers
-  the key, and a copy with another lock is refused. It is a change of wire format: spec, vectors and both indexers.
+- **After the fix.** The copy with another lock is refused and records nothing, so the seller's transaction still
+  goes through. A copy that keeps the seller's lock creates the same listing under another txid; the lock still
+  belongs to the seller's key.

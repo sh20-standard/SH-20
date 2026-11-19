@@ -192,13 +192,9 @@ pub fn envelopes(tx: &Tx) -> Vec<Vec<u8>> {
     found
 }
 
-/// A P2TR output script `OP_1 <32-byte key>`: returns the output key.
-pub fn p2tr_key(script: &[u8]) -> Option<Bytes32> {
-    if script.len() == 34 && script[0] == OP_1 && script[1] == 0x20 {
-        Some(script[2..].try_into().unwrap())
-    } else {
-        None
-    }
+/// True when the script is exactly `OP_1 <key>`: P2TR to that output key.
+pub fn is_p2tr_to(script: &[u8], key: &Bytes32) -> bool {
+    script.len() == 34 && script[0] == OP_1 && script[1] == 0x20 && script[2..] == key[..]
 }
 
 /// Sats carried by OP_RETURN outputs (payMode 1).

@@ -640,6 +640,7 @@ fn verifier_inputs() {
         amount: 50,
         price: 9,
         lock_vout: 0,
+        lock_key: [3; 32],
         pay_script: PAY.to_vec(),
         spend: spend(5, 3),
     }
@@ -707,12 +708,19 @@ fn burn_conditions() {
 
 // ---------------------------------------------------------------- listings
 
+/// A LIST whose `lockKey` is the key of `lock_script` when that is P2TR, and `[3; 32]` otherwise.
 fn list_tx(n: u64, amount: u64, price: u64, lock_script: &[u8], lock_sats: u64) -> Tx {
+    let lock_key: [u8; 32] = if lock_script.len() == 34 && lock_script[..2] == [0x51, 0x20] {
+        lock_script[2..].try_into().unwrap()
+    } else {
+        [3; 32]
+    };
     let env = Envelope::List {
         ticker: Ticker::SH20,
         amount,
         price,
         lock_vout: 1,
+        lock_key,
         pay_script: PAY.to_vec(),
         spend: spend(1, n),
     }
@@ -774,15 +782,20 @@ fn list_conditions() {
             amount: 10,
             price: 1,
             lock_vout: 1,
+            lock_key: [3; 32],
             pay_script: PAY.to_vec(),
             spend: spend(1, 15),
         }
         .encode(),
     );
+    // P2TR, 330 sats, but to another key than the envelope's lockKey
+    let mut other_key = list_tx(9, 10, 1, &lock, 330);
+    other_key.vout[1] = out(330, &p2tr(&[4; 32]));
     let (events, rejected) = apply(
         &mut ix,
         2,
         vec![
+            other_key,
             list_tx(10, 0, 1, &lock, 330),
             list_tx(11, 1_001, 1, &lock, 330),
             list_tx(12, 10, 0, &lock, 330),
@@ -808,14 +821,15 @@ fn list_conditions() {
     assert_eq!(
         rejected,
         [
+            "lock output is not P2TR to lockKey",
             "amount is zero",
             "more than the pool holds of this ticker",
             "price is zero",
             "lock output below 330 sats",
             "no output at lockVout",
             "ticker not deployed",
-            "lock output is not P2TR",
-            "lock output is not P2TR",
+            "lock output is not P2TR to lockKey",
+            "lock output is not P2TR to lockKey",
             "more than the pool holds of this ticker"
         ]
     );
@@ -975,29 +989,42 @@ fn list_and_take_in_one_block() {
     assert_eq!(ix.token(&Ticker::SH20).unwrap().pool, 1_000);
 }
 
-/// A record, not a wish: as §5 is written, nothing ties the spend of a LIST to its lock output.
-/// `body` holds `lockVout`, an index, and not the key at that index. Whoever sees the envelope
-/// before it confirms can publish it in a transaction of their own, with their own lock, and
-/// then cancel the listing to a note of their own. See docs/SPEC-GAPS.md, section 7.
+/// A LIST names the key of its lock inside the signed body (`lockKey`), and the lock output must
+/// be `OP_1 <lockKey>`. An envelope copied into a transaction with another lock is refused; a
+/// copy that keeps the lock only does what the original would have done.
 #[test]
-fn a_list_is_not_bound_to_its_lock_output() {
+fn a_copied_list_is_refused() {
     let mut ix = indexer(1, 0);
     apply(&mut ix, 1, vec![op_return_tx(1, &mint("SH20", 1, Some(2)), 0)]);
     let sellers = list_tx(10, 1_000, 5_000, &p2tr(&[3; 32]), 330);
-    // the same envelope, byte for byte, in another transaction with another lock
+    // the same envelope, byte for byte, in another transaction whose lock the copier holds
     let mut copy = sellers.clone();
     copy.txid = txid(66);
     copy.vout[1] = out(330, &p2tr(&[6; 32]));
-    let (events, rejected) = apply(&mut ix, 2, vec![copy, sellers]);
+    // the refused copy records nothing: the seller's own transaction still goes through
+    let (events, rejected) = apply(&mut ix, 2, vec![copy, sellers.clone()]);
+    assert_eq!(events, ["LIST"]);
+    assert_eq!(rejected, ["lock output is not P2TR to lockKey"]);
+    assert!(ix.listing(&txid(66)).is_none());
+    assert_eq!(ix.listing(&txid(10)).unwrap().lock_key, [3; 32]);
+    // spending the copier's output takes nothing
+    let (events, rejected) = apply(&mut ix, 3, vec![take_tx(67, &[66], &[])]);
+    assert!(events.is_empty());
+    assert_eq!(rejected, ["no ACTIVE listing's lock is spent"]);
+    assert_eq!(ix.listing(&txid(10)).unwrap().status, ListingStatus::Active);
+    assert_eq!(ix.token(&Ticker::SH20).unwrap().pool, 1_000);
+
+    // a copy that confirms first with the seller's lock makes the same listing under another
+    // txid: the lock still belongs to the seller's key, and the seller's transaction is the one refused
+    let mut ix = indexer(1, 0);
+    apply(&mut ix, 1, vec![op_return_tx(1, &mint("SH20", 1, Some(2)), 0)]);
+    let mut same_lock = sellers.clone();
+    same_lock.txid = txid(66);
+    let (events, rejected) = apply(&mut ix, 2, vec![same_lock, sellers]);
     assert_eq!(events, ["LIST"]);
     assert_eq!(rejected, ["nullifier already seen"]);
-    assert_eq!(ix.listing(&txid(66)).unwrap().lock_key, [6; 32]);
+    assert_eq!(ix.listing(&txid(66)).unwrap().lock_key, [3; 32]);
     assert!(ix.listing(&txid(10)).is_none());
-    // the holder of that lock takes the tokens with an unpaid TAKE
-    let (events, _) = apply(&mut ix, 3, vec![take_tx(67, &[66], &[])]);
-    assert_eq!(events, ["TAKE"]);
-    assert_eq!(ix.listing(&txid(66)).unwrap().status, ListingStatus::Cancelled);
-    assert_eq!(ix.token(&Ticker::SH20).unwrap().pool, 2_000);
 }
 
 // ---------------------------------------------------------------- reorgs
@@ -1116,7 +1143,8 @@ fn reorg_onto_another_branch() {
         panic!()
     };
     assert!(!reorged.nullifier_seen(&burned.nf[0]));
-    let Envelope::Transfer { spend: kept } = Envelope::decode(&envelopes(&blocks[1].txs[1])[0]).unwrap() else {
+    let Envelope::Transfer { spend: kept } = Envelope::decode(&envelopes(blocks[1].txs.last().unwrap())[0]).unwrap()
+    else {
         panic!()
     };
     assert!(reorged.nullifier_seen(&kept.nf[0]));

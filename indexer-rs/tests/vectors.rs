@@ -165,15 +165,50 @@ fn scenario_carries_the_listed_envelopes() {
     let v = vectors();
     let listed: Vec<Vec<u8>> =
         v["envelopes"].as_object().unwrap().values().map(|e| unhex(s(e, "hex")).unwrap()).collect();
-    let mut carried = 0;
+    // every transaction carries one listed envelope, and every listed envelope is carried
+    // (the LIST twice: once in a copy the scenario refuses)
+    let mut carried: Vec<Vec<u8>> = Vec::new();
     for b in v["scenario"]["blocks"].as_array().unwrap() {
         for tx in block_from_vector(b).unwrap().txs {
             let found = sh20_indexer::chain::envelopes(&tx);
             assert_eq!(found.len(), 1, "one envelope per scenario transaction");
             assert!(listed.contains(&found[0]));
             assert!(Envelope::decode(&found[0]).is_ok());
-            carried += 1;
+            carried.push(found[0].clone());
         }
     }
-    assert_eq!(carried, listed.len());
+    assert!(listed.iter().all(|e| carried.contains(e)));
+}
+
+/// The copied LIST of block 2: the same envelope as the accepted one, in a transaction whose
+/// output `lockVout` is P2TR to another key than `lockKey`. Refused, and it burns nothing: the
+/// original, later in the block, is accepted with the same nullifiers.
+#[test]
+fn scenario_refuses_the_copied_list() {
+    let v = vectors();
+    let sc = &v["scenario"];
+    let block2 = block_from_vector(&sc["blocks"][1]).unwrap();
+    assert_eq!(block2.height, 2);
+    let list = unhex(s(&v["envelopes"]["list"], "hex")).unwrap();
+    let Envelope::List { lock_vout, lock_key, .. } = Envelope::decode(&list).unwrap() else { panic!() };
+    let lists: Vec<_> = block2.txs.iter().filter(|tx| sh20_indexer::chain::envelopes(tx) == [list.clone()]).collect();
+    assert_eq!(lists.len(), 2);
+    let pays_lock_key =
+        |tx: &sh20_indexer::Tx| sh20_indexer::chain::is_p2tr_to(&tx.vout[lock_vout as usize].script, &lock_key);
+    assert!(!pays_lock_key(lists[0]) && pays_lock_key(lists[1]));
+    let refused: Vec<&str> = sc["rejected"].as_array().unwrap().iter().map(|r| s(r, "txid")).collect();
+    assert!(refused.contains(&hex(&lists[0].txid).as_str()));
+    assert!(!refused.contains(&hex(&lists[1].txid).as_str()));
+
+    let p = &sc["profile"];
+    let profile = Profile::new(p["activationHeight"].as_u64().unwrap() as u32, dec(p, "deployBurn"));
+    let mut indexer = Indexer::new(profile, Box::new(TestVerifier));
+    indexer.apply_block(&block_from_vector(&sc["blocks"][0]).unwrap()).unwrap();
+    let r = indexer.apply_block(&block2).unwrap();
+    assert_eq!(r.rejected.len(), 1);
+    assert_eq!(r.rejected[0].txid, lists[0].txid);
+    assert!(indexer.listing(&lists[0].txid).is_none());
+    let listing = indexer.listing(&lists[1].txid).unwrap();
+    assert_eq!(listing.lock_key, lock_key);
+    assert_eq!(listing.status, ListingStatus::Active);
 }

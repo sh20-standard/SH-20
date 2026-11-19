@@ -103,8 +103,11 @@ fn replay_prints_the_vectors_digests() {
         }
     }
     let refused: Vec<&Value> = lines.iter().flat_map(|l| l["rejected"].as_array().unwrap()).collect();
-    assert_eq!(refused.len(), 1);
-    assert_eq!(refused[0]["txid"], sc["rejected"][0]["txid"]);
+    let want_refused = sc["rejected"].as_array().unwrap();
+    assert_eq!(refused.len(), want_refused.len());
+    for (got, want) in refused.iter().zip(want_refused) {
+        assert_eq!(got["txid"], want["txid"]);
+    }
 
     // without a verifier every spend is refused: the digests leave the vectors' at block 2
     let (ok, stdout, _) = replay(&dir, &["--activation", "1", "--deploy-burn", "1000"]);

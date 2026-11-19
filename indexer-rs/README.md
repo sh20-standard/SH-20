@@ -13,7 +13,7 @@ with the reference: Poseidon is [`light-poseidon`](https://crates.io/crates/ligh
 
 ```sh
 cd indexer-rs
-cargo test --release      # 52 tests
+cargo test --release      # 54 tests
 cargo run --release -- replay <folder of `bitcoin-cli getblock <hash> 2` JSON files> [options]
 ```
 

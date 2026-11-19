@@ -108,6 +108,8 @@ pub enum Envelope {
         amount: u64,
         price: u64,
         lock_vout: u8,
+        /// The x-only output key of the lock. It is inside `body`, so the spend's signature covers it.
+        lock_key: Bytes32,
         pay_script: Vec<u8>,
         spend: Spend,
     },
@@ -318,8 +320,9 @@ impl Envelope {
                 let amount = r.u64()?;
                 let price = r.u64()?;
                 let lock_vout = r.u8()?;
+                let lock_key = r.bytes32()?;
                 let pay_script = r.pay_script()?;
-                Envelope::List { ticker, amount, price, lock_vout, pay_script, spend: r.spend()? }
+                Envelope::List { ticker, amount, price, lock_vout, lock_key, pay_script, spend: r.spend()? }
             }
             TYPE_TAKE => Envelope::Take { opening: r.field("opening is not a field element")? },
             TYPE_CLAIM => {
@@ -376,11 +379,12 @@ impl Envelope {
                 out.extend_from_slice(&v_pub.to_le_bytes());
                 spend.write(&mut out);
             }
-            Envelope::List { ticker, amount, price, lock_vout, pay_script, spend } => {
+            Envelope::List { ticker, amount, price, lock_vout, lock_key, pay_script, spend } => {
                 out.extend_from_slice(&ticker.0);
                 out.extend_from_slice(&amount.to_le_bytes());
                 out.extend_from_slice(&price.to_le_bytes());
                 out.push(*lock_vout);
+                out.extend_from_slice(lock_key);
                 out.push(pay_script.len() as u8);
                 out.extend_from_slice(pay_script);
                 spend.write(&mut out);
