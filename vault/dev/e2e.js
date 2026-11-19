@@ -350,6 +350,22 @@ async function main() {
   if (listingsAfter !== listingsBefore) throw new Error(`listings after the restore: ${listingsAfter}, before: ${listingsBefore}`);
   step('listings found again from the words: ' + listingsAfter);
 
+  // docs/AUDIT.md §8.4: restored without a passphrase, no backup in clear; a passphrase added here, then the words behind it
+  if (!(await evaluate(`document.querySelector('#vault-body button[name=backup]').disabled`))) throw new Error('a backup offered in clear');
+  await click('#vault-body button', 'Set a passphrase');
+  await evaluate(`(() => { for (const n of ['new-pass', 'new-pass-again']) document.querySelector('#vault-body input[name=' + n + ']').value = 'e2e second'; })()`);
+  await click('#vault-body button', 'Set passphrase');
+  await waitFor(`document.querySelector('#vault-body').innerText.includes('encrypted with your passphrase')`, 'the passphrase set');
+  if (/plain|seed/.test(await evaluate(`localStorage.getItem('sh20.vault.v0')`))) throw new Error('still stored in clear after setting a passphrase');
+  if (await evaluate(`document.querySelector('#vault-body button[name=backup]').disabled`)) throw new Error('no backup once encrypted');
+  await click('#vault-body button', 'Show recovery words');
+  await waitFor(`!!document.querySelector('#vault-body input[name=words-pass]')`, 'the passphrase asked for the words');
+  if (await evaluate(`!!document.querySelector('#words')`)) throw new Error('the words shown before the passphrase');
+  await evaluate(`document.querySelector('#vault-body input[name=words-pass]').value = 'e2e second'`);
+  await click('#vault-body button', 'Show the words');
+  await waitFor(`document.querySelectorAll('#words li').length === 12`, 'the words after the passphrase');
+  step('passphrase added after the restore: stored encrypted, backup enabled, words shown after the passphrase');
+
   ws.close();
   // a 404 on /nullifiers is expected from an indexer without the route (before PR #5): spends shown as unknown
   const real = problems.filter((p) => !/favicon/.test(p) && !/404.*\/nullifiers\?from=/.test(p));

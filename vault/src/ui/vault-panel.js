@@ -4,7 +4,7 @@
 import { addressToScript, scriptType } from '../btc.js';
 import { Vault } from '../keys.js';
 import { WALLETS } from '../wallets.js';
-import { busy, fill, h, report, st } from './context.js';
+import { busy, fill, h, report, result, resultBox, st } from './context.js';
 import { syncNotes } from './notes-panel.js';
 import { renderAll } from './render.js';
 
@@ -13,20 +13,36 @@ import { renderAll } from './render.js';
 export function renderVault() {
   if (st.vault) {
     const v = st.vault;
+    const lock = () => { v.lock(); st.vault = null; st.showWords = false; st.vaultForm = null; st.vaultFormNode = null; renderAll(); };
+    // an open form is the same node across renders (a sync renders every panel): what is typed stays
+    if (!st.vaultForm) st.vaultFormNode = null; // a closed form is made anew, empty, when opened again
+    const keep = (kind, make) => (st.vaultFormNode?.kind === kind ? st.vaultFormNode.el : (st.vaultFormNode = { kind, el: make() }).el);
+    // the words of an encrypted vault are shown after its passphrase, not to whoever finds it unlocked (AUDIT §8.4)
+    const showWords = () => {
+      if (st.showWords) st.showWords = false;
+      else if (v.encrypted) st.vaultForm = st.vaultForm === 'words' ? null : 'words';
+      else st.showWords = true;
+      renderVault();
+    };
     fill('vault-body',
       h('p', {}, h('span', { class: 'ok' }, 'Unlocked. '), `${v.state.next} public note key(s) used, ${v.encrypted ? 'encrypted with your passphrase' : 'stored without passphrase'}.`),
+      v.encrypted ? null : h('p', { class: 'warn' }, 'Stored in clear on this device: anyone using this browser profile can read its keys. Set a passphrase: it encrypts this copy, and a backup file needs it.'),
       h('p', {}, 'Your sh20 address (signet), for receiving sealed notes: '),
       h('p', { class: 'mono', id: 'address' }, v.address),
       v.state.obsolete?.length ? h('p', { class: 'muted' }, `${v.state.obsolete.length} note(s) made with the provisional keys of draft v0.2 are kept aside in the backup: they cannot exist on a v0.3 chain.`) : null,
       h('div', { class: 'row' },
         h('button', { type: 'button', class: 'secondary', onclick: () => navigator.clipboard?.writeText(v.address).catch(report) }, 'Copy address'),
-        v.words ? h('button', { type: 'button', class: 'secondary', onclick: () => { st.showWords = !st.showWords; renderVault(); } }, st.showWords ? 'Hide recovery words' : 'Show recovery words') : null,
-        h('button', { type: 'button', class: 'secondary', onclick: downloadBackup }, 'Download backup'),
-        h('button', { type: 'button', class: 'secondary', onclick: () => { v.lock(); st.vault = null; st.showWords = false; renderAll(); } }, 'Lock')),
+        v.words ? h('button', { type: 'button', class: 'secondary', name: 'words', onclick: showWords }, st.showWords ? 'Hide recovery words' : 'Show recovery words') : null,
+        h('button', { type: 'button', class: 'secondary', name: 'passphrase', onclick: () => { st.vaultForm = st.vaultForm === 'pass' ? null : 'pass'; renderVault(); } }, v.encrypted ? 'Change passphrase' : 'Set a passphrase'),
+        h('button', { type: 'button', class: 'secondary', name: 'backup', disabled: !v.encrypted, title: v.encrypted ? null : 'set a passphrase first: a backup is never written in clear', onclick: () => { try { downloadBackup(); } catch (e) { report(e); } } }, 'Download backup'),
+        h('button', { type: 'button', class: 'secondary', onclick: lock }, 'Lock')),
+      st.vaultForm === 'words' ? keep('words', () => wordsForm(v)) : null,
+      st.vaultForm === 'pass' ? keep('pass', () => passphraseForm(v)) : null,
+      resultBox('vault-out'),
       st.showWords && v.words ? wordsBox(v.words) : null,
       h('p', { class: 'muted' }, v.words
         ? 'The 12 recovery words restore everything (keys, notes, address) in any wallet that follows SPEC-NOTES. Write them on paper; anyone who reads them owns your notes. A new version of this page on IPFS has a new origin and an empty storage: restore there from the words or the backup.'
-        : 'This vault was made before recovery words existed: only its backup file restores it (encrypted if you set a passphrase).'));
+        : 'This vault was made before recovery words existed: only its backup file restores it (encrypted with your passphrase).'));
     return;
   }
   if (Vault.exists(localStorage)) {
@@ -50,7 +66,7 @@ export function renderVault() {
   form.addEventListener('submit', (ev) => {
     ev.preventDefault();
     busy(create, async () => {
-      if (!pass.value && !confirm('Create the vault without a passphrase? Anyone using this browser profile could read it.')) return;
+      if (!pass.value && !confirm('Create the vault without a passphrase? Anyone using this browser profile could read it, and no backup file can be made until you set one.')) return;
       st.vault = await Vault.create(localStorage, pass.value);
       st.showWords = true; // shown once on creation, to be written down
       navigator.storage?.persist?.().catch(() => {});
@@ -82,6 +98,44 @@ export function renderVault() {
     h('label', {}, 'From its recovery words', words),
     h('div', { class: 'row' }, wpass, fromWords),
     h('div', { class: 'row' }, file, rpass, restore));
+}
+
+/** The passphrase, asked again before the recovery words of an encrypted vault are shown. */
+function wordsForm(v) {
+  const pass = h('input', { type: 'password', name: 'words-pass', placeholder: 'passphrase', autocomplete: 'current-password' });
+  const btn = h('button', { type: 'submit' }, 'Show the words');
+  const form = h('form', { class: 'row' }, pass, btn);
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    busy(btn, async () => {
+      if (!(await v.checkPassphrase(pass.value))) throw new Error('wrong passphrase: the recovery words stay hidden');
+      st.vaultForm = null;
+      st.showWords = true;
+      renderVault();
+    })();
+  });
+  return form;
+}
+
+/** Adds a passphrase to a vault stored in clear, or changes it (the current one is asked first). */
+function passphraseForm(v) {
+  const current = v.encrypted ? h('input', { type: 'password', name: 'current-pass', placeholder: 'current passphrase', autocomplete: 'current-password' }) : null;
+  const next = h('input', { type: 'password', name: 'new-pass', placeholder: 'new passphrase', autocomplete: 'new-password' });
+  const again = h('input', { type: 'password', name: 'new-pass-again', placeholder: 'new passphrase again', autocomplete: 'new-password' });
+  const btn = h('button', { type: 'submit' }, v.encrypted ? 'Change passphrase' : 'Set passphrase');
+  const form = h('form', { class: 'row' }, current, next, again, btn);
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    busy(btn, async () => {
+      if (!next.value) throw new Error('the passphrase cannot be empty');
+      if (next.value !== again.value) throw new Error('the two new passphrases differ');
+      await v.setPassphrase(next.value, current?.value ?? '');
+      st.vaultForm = null;
+      renderVault();
+      result('vault-out', h('p', { class: 'ok' }, 'Passphrase set: the vault on this device is encrypted with it, and so is every backup from now on. A backup downloaded before stays as it was.'));
+    })();
+  });
+  return h('div', {}, form, h('p', { class: 'muted' }, 'It protects the copy on this device and its backup files. It is not part of the 12 words, which restore the vault without it.'));
 }
 
 function wordsBox(words) {

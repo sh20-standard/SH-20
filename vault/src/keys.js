@@ -3,7 +3,8 @@
 // so the words alone recover every note, public or sealed, by rescanning the indexer.
 // (A vault made before the words existed has a random m and no words: its backup file restores it.)
 // The state lives in localStorage, encrypted with AES-GCM under a PBKDF2 passphrase
-// key when a passphrase is set.
+// key when a passphrase is set. A passphrase can be added or changed at any time; a backup file is
+// only ever written encrypted (docs/AUDIT.md §8.4).
 //
 // A note is identified by its tree position, never by its leaf (SPEC-NOTES §4): its id is
 // `pub:<i>` for the vault's i-th public note (a MINT), `out:<pos>` for a sealed output it received.
@@ -160,13 +161,43 @@ export class Vault {
     return new Vault(storage, state, fromHex(seed), key, salt ?? crypto.getRandomValues(new Uint8Array(16)), words).#init();
   }
 
-  /** Restores a backup file on this device (replaces nothing: fails if a vault exists). */
+  /**
+   * Restores a backup file on this device (replaces nothing: fails if a vault exists). A backup
+   * written in clear (by an earlier version) is encrypted with `passphrase` when one is given,
+   * never silently kept in clear under a passphrase the user believes protects it.
+   */
   static async restore(storage, text, passphrase = '') {
     refuseSharedOrigin();
     if (Vault.exists(storage)) throw new Error('a vault already exists on this device');
     const v = await Vault.open(storage, passphrase, text);
-    await v.save();
+    if (!v.encrypted && passphrase) await v.setPassphrase(passphrase);
+    else await v.save();
     return v;
+  }
+
+  /** True when `passphrase` opens the record stored on this device (an encrypted vault only). */
+  async checkPassphrase(passphrase) {
+    if (!this.#key || !passphrase) return false;
+    const rec = JSON.parse(this.storage.getItem(STORAGE_KEY));
+    try {
+      await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromBase64(rec.iv) }, await aesKey(passphrase, fromBase64(rec.salt)), fromBase64(rec.ct));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Sets the passphrase that encrypts the vault on this device and its backups: adds one to a vault
+   * stored in clear, or changes it (`current` must open the stored record). A new salt each time.
+   */
+  async setPassphrase(passphrase, current = '') {
+    if (!passphrase) throw new Error('the passphrase cannot be empty');
+    if (this.#key && !(await this.checkPassphrase(current))) throw new Error('wrong current passphrase');
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    this.#key = await aesKey(passphrase, salt);
+    this.#salt = salt;
+    await this.save();
   }
 
   async #record() {
@@ -181,9 +212,14 @@ export class Vault {
     this.storage.setItem(STORAGE_KEY, JSON.stringify(await this.#record()));
   }
 
-  /** The backup is the stored record itself: encrypted when the vault has a passphrase. */
+  /**
+   * The backup is the stored record itself, and only when it is encrypted: a file in the downloads
+   * folder, synced or mailed, must not hold the master secret and the words in clear.
+   */
   exportBackup() {
-    return this.storage.getItem(STORAGE_KEY);
+    const text = this.storage.getItem(STORAGE_KEY);
+    if (!this.#key || JSON.parse(text).plain) throw new Error('no backup in clear: set a passphrase first, it encrypts the backup and the copy on this device');
+    return text;
   }
 
   /** Reserves a fresh public-note index (saved at once: SPEC-NOTES §5, the counter never repeats). */

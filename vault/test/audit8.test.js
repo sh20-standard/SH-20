@@ -242,3 +242,59 @@ test('8.3 the page checks the quorum before a TAKE, and says why it cannot buy',
   assert.match(app, /disabled: !st\.wallet \|\| c\.state !== 'ACTIVE' \|\| !c\.enough/, 'no Buy button without the quorum');
   assert.ok(!/one indexer: add others in Settings to cross-check/.test(app), 'the old message, which described another case');
 });
+
+// ---- 8.4: without a passphrase, the master secret and the words were stored and backed up in clear --
+
+test('8.4 no backup in clear; a passphrase can be added, and changed with the current one', async () => {
+  const st = memStorage();
+  const v = await Vault.fromWords(st, WORDS); // created without a passphrase: stored in clear, as before
+  assert.ok(!v.encrypted);
+  assert.throws(() => v.exportBackup(), /no backup in clear: set a passphrase first/);
+  await assert.rejects(v.setPassphrase(''), /cannot be empty/);
+  assert.equal(await v.checkPassphrase('anything'), false, 'nothing to check against on a clear vault');
+
+  await v.setPassphrase('first');
+  assert.ok(v.encrypted);
+  const rec = st.getItem(STORAGE_KEY);
+  assert.ok(!/plain|seed|abandon/.test(rec), 'the copy on this device is encrypted at once');
+  assert.equal(v.exportBackup(), rec, 'and the backup is that record');
+  assert.equal((await Vault.open(st, 'first')).address, v.address);
+  await assert.rejects(Vault.open(st), /needs its passphrase/);
+
+  await assert.rejects(v.setPassphrase('second', 'wrong'), /wrong current passphrase/);
+  await assert.rejects(v.setPassphrase('second'), /wrong current passphrase/, 'changing it needs the current one');
+  assert.equal(st.getItem(STORAGE_KEY), rec, 'a refused change leaves the record as it was');
+  await v.setPassphrase('second', 'first');
+  assert.notEqual(JSON.parse(st.getItem(STORAGE_KEY)).salt, JSON.parse(rec).salt, 'a new salt');
+  await assert.rejects(Vault.open(st, 'first'), /wrong passphrase/);
+  const again = await Vault.open(st, 'second');
+  assert.equal(again.words, WORDS);
+  assert.ok(await again.checkPassphrase('second'));
+  assert.ok(!(await again.checkPassphrase('first')));
+});
+
+test('8.4 a clear backup restored with a passphrase is encrypted with it, never kept in clear under it', async () => {
+  const old = memStorage();
+  await Vault.fromWords(old, WORDS);
+  const clear = old.getItem(STORAGE_KEY); // what "Download backup" wrote before this fix
+  assert.ok(JSON.parse(clear).plain);
+  const st = memStorage();
+  const r = await Vault.restore(st, clear, 'typed for the backup');
+  assert.ok(r.encrypted);
+  assert.ok(!/plain|abandon/.test(st.getItem(STORAGE_KEY)));
+  assert.equal((await Vault.open(st, 'typed for the backup')).words, WORDS);
+  const st2 = memStorage();
+  assert.ok(!(await Vault.restore(st2, clear)).encrypted, 'with no passphrase typed it stays as it was, and the page says so');
+});
+
+test('8.4 the page: backup only when encrypted, a passphrase form, the words behind the passphrase', () => {
+  const app = page();
+  assert.match(app, /name: 'backup', disabled: !v\.encrypted/);
+  assert.match(app, /v\.encrypted \? 'Change passphrase' : 'Set a passphrase'/);
+  const words = app.slice(app.indexOf('function wordsForm('), app.indexOf('function passphraseForm('));
+  assert.ok(words.indexOf('checkPassphrase(') > 0 && words.indexOf('checkPassphrase(') < words.indexOf('st.showWords = true'), 'the words of an encrypted vault come after its passphrase');
+  const pass = app.slice(app.indexOf('function passphraseForm('), app.indexOf('function wordsBox('));
+  assert.match(pass, /next\.value !== again\.value/, 'typed twice');
+  assert.match(pass, /setPassphrase\(next\.value, current\?\.value/);
+  assert.match(src('keys.js'), /exportBackup\(\) \{\n\s+const text = this\.storage\.getItem\(STORAGE_KEY\);\n\s+if \(!this\.#key/);
+});
