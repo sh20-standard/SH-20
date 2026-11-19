@@ -117,6 +117,23 @@ covers a full tree, which no test can reach):
 - two team notes in one block (4.13), a spend carried by an OP_RETURN (2.6), a full tree of 2^32 leaves (4.6);
 - a block below `A` (the file has no place for one), and a reorg.
 
+## DEPLOY maturity (2026-11-19)
+
+`indexer-rs` follows the rule against ticker sniping from `SPEC-WIRE.md` §5 ("DEPLOY maturity") and §6 (GENESIS
+ends with `N`), read alone, and replays the vectors that go with it (`N = 3`): the two copies of the DEPLOY refused
+in block 4, the same 11 verifier calls, the 73-byte GENESIS record, and every digest up to block 13.
+**No contradiction** between the text and the vectors. Three points had to be decided:
+
+| # | Point | Chosen in `indexer-rs` | Vectors |
+| --- | --- | --- | --- |
+| M1 | **When a missing height stops the indexer.** The text needs the height "for input 0 of a transaction that carries a DEPLOY in its witness". It does not say whether an indexer stops when that DEPLOY would be refused anyway (a taken ticker, a bad `start`). | It stops whenever a transaction has exactly one counted envelope, in the witness, that decodes as a DEPLOY, before any other condition. No height is needed for a DEPLOY in an OP_RETURN, a transaction with two envelopes, or an envelope the decoder refuses. | confirm the OP_RETURN case (no height given, refused); silent on the rest |
+| M2 | **What a stop leaves behind.** "Must stop, not guess" does not say what becomes of the transactions of that block before the DEPLOY. | Nothing of the block is applied; the same block can be given again with the height. | cannot be expressed |
+| M3 | **`H − N` below zero.** The anchor rule writes `max(0, H − W)`; this one writes `≤ H − N`. | Read as integers: below block `N` no commit is old enough, not even one of block 0. | silent: the first DEPLOY is in block 4 |
+
+M1 and M2 cannot change a digest: an indexer that stops has no digest for that block. They decide whether two
+indexers given the same incomplete data both stop. The vectors pin a commit exactly `N` blocks old (accepted, blocks
+4 and 5) and one `N − 2` blocks old (refused); `N − 1` has only this crate's test.
+
 The sections below are the record of the first pass, before the resolution. They are left as written.
 
 ## Result
