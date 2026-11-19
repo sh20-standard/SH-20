@@ -8,7 +8,8 @@
 // root at the same height; Merkle paths for spends come from that local tree.
 // Leaves and nullifiers are cached; each sync re-reads only the last few blocks
 // (REORG_MARGIN) plus new ones. A deeper reorg shows up as a root mismatch and
-// triggers one full re-download.
+// triggers one full re-download. Leaves the vault has not scanned yet (a sync while it was locked,
+// or a scan that failed: docs/AUDIT.md §8.6) are read again until it says so (`scanned`).
 
 import { NoteTree, rootFromPath } from './sh20.js';
 import { frHex } from './fr.js';
@@ -47,6 +48,7 @@ export class Sync {
     this.height = null; // indexer height of the last successful sync
     this.nullifiers = new Map(); // hex -> block height
     this.nullifiersKnown = false; // false until /nullifiers has answered once
+    this.unscanned = null; // position of the first leaf the vault has not scanned, null when none
   }
 
   async load() {
@@ -61,6 +63,7 @@ export class Sync {
     this.height = c.height;
     this.nullifiers = new Map(c.nullifiers);
     this.nullifiersKnown = c.nullifiersKnown;
+    this.unscanned = Number.isInteger(c.unscanned) ? c.unscanned : null;
     return true;
   }
 
@@ -73,6 +76,7 @@ export class Sync {
       leafHeights: Uint32Array.from(this.leafHeights),
       nullifiers: [...this.nullifiers],
       nullifiersKnown: this.nullifiersKnown,
+      unscanned: this.unscanned,
     });
   }
 
@@ -92,6 +96,7 @@ export class Sync {
     const keepBelow = this.height === null ? 0 : this.height - REORG_MARGIN + 1;
     let keep = this.leafHeights.findIndex((h) => h >= keepBelow);
     if (keep < 0) keep = this.leafHeights.length;
+    if (this.unscanned !== null) keep = Math.min(keep, this.unscanned); // read again what the vault has not scanned
     if (keep < this.tree.size) this.tree.restore({ size: keep }); // drop the leaves of the re-read blocks
     this.leafHeights.length = keep;
     const notes = (await api.notes(keep)).filter((n) => n.height !== null && n.height <= H);
@@ -121,8 +126,15 @@ export class Sync {
     }
 
     this.height = H;
+    this.unscanned = keep < this.tree.size ? keep : null; // the notes returned stay unscanned until the vault says so
     await this.save();
     return { height: H, notes, leaves: this.tree.size, nullifiersKnown: this.nullifiersKnown };
+  }
+
+  /** The vault has scanned every note the last sync returned: the next one reads only the last blocks. */
+  async scanned() {
+    this.unscanned = null;
+    await this.save();
   }
 
   /** Merkle witness of the leaf at `pos` from the local tree, checked against the local root. */

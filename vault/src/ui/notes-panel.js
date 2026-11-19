@@ -123,7 +123,9 @@ export async function syncNotes({ full = false } = {}) {
   st.sync = { height: r.height, leaves: r.leaves, nullifiersKnown: r.nullifiersKnown };
   let found = 0;
   if (st.vault) {
+    // a scan that throws leaves the sync's notes unscanned: the next sync reads them again (AUDIT §8.6)
     found = await matchNotes(r.notes);
+    await s.scanned();
     await checkOwned(s);
     await syncListings();
   }

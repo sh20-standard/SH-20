@@ -100,7 +100,9 @@ test('cache: a second sync re-reads only the last blocks, and survives a reload'
   for (let h = 1; h <= 30; h++) ix.add(h, 2);
   const cache = memoryCache();
   const api = new IndexerApi('http://ix');
-  await new Sync(cache, 'ix').sync(api);
+  const first = new Sync(cache, 'ix');
+  await first.sync(api);
+  await first.scanned(); // the vault matched every note returned (else they are read again: AUDIT §8.6)
   ix.add(31, 2, ['ee'.repeat(32)]);
   ix.requests.length = 0;
   const s = new Sync(cache, 'ix');

@@ -21,6 +21,10 @@ import { parseEnvelope, serializeEnvelope, NoteTree } from '../src/sh20.js';
 import { fromHex, toHex } from '../src/bytes.js';
 import { frHex } from '../src/fr.js';
 import { listingCheck, TAKE_QUORUM } from '../src/consensus.js';
+import { scanOutput, wallet } from '../src/notekeys.js';
+import { mockVerifier } from '../../indexer/test/helpers.js';
+import { seal, decodeAddress } from '../src/sh20.js';
+import { REORG_MARGIN } from '../src/sync.js';
 
 const memStorage = () => {
   const m = new Map();
@@ -297,4 +301,74 @@ test('8.4 the page: backup only when encrypted, a passphrase form, the words beh
   assert.match(pass, /next\.value !== again\.value/, 'typed twice');
   assert.match(pass, /setPassphrase\(next\.value, current\?\.value/);
   assert.match(src('keys.js'), /exportBackup\(\) \{\n\s+const text = this\.storage\.getItem\(STORAGE_KEY\);\n\s+if \(!this\.#key/);
+});
+
+// ---- 8.6: scanOutput turned every failure into "not ours" -------------------------------------------
+
+/** Runs `fn` while WebCrypto's deriveBits fails the way a broken platform would (not a bad key). */
+async function brokenWebCrypto(fn) {
+  const proto = Object.getPrototypeOf(crypto.subtle);
+  const original = proto.deriveBits;
+  proto.deriveBits = async () => { throw new DOMException('the platform failed', 'NotSupportedError'); };
+  try {
+    return await fn();
+  } finally {
+    proto.deriveBits = original;
+  }
+}
+
+test('8.6 a scan that could not be made throws; a malformed output is still not ours', async () => {
+  const w = await wallet(fromHex(cv.wallets[0].m));
+  const theirs = await wallet(fromHex(cv.wallets[1].m));
+  const sealed = await seal(w.address, 'GENE', 700n, crypto.getRandomValues(new Uint8Array(32)));
+  const out = { leaf: sealed.leaf, pkEph: sealed.pkEph, ct: sealed.ct };
+  assert.equal((await scanOutput(w, out)).v, 700n);
+  assert.equal(await scanOutput(theirs, out), null, 'another wallet\'s');
+  assert.equal(await scanOutput(w, { ...out, ct: out.ct.subarray(0, 27) }), null, 'a malformed ct');
+  assert.equal(await scanOutput(w, { ...out, pkEph: new Uint8Array(32) }), null, 'a small-order pkEph');
+  assert.equal(await scanOutput(w, { ...out, leaf: -1n }), null, 'a leaf out of the field');
+  await brokenWebCrypto(() => assert.rejects(scanOutput(w, out), /the platform failed/));
+
+  const v = await Vault.fromWords(memStorage(), WORDS);
+  const mine = await seal(await decodeAddress('tsh20', v.address), 'GENE', 300n, crypto.getRandomValues(new Uint8Array(32)));
+  await brokenWebCrypto(() => assert.rejects(v.receive({ pos: 4, leaf: mine.leaf, pkEph: mine.pkEph, ct: mine.ct })));
+  assert.equal(v.state.notes.length, 0, 'nothing recorded');
+  assert.equal((await v.receive({ pos: 4, leaf: mine.leaf, pkEph: mine.pkEph, ct: mine.ct })).v, '300', 'found once the scan can be made');
+});
+
+test('8.6 the leaves a vault has not scanned are read again, past the last blocks, until it has', async () => {
+  const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n, deployMaturity: 0 }, verifier: mockVerifier() });
+  const c = chain(ix);
+  c.block(helperTx({ env: deployEnv({ start: 2, unlock: 2 }), prevHeight: c.next - 1 })); // N = 0: the DEPLOY is only setup here
+  const v = await vaultOf(cv.wallets[0].m);
+  c.block(helperTx({ env: { type: 'MINT', ticker: 'GENE', npk: (await v.opening(0)).npk }, burnSats: 1000n }));
+  const server = await listen(ix, { port: 0 });
+  try {
+    const api = new IndexerApi(`http://127.0.0.1:${server.address().port}`);
+    const cache = memoryCache();
+    const s = new Sync(cache, 'audit86');
+    const first = await s.sync(api);
+    assert.deepEqual(first.notes.map((n) => n.pos), [0]);
+    // the scan failed (or the vault was locked): no s.scanned(). Blocks go by, more than the margin
+    for (let i = 0; i < REORG_MARGIN + 4; i++) c.block();
+    c.block(helperTx({ env: { type: 'MINT', ticker: 'GENE', npk: (await v.opening(1)).npk }, burnSats: 1000n }));
+    const reloaded = new Sync(cache, 'audit86'); // across a reload too
+    assert.ok(await reloaded.load());
+    const second = await reloaded.sync(api);
+    assert.deepEqual(second.notes.map((n) => n.pos), [0, 1], 'leaf 0 is read again although it is older than the last blocks');
+    await reloaded.scanned();
+    for (let i = 0; i < REORG_MARGIN + 4; i++) c.block();
+    const third = await reloaded.sync(api);
+    assert.deepEqual(third.notes.map((n) => n.pos), [1], 'once scanned, only the last blocks before the previous sync are read again');
+    await reloaded.scanned();
+    const fourth = await reloaded.sync(api);
+    assert.deepEqual(fourth.notes.map((n) => n.pos), []);
+    assert.equal(fourth.leaves, 2);
+  } finally {
+    server.close();
+  }
+  const app = page();
+  const sn = app.slice(app.indexOf('async function syncNotes('));
+  assert.ok(sn.indexOf('await matchNotes(r.notes);') < sn.indexOf('await s.scanned();'), 'scanned only after every note was matched');
+  assert.ok(!/catch\s*\{\s*return null;/.test(src('notekeys.js')), 'no catch-all left in notekeys.js');
 });
