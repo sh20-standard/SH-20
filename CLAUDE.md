@@ -106,6 +106,11 @@ Not done: an audit; a mid-range phone; an outside review of the note sealing (`d
 today); a relayer; a second independent indexer; the
 profile constants (activation height, `D`).
 
+**Known problem (2026-11-19).** The lock of a LIST is not covered by its proof: the same envelope is valid in a transaction
+with another lock output, so whoever gets a copy mined first owns the listing and can cancel it into a note of their own.
+Found while writing `docs/AUDIT.md` (§6.1) and reproduced on the reference indexer. The fix is a wire change (the lock's
+key inside the LIST body, where the body hash covers it) and waits for the maintainer.
+
 ## Next task: the phone figures, then the vault
 
 The relation, the proof system, the verifier and a prover that runs in a browser exist, and a recent iPhone proves in
@@ -129,7 +134,9 @@ under 6 s. What is still unknown is how long a mid-range phone takes.
    `spend.pk` is 8.4 MB of binary: commit a new one only when the gates change (maintainer, 2026-11-18), never for a rebuild
    that gives the same bytes.
 5. The soundness-critical code is `circuit/src/gadgets.rs`, `circuit/src/spend.rs` and `circuit/src/plonk/verifier.rs`.
-   It is new and unaudited. Do not weaken a check to save gates without the maintainer.
+   It is new and unaudited. Do not weaken a check to save gates without the maintainer. `docs/AUDIT.md` maps each
+   constraint to its gates and lists what its author would check first; keep its line numbers and counts true when the
+   code moves (`sh20-circuit info` prints the gates of each part).
 6. The vault embeds the prover the way the test page does: `circuit/web/host.js` and the two workers, with the thread count
    of `defaultThreads()` (not `navigator.hardwareConcurrency`, which Safari under-reports on an iPhone). It computes note keys,
    nullifiers and signatures as `circuit/js/` does, and checks itself against `circuit/js/vectors.json`.

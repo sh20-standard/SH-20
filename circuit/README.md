@@ -252,7 +252,7 @@ node bench/tx-vsize.mjs
    and the three outputs stay (the third pays a relayer in tokens), so the last thousand gates have to
    be found without changing a rule. Each change moves the verifying-key digest. On hold (maintainer,
    2026-11-19).
-4. An audit, then the freeze of the digest.
+4. An audit ([`docs/AUDIT.md`](../docs/AUDIT.md) is the dossier for the auditor), then the freeze of the digest.
 
 ## Licence
 

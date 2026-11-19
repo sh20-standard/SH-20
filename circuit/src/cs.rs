@@ -215,6 +215,16 @@ impl Cs {
         self.unsatisfied().is_none()
     }
 
+    /// The number of gates emitted under each tag, in the order the tags were set: where the size of
+    /// the circuit is.
+    pub fn gate_counts(&self) -> Vec<(String, usize)> {
+        let mut counts = vec![0usize; self.tags.len()];
+        for t in &self.gate_tag {
+            counts[*t as usize] += 1;
+        }
+        self.tags.iter().cloned().zip(counts).filter(|(_, n)| *n > 0).collect()
+    }
+
     /// Same gates on the same wires (the assignment may differ).
     pub fn same_gates(&self, other: &Cs) -> bool {
         self.n_public == other.n_public && self.gates.len() == other.gates.len() && self.gates.iter().zip(&other.gates).all(|(a, b)| a.w == b.w && a.q == b.q)
