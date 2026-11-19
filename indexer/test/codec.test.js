@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseEnvelope, serializeEnvelope, CodecError } from '../src/codec.js';
@@ -91,6 +92,21 @@ test('strict parsing rejects malformed envelopes', () => {
   assert.throws(() => serializeEnvelope(deployEnv({ payMode: 1, payScript: p2wpkh() })) && parseEnvelope(serializeEnvelope(deployEnv({ payMode: 1, payScript: p2wpkh() }))), /payScript only allowed/);
 });
 
+test('carrier cases of the vectors: none, many, or the one envelope', () => {
+  const v = JSON.parse(readFileSync(new URL('../vectors/v0.3.json', import.meta.url), 'utf8'));
+  assert.ok(v.carriers.length >= 20);
+  for (const c of v.carriers) {
+    const tx = {
+      txid: 'c',
+      vin: c.tx.vin.map((i) => (i.coinbase ? { coinbase: true } : { txid: 'p', vout: 0, witness: i.witness.map((w) => Buffer.from(w, 'hex')) })),
+      vout: c.tx.vout.map((o) => ({ value: BigInt(o.value), script: Buffer.from(o.script, 'hex') })),
+    };
+    const found = extractEnvelope(tx);
+    const got = found.none ? 'none' : found.error ? 'many' : found.bytes.toString('hex');
+    assert.equal(got, c.expect, c.name);
+  }
+});
+
 test('carrier rules: one envelope per transaction', () => {
   const bytes = serializeEnvelope({ type: 'MINT', ticker: 'GENE', ...opening() });
   const one = tx({ env: { type: 'MINT', ticker: 'GENE', ...opening() } });
@@ -99,7 +115,10 @@ test('carrier rules: one envelope per transaction', () => {
   assert.match(extractEnvelope(twoOpReturns).error, /more than one/);
   const both = { txid: 'a', vin: [{ txid: 'b', vout: 0, witness: witnessFor(bytes) }], vout: [{ value: 0n, script: opReturn(bytes) }] };
   assert.match(extractEnvelope(both).error, /more than one/);
+  // Anything that does not match a carrier exactly carries no envelope, and is not counted (SPEC-WIRE §3).
   const nonMinimal = Buffer.concat([Buffer.from([0x6a, 0x4c, bytes.length]), bytes]); // PUSHDATA1 for a 42-byte push
-  assert.match(extractEnvelope({ txid: 'a', vin: [], vout: [{ value: 0n, script: nonMinimal }] }).error, /minimal push/);
+  assert.ok(extractEnvelope({ txid: 'a', vin: [], vout: [{ value: 0n, script: nonMinimal }] }).none);
+  const beside = { txid: 'a', vin: [{ txid: 'b', vout: 0, witness: witnessFor(bytes) }], vout: [{ value: 0n, script: nonMinimal }] };
+  assert.ok(extractEnvelope(beside).bytes.equals(bytes));
   assert.ok(extractEnvelope({ txid: 'a', vin: [], vout: [{ value: 0n, script: opReturn(Buffer.from('hello')) }] }).none);
 });

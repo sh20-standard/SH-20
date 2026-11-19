@@ -98,6 +98,7 @@ export class Indexer {
       if (!this.meta.has('genesis')) events.push(this._installGenesis(block.height));
       const unlocks = (this.teamQueue.get(block.height) || []).slice().sort((a, b) => (a.ticker < b.ticker ? -1 : a.ticker > b.ticker ? 1 : 0));
       for (const u of unlocks) {
+        if (this.tree.size >= this.tree.capacity) continue; // a full tree drops the team note (SPEC-WIRE §6)
         const pos = this._append(noteLeaf(tickerT(u.ticker), u.v, u.npk, PUBLIC_RHO), { kind: 'TEAM', ticker: u.ticker, v: u.v, npk: hexFr(u.npk) });
         this._intoPool(u.ticker, u.v);
         events.push({ type: 'TEAM_UNLOCK', ticker: u.ticker, v: u.v, pos });
@@ -105,13 +106,16 @@ export class Indexer {
       for (const tx of block.txs) this._applyTx(tx, block.height, events, rejected);
     }
 
-    this._set(this.roots, block.height, this.tree.root);
-    const delta = sha256(encodeEvents(events));
-    const h = Buffer.alloc(4);
-    h.writeUInt32LE(block.height);
-    this.digest = sha256(this.digest, h, frToBytes(this.tree.root), delta);
-
-    this._set(this.digests, block.height, this.digest.toString('hex'));
+    // Blocks below A have no root and no digest: digest_{A−1} = SHA256("sh20-v0") whatever an indexer read before A.
+    const active = block.height >= this.profile.activationHeight;
+    if (active) {
+      this._set(this.roots, block.height, this.tree.root);
+      const delta = sha256(encodeEvents(events));
+      const h = Buffer.alloc(4);
+      h.writeUInt32LE(block.height);
+      this.digest = sha256(this.digest, h, frToBytes(this.tree.root), delta);
+      this._set(this.digests, block.height, this.digest.toString('hex'));
+    }
     if (events.length || rejected.length) {
       this._set(this.history, block.height, {
         height: block.height, hash: block.hash ?? null, digest: this.digest.toString('hex'),
@@ -123,7 +127,7 @@ export class Indexer {
     this.frames.push(frame);
     this._ops = null;
     this.height = block.height;
-    return { height: block.height, root: this.tree.root, digest: this.digest.toString('hex'), events, rejected };
+    return { height: block.height, root: active ? this.tree.root : null, digest: active ? this.digest.toString('hex') : null, events, rejected };
   }
 
   /** Forgets undo data older than `depth` blocks; deeper reorgs then throw. */

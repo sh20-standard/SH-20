@@ -62,18 +62,22 @@ test('digest: SHA256(prev ‖ u32le(H) ‖ root ‖ SHA256(events_H)), from SHA2
   const h = (n) => Buffer.from([n, 0, 0, 0]);
   const root = frToBytes(ix.tree.root);
 
-  const b1 = ix.applyBlock({ height: 1, txs: [] }); // before activation: no events, an empty events_H
-  const d1 = sha256(start, h(1), root, sha256(Buffer.alloc(0)));
-  assert.equal(b1.digest, d1.toString('hex'));
+  // A block below A has no root and no digest: digest_{A−1} = SHA256("sh20-v0") whatever was read before A.
+  const b1 = ix.applyBlock({ height: 1, txs: [] });
+  assert.deepEqual([b1.root, b1.digest, ix.digests.has(1), ix.roots.has(1)], [null, null, false, false]);
+  assert.ok(ix.digest.equals(start));
 
   const b2 = ix.applyBlock({ height: 2, txs: [] }); // activation: the GENESIS record alone
   assert.deepEqual(b2.events.map((e) => e.type), ['GENESIS']);
-  assert.equal(b2.digest, sha256(d1, h(2), root, sha256(encodeEvents(b2.events))).toString('hex'));
+  assert.equal(b2.digest, sha256(start, h(2), root, sha256(encodeEvents(b2.events))).toString('hex'));
+  const fresh = new Indexer({ profile: { activationHeight: 2 } }); // started at A: the same digest
+  assert.equal(fresh.applyBlock({ height: 2, txs: [] }).digest, b2.digest);
+  const b3 = ix.applyBlock({ height: 3, txs: [] }); // an empty block after A
+  assert.equal(b3.digest, sha256(Buffer.from(b2.digest, 'hex'), h(3), root, sha256(Buffer.alloc(0))).toString('hex'));
 
   // Two indexers with different rules part at the activation block.
   const other = new Indexer({ profile: { activationHeight: 2, anchorWindow: 99 } });
   other.applyBlock({ height: 1, txs: [] });
-  assert.equal(other.digest.toString('hex'), b1.digest);
   assert.notEqual(other.applyBlock({ height: 2, txs: [] }).digest, b2.digest);
 });
 
@@ -86,5 +90,29 @@ test('vectors: every block lists its events_H and they hash into its digest', ()
     const root = frToBytes(BigInt('0x' + b.root));
     d = sha256(d, h, root, sha256(Buffer.from(b.eventsH, 'hex')));
     assert.equal(d.toString('hex'), b.digest, `block ${b.height}`);
+  }
+});
+
+test('vectors: the nine public inputs of every verifier call match the envelope and the roots', async () => {
+  const { extractEnvelope } = await import('../src/carrier.js');
+  const { parseEnvelope } = await import('../src/codec.js');
+  const { FR, DOMAIN: D } = await import('../src/constants.js');
+  const v = JSON.parse(readFileSync(new URL('../vectors/v0.3.json', import.meta.url), 'utf8'));
+  const hex = (x) => x.toString(16).padStart(64, '0');
+  const roots = new Map(v.scenario.after.map((b) => [b.height, b.root]));
+  assert.equal(v.scenario.verifierCalls.length, 7);
+  for (const call of v.scenario.verifierCalls) {
+    const raw = v.scenario.blocks.find((b) => b.height === call.height).txs.find((x) => x.txid === call.txid);
+    const tx = { txid: raw.txid, vin: raw.vin.map((i) => ({ ...i, witness: i.witness.map((w) => Buffer.from(w, 'hex')) })), vout: raw.vout.map((o) => ({ value: BigInt(o.value), script: Buffer.from(o.script, 'hex') })) };
+    const { env, body } = parseEnvelope(extractEnvelope(tx).bytes);
+    const s = env.spend;
+    const bodyHash = BigInt('0x' + sha256(Buffer.from(D.BODY), body).toString('hex')) % FR;
+    const [root, nf0, nf1, l0, l1, l2, bh, vPub, tPub] = call.publicInputs;
+    assert.equal(root, roots.get(s.anchorHeight), `anchor root of ${call.txid}`);
+    assert.deepEqual([nf0, nf1, l0, l1, l2], [...s.nf, ...s.outs.map((o) => o.leaf)].map(hex));
+    assert.equal(bh, hex(bodyHash));
+    const t = (ticker) => BigInt('0x' + Buffer.from(ticker).toString('hex'));
+    const expectPub = { TRANSFER: () => [0n, 0n], BURN: () => [env.vPub, t(env.ticker)], LIST: () => [env.amount, t(env.ticker)], DEPLOY: () => [1000n, t('SH20')] }[env.type]();
+    assert.deepEqual([vPub, tPub], expectPub.map(hex), `${env.type} vPub, tPub`);
   }
 });
