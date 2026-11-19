@@ -193,7 +193,8 @@ pub fn bech32m_decode(s: &str) -> Result<(String, Vec<u8>), String> {
     if hrp.is_empty() || body.len() < 6 {
         return Err("address: too short".into());
     }
-    let fives: Vec<u8> = body.bytes().map(|c| CHARSET.iter().position(|x| *x == c).map(|i| i as u8).ok_or("address: invalid character")).collect::<Result<_, _>>()?;
+    let fives: Vec<u8> =
+        body.bytes().map(|c| CHARSET.iter().position(|x| *x == c).map(|i| i as u8).ok_or("address: invalid character")).collect::<Result<_, _>>()?;
     if polymod(hrp_expand(hrp).into_iter().chain(fives.iter().copied())) != BECH32M {
         return Err("address: wrong checksum".into());
     }

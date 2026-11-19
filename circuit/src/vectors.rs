@@ -51,7 +51,12 @@ pub fn reference_vectors() -> String {
     let one = BigUint::from(1u8);
 
     let poseidon_inputs: Vec<Vec<Fr>> = (2..=5u64).map(|n| (1..=n).map(Fr::from).collect()).collect();
-    let poseidon_json = list(poseidon_inputs.iter().map(|xs| format!(r#"{{"inputs":[{}],"hash":"{}"}}"#, xs.iter().map(|x| q(&dr(x))).collect::<Vec<_>>().join(","), dr(&poseidon::hash(xs)))).collect());
+    let poseidon_json = list(
+        poseidon_inputs
+            .iter()
+            .map(|xs| format!(r#"{{"inputs":[{}],"hash":"{}"}}"#, xs.iter().map(|x| q(&dr(x))).collect::<Vec<_>>().join(","), dr(&poseidon::hash(xs))))
+            .collect(),
+    );
 
     let tickers = ["GENE", "0000", "ZZ99", "A1B2"];
     let tickers_json = list(tickers.iter().map(|t| format!(r#"{{"ticker":"{t}","t":"{}"}}"#, model::ticker_t(t.as_bytes()).expect("ticker"))).collect());
@@ -72,7 +77,8 @@ pub fn reference_vectors() -> String {
         ("GENE", 0, key_sets[1].npk, field("leaf/1/rho")),
         ("ZZ99", u64::MAX, key_sets[2].npk, field("leaf/2/rho")),
     ];
-    let leaf_of = |(ticker, v, npk, rho): &(&str, u64, Fr, Fr)| model::note_leaf(&Fr::from(model::ticker_t(ticker.as_bytes()).unwrap() as u64), &Fr::from(*v), npk, rho);
+    let leaf_of =
+        |(ticker, v, npk, rho): &(&str, u64, Fr, Fr)| model::note_leaf(&Fr::from(model::ticker_t(ticker.as_bytes()).unwrap() as u64), &Fr::from(*v), npk, rho);
     let leaves_json = list(
         leaf_cases
             .iter()
@@ -86,14 +92,24 @@ pub fn reference_vectors() -> String {
         (&key_sets[1].nk, leaf_of(&leaf_cases[1]), 5),
         (&key_sets[3].nk, leaf_of(&leaf_cases[2]), (1u64 << TREE_DEPTH) - 1),
     ];
-    let nullifiers_json = list(nf_cases.iter().map(|(nk, leaf, index)| format!(r#"{{"nk":"{nk}","leaf":"{}","index":"{index}","nf":"{}"}}"#, dr(leaf), dr(&model::nullifier(nk, leaf, *index)))).collect());
+    let nullifiers_json = list(
+        nf_cases
+            .iter()
+            .map(|(nk, leaf, index)| format!(r#"{{"nk":"{nk}","leaf":"{}","index":"{index}","nf":"{}"}}"#, dr(leaf), dr(&model::nullifier(nk, leaf, *index))))
+            .collect(),
+    );
 
     // body hashes
     let bodies: Vec<Vec<u8>> = vec![Vec::new(), b"SH20".to_vec(), bytes("body/2", 355)];
     let bodies_json = list(bodies.iter().map(|b| format!(r#"{{"body":"{}","bodyHash":"{}"}}"#, hex::encode(b), dr(&model::body_hash(b)))).collect());
 
     // signatures
-    let sig_cases: Vec<(&NoteKeys, Fr)> = vec![(&key_sets[0], model::body_hash(&bodies[2])), (&key_sets[1], Fr::zero()), (&key_sets[2], -Fr::from(1u64)), (&key_sets[3], field("signature/3/message"))];
+    let sig_cases: Vec<(&NoteKeys, Fr)> = vec![
+        (&key_sets[0], model::body_hash(&bodies[2])),
+        (&key_sets[1], Fr::zero()),
+        (&key_sets[2], -Fr::from(1u64)),
+        (&key_sets[3], field("signature/3/message")),
+    ];
     let signatures_json = list(
         sig_cases
             .iter()
@@ -162,7 +178,22 @@ pub fn reference_vectors() -> String {
         (notes::bech32m_encode("sh20", &raw(1, good.ivk_pub, pa, pn)), "unknown version"),
         (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, pa, pn)[..96]), "wrong length"),
         (notes::bech32m_encode("sh20", &raw(0, [0u8; 32], pa, pn)), "IVK is a low-order point (zero)"),
-        (notes::bech32m_encode("sh20", &raw(0, { let mut one = [0u8; 32]; one[0] = 1; one }, pa, pn)), "IVK is a low-order point (one)"),
+        (
+            notes::bech32m_encode(
+                "sh20",
+                &raw(
+                    0,
+                    {
+                        let mut one = [0u8; 32];
+                        one[0] = 1;
+                        one
+                    },
+                    pa,
+                    pn,
+                ),
+            ),
+            "IVK is a low-order point (one)",
+        ),
         (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, identity, pn)), "A is the identity"),
         (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, order2, pn)), "A has order 2"),
         (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, torsion, pn)), "A is outside the prime-order subgroup"),
@@ -216,7 +247,14 @@ pub fn reference_vectors() -> String {
                 let (npk, sec) = notes::public_opening(&wallets[0].ivk, &wallets[0].address, *i).expect("opening");
                 assert!(sec.rho.is_zero(), "public notes have rho = 0");
                 let leaf = model::note_leaf(&gene, &Fr::from(1000u64), &npk, &sec.rho);
-                format!(r#"{{"wallet":"payer","i":{i},"s":"{}","tauA":"{}","tauN":"{}","npk":"{}","leafOf1000Gene":"{}"}}"#, hex::encode(s_i), sec.tau_a, sec.tau_n, dr(&npk), dr(&leaf))
+                format!(
+                    r#"{{"wallet":"payer","i":{i},"s":"{}","tauA":"{}","tauN":"{}","npk":"{}","leafOf1000Gene":"{}"}}"#,
+                    hex::encode(s_i),
+                    sec.tau_a,
+                    sec.tau_n,
+                    dr(&npk),
+                    dr(&leaf)
+                )
             })
             .collect(),
     );
@@ -236,7 +274,8 @@ pub fn reference_vectors() -> String {
         tree_leaves.push(field(&format!("spend/filler/after{i}")));
     }
     let tree = Tree::new(&tree_leaves);
-    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: owners[i].clone(), v: in_v[i], rho: opened[i].1.rho, index: index[i], path: tree.path(index[i] as usize) });
+    let inputs: [InputNote; 2] =
+        std::array::from_fn(|i| InputNote { keys: owners[i].clone(), v: in_v[i], rho: opened[i].1.rho, index: index[i], path: tree.path(index[i] as usize) });
     let pay: [(usize, u64); 3] = [(1, 700), (0, 250), (2, 50)];
     let es: Vec<[u8; 32]> = (0..3).map(|k| bytes(&format!("spend/out{k}/e"), 32).try_into().unwrap()).collect();
     let sealed: Vec<_> = (0..3).map(|k| notes::seal(&wallets[pay[k].0].address, ticker, pay[k].1, &es[k]).expect("seal")).collect();
@@ -266,9 +305,28 @@ pub fn reference_vectors() -> String {
     "publics":[{}]
   }}"#,
         tree_leaves.iter().map(|x| q(&dr(x))).collect::<Vec<_>>().join(","),
-        (0..2).map(|i| format!(r#"{{"wallet":"payer","publicNote":{i},"sk":"{}","nk":"{}","v":"{}","rho":"{}","index":"{}"}}"#, owners[i].sk, owners[i].nk, in_v[i], dr(&opened[i].1.rho), index[i])).collect::<Vec<_>>().join(","),
+        (0..2)
+            .map(|i| format!(
+                r#"{{"wallet":"payer","publicNote":{i},"sk":"{}","nk":"{}","v":"{}","rho":"{}","index":"{}"}}"#,
+                owners[i].sk,
+                owners[i].nk,
+                in_v[i],
+                dr(&opened[i].1.rho),
+                index[i]
+            ))
+            .collect::<Vec<_>>()
+            .join(","),
         (0..3)
-            .map(|k| format!(r#"{{"to":"{}","v":"{}","e":"{}","npk":"{}","rho":"{}","pkEph":"{}","ct":"{}"}}"#, names[pay[k].0], pay[k].1, hex::encode(es[k]), dr(&outputs[k].npk), dr(&outputs[k].rho), hex::encode(sealed[k].0.pk_eph), hex::encode(sealed[k].0.ct)))
+            .map(|k| format!(
+                r#"{{"to":"{}","v":"{}","e":"{}","npk":"{}","rho":"{}","pkEph":"{}","ct":"{}"}}"#,
+                names[pay[k].0],
+                pay[k].1,
+                hex::encode(es[k]),
+                dr(&outputs[k].npk),
+                dr(&outputs[k].rho),
+                hex::encode(sealed[k].0.pk_eph),
+                hex::encode(sealed[k].0.ct)
+            ))
             .collect::<Vec<_>>()
             .join(","),
         hex::encode(&body),

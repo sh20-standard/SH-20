@@ -18,7 +18,8 @@ use ark_ff::{BigInt, BigInteger, PrimeField, Zero};
 use blake2::{Blake2b512, Digest};
 
 /// BLAKE2b-512 of Hermez `powersOfTau28_hez_final_18.ptau`, as listed in the snarkjs README.
-pub const POT18_BLAKE2B: &str = "7e6a9c2e5f05179ddfc923f38f917c9e6831d16922a902b0b4758b8e79c2ab8a81bb5f29952e16ee6c5067ed044d7857b5de120a90704c1d3b637fd94b95b13e";
+pub const POT18_BLAKE2B: &str =
+    "7e6a9c2e5f05179ddfc923f38f917c9e6831d16922a902b0b4758b8e79c2ab8a81bb5f29952e16ee6c5067ed044d7857b5de120a90704c1d3b637fd94b95b13e";
 
 const MAGIC: &[u8; 8] = b"SH20SRS1";
 
