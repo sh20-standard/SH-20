@@ -975,6 +975,31 @@ fn list_and_take_in_one_block() {
     assert_eq!(ix.token(&Ticker::SH20).unwrap().pool, 1_000);
 }
 
+/// A record, not a wish: as §5 is written, nothing ties the spend of a LIST to its lock output.
+/// `body` holds `lockVout`, an index, and not the key at that index. Whoever sees the envelope
+/// before it confirms can publish it in a transaction of their own, with their own lock, and
+/// then cancel the listing to a note of their own. See docs/SPEC-GAPS.md, section 7.
+#[test]
+fn a_list_is_not_bound_to_its_lock_output() {
+    let mut ix = indexer(1, 0);
+    apply(&mut ix, 1, vec![op_return_tx(1, &mint("SH20", 1, Some(2)), 0)]);
+    let sellers = list_tx(10, 1_000, 5_000, &p2tr(&[3; 32]), 330);
+    // the same envelope, byte for byte, in another transaction with another lock
+    let mut copy = sellers.clone();
+    copy.txid = txid(66);
+    copy.vout[1] = out(330, &p2tr(&[6; 32]));
+    let (events, rejected) = apply(&mut ix, 2, vec![copy, sellers]);
+    assert_eq!(events, ["LIST"]);
+    assert_eq!(rejected, ["nullifier already seen"]);
+    assert_eq!(ix.listing(&txid(66)).unwrap().lock_key, [6; 32]);
+    assert!(ix.listing(&txid(10)).is_none());
+    // the holder of that lock takes the tokens with an unpaid TAKE
+    let (events, _) = apply(&mut ix, 3, vec![take_tx(67, &[66], &[])]);
+    assert_eq!(events, ["TAKE"]);
+    assert_eq!(ix.listing(&txid(66)).unwrap().status, ListingStatus::Cancelled);
+    assert_eq!(ix.token(&Ticker::SH20).unwrap().pool, 2_000);
+}
+
 // ---------------------------------------------------------------- reorgs
 
 fn vector_blocks() -> (Profile, Vec<sh20_indexer::Block>, Vec<String>) {
