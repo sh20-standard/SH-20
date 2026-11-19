@@ -7,7 +7,7 @@ import { noteLeaf, tickerT } from '../src/notes.js';
 import { chain, deployEnv, mockVerifier, opening, spend, tx } from './helpers.js';
 
 async function withApi(fn) {
-  const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n }, verifier: mockVerifier() });
+  const ix = new Indexer({ profile: { deployMaturity: 0, activationHeight: 1, deployBurn: 0n }, verifier: mockVerifier() });
   const c = chain(ix);
   const o = opening();
   c.block(tx({ env: deployEnv() }));

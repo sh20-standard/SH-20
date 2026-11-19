@@ -49,9 +49,9 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 58 tests (4 need the verifier module below and are skipped without it)
+npm test            # 59 tests (4 need the verifier module below and are skipped without it)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
-node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
+node bin/replay.js <folder of `bitcoin-cli getblock <hash> 3` JSON files>
 
 cd circuit
 cargo test --release    # 35 tests, with the shipped proving key (artifacts/spend.pk)
@@ -131,10 +131,6 @@ claims exist. What is left before people can try it, in order (review of 2026-11
    explorer and the vault release, and have a real wallet (Xverse, UniSat, Leather) sign a MINT, a transfer and a sale.
    Testers send the phone page's JSON: that is where mid-range and Android phones get measured.
 3. **Before mainnet** (each with an owner and a test):
-   - **Ticker sniping (maintainer decision).** A DEPLOY is in the mempool before it confirms; anyone can deploy the same
-     ticker with other parameters and a higher fee, and "first valid DEPLOY wins". Fix proposed: a commitment
-     `SHA256(ticker ‖ salt)` published at least `N` blocks before the DEPLOY that reveals it, the oldest revealed
-     commitment winning (as Runes does with a commitment that must be 6 blocks old).
    - **Sender privacy: relayers.** The Bitcoin inputs that pay a transfer show who sent something; a relayer pays them
      and is paid in tokens by the third output. Needs "several envelopes per transaction" decided.
    - **Differential fuzzing.** Random chains (valid and broken envelopes, both carriers, lock spends, reorgs) through
@@ -229,7 +225,7 @@ private part that already proves and verifies, in open code.
 ## Open decisions (ask the maintainer)
 
 Final name and 4-byte magic · value of `D` (SH20 burned per DEPLOY) or no burn · ticker length (4 only, or 5–12) ·
-several envelopes per transaction · a commit-reveal DEPLOY against ticker sniping (and its delay `N`).
+several envelopes per transaction.
 
 Decided by the maintainer: the genesis token is **SH20**, fixed in the activation profile (no DEPLOY, no race):
 21,000,000 max, 1,000 per mint, free mint (network fees only), no team allocation.
@@ -238,5 +234,7 @@ tokens. `proofLen` is removed in wire v0.3, together with the 32-byte X25519 `pk
 Decided (technical, v0.3): the events inside the digest have a fixed byte encoding (`src/events.js`, `SPEC-WIRE.md` §6).
 Decided (2026-11-19): batch mint, at most 10 mints per MINT (`MINT_BATCH_MAX`); a last batch gets what is left and pays for that.
 Decided (2026-11-19): a turnstile per ticker (`pool` in each token record), enforced by the indexer.
+Decided (2026-11-19, against ticker sniping): a DEPLOY reveals a commit confirmed at least `N = 6` blocks earlier
+(`deployMaturity`), in the witness carrier only, as Runes does; indexers read the spent output's height (`getblock` 3).
 Fixed (2026-11-19): a LIST carries its lock's output key (`lockKey`, +32 bytes) in the signed body; without it a copy of the
 envelope could lock the listed tokens to the copier.

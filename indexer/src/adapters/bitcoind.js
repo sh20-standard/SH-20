@@ -1,4 +1,4 @@
-// Converts Bitcoin Core `getblock <hash> 2` JSON into the indexer's block format.
+// Converts Bitcoin Core `getblock <hash> 3` JSON (2 works too, but lacks the spent outputs a DEPLOY needs) into the indexer's block format.
 // Any source works (your own node, Esplora, a file) as long as it yields this shape.
 
 function btcToSats(value) {
@@ -15,7 +15,13 @@ export function fromBitcoindBlock(json) {
       vin: t.vin.map((i) =>
         i.coinbase
           ? { coinbase: true }
-          : { txid: i.txid, vout: i.vout, witness: (i.txinwitness || []).map((h) => Buffer.from(h, 'hex')) },
+          : {
+              txid: i.txid,
+              vout: i.vout,
+              witness: (i.txinwitness || []).map((h) => Buffer.from(h, 'hex')),
+              // verbosity 3 gives the spent output and the height that confirmed it (needed for a DEPLOY)
+              ...(i.prevout && Number.isInteger(i.prevout.height) ? { prevHeight: i.prevout.height } : {}),
+            },
       ),
       vout: t.vout.map((o) => ({ value: btcToSats(o.value), script: Buffer.from(o.scriptPubKey.hex, 'hex') })),
     })),

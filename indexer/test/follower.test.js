@@ -39,7 +39,7 @@ class MemorySource {
   }
 }
 
-const make = () => new Indexer({ profile: { activationHeight: 1, deployBurn: 0n }, verifier: mockVerifier() });
+const make = () => new Indexer({ profile: { deployMaturity: 0, activationHeight: 1, deployBurn: 0n }, verifier: mockVerifier() });
 const replay = (list) => {
   const ix = make();
   for (const b of list) ix.applyBlock(b);
@@ -102,6 +102,7 @@ function serve(handler) {
 test('EsploraSource reads pages of transactions and gives the same digest', async () => {
   const list = blocks([[tx({ env: deployEnv() })], Array.from({ length: 30 }, mint)]);
   const mem = new MemorySource(list);
+  const statusAsked = [];
   const esplora = (t) => ({
     txid: t.txid,
     vin: t.vin.map((i) => ({ txid: i.txid, vout: i.vout, witness: i.witness.map((w) => w.toString('hex')), is_coinbase: false })),
@@ -124,6 +125,10 @@ test('EsploraSource reads pages of transactions and gives the same digest', asyn
       const b = await mem.block(m[1]);
       return reply(b.txs.slice(Number(m[2]), Number(m[2]) + 25).map(esplora));
     }
+    if ((m = p.match(/^\/api\/tx\/([0-9a-f]+)\/status$/))) {
+      statusAsked.push(m[1]);
+      return reply({ confirmed: true, block_height: 0 }); // the DEPLOY commit, long confirmed
+    }
     res.writeHead(404);
     res.end();
   });
@@ -133,6 +138,7 @@ test('EsploraSource reads pages of transactions and gives the same digest', asyn
     await new Follower({ indexer: ix, source: new EsploraSource(url), startHeight: 1 }).step();
     assert.equal(ix.token('GENE').mints, 30n);
     assert.equal(ix.digest.toString('hex'), replay(list));
+    assert.deepEqual(statusAsked, [list[0].txs[0].vin[0].txid]); // asked for the DEPLOY's commit only
   } finally {
     server.close();
   }
@@ -157,7 +163,10 @@ test('BitcoindSource speaks JSON-RPC with basic auth and gives the same digest',
           height: b.height, hash: b.hash, previousblockhash: b.prev,
           tx: b.txs.map((t) => ({
             txid: t.txid,
-            vin: t.vin.map((i) => ({ txid: i.txid, vout: i.vout, txinwitness: i.witness.map((w) => w.toString('hex')) })),
+            vin: t.vin.map((i) => ({
+              txid: i.txid, vout: i.vout, txinwitness: i.witness.map((w) => w.toString('hex')),
+              ...(params[1] === 3 ? { prevout: { height: i.prevHeight ?? 0, value: 0, scriptPubKey: { hex: '51' } } } : {}),
+            })),
             vout: t.vout.map((o) => ({ value: Number(o.value) / 1e8, scriptPubKey: { hex: o.script.toString('hex') } })),
           })),
         };

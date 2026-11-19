@@ -180,7 +180,7 @@ export class Indexer {
     if (found.bytes) {
       try {
         const { env, body } = parseEnvelope(found.bytes);
-        const event = this._apply(env, body, tx, H, spentLocks);
+        const event = this._apply(env, body, tx, H, spentLocks, found.carrier);
         events.push({ txid: tx.txid, ...event });
       } catch (e) {
         if (!(e instanceof Reject) && !(e instanceof CodecError)) throw e;
@@ -197,10 +197,10 @@ export class Indexer {
     }
   }
 
-  _apply(env, body, tx, H, spentLocks) {
+  _apply(env, body, tx, H, spentLocks, carrier) {
     switch (env.type) {
       case 'DEPLOY':
-        return this._deploy(env, body, tx, H);
+        return this._deploy(env, body, tx, H, carrier);
       case 'MINT':
         return this._mint(env, tx, H);
       case 'TRANSFER': {
@@ -283,8 +283,8 @@ export class Indexer {
     });
     // The record commits to the profile's rules, so indexers run with different
     // profiles part at the activation block, not at the first spend it touches.
-    const { deployBurn, anchorWindow, anchorMinDepth } = this.profile;
-    return { type: 'GENESIS', ticker: g.ticker, max: g.max, lim: g.lim, deployBurn, anchorWindow, anchorMinDepth };
+    const { deployBurn, anchorWindow, anchorMinDepth, deployMaturity } = this.profile;
+    return { type: 'GENESIS', ticker: g.ticker, max: g.max, lim: g.lim, deployBurn, anchorWindow, anchorMinDepth, deployMaturity };
   }
 
   // ---- the turnstile ------------------------------------------------------
@@ -304,7 +304,16 @@ export class Indexer {
     if (apply) this._set(this.tokens, ticker, { ...t, pool: t.pool - v });
   }
 
-  _deploy(env, body, tx, H) {
+  _deploy(env, body, tx, H, carrier) {
+    // Against ticker sniping (SPEC-WIRE §5): the reveal must spend a commit confirmed at least N blocks earlier.
+    if (carrier !== 'witness') throw new Reject('DEPLOY must use the witness carrier');
+    const N = this.profile.deployMaturity;
+    const committed = tx.vin[0].prevHeight;
+    if (!Number.isInteger(committed)) {
+      // Not a refusal: an indexer without this height would diverge from the others. Stop instead.
+      throw new Error(`block ${H}: the height of the output spent by DEPLOY ${tx.txid} is missing (getblock verbosity 3, or the spent transaction's status)`);
+    }
+    if (committed > H - N) throw new Reject(`DEPLOY commit confirmed less than ${N} blocks before`);
     if (this.tokens.has(env.ticker)) throw new Reject('ticker already deployed');
     const { max, lim, pre, start, end, unlock, price, payMode } = env;
     if (max <= 0n || lim <= 0n) throw new Reject('max and lim must be positive');

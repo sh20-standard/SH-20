@@ -101,8 +101,14 @@ const txs = [
     { txid: txid('transfer-tx'), vin: [{ txid: txid('f3'), vout: 0, witness: witness(ser.transfer) }], vout: [] },
   ],
   [{ txid: txid('take-tx'), vin: [{ txid: listTxid, vout: 0, witness: [] }, input('f4')], vout: [{ value: 0n, script: opReturn(ser.take) }, { value: 5000n, script: pay }] }],
-  [{ txid: txid('deploy-gene-tx'), vin: [{ txid: txid('f5'), vout: 0, witness: witness(ser.deployWithTeam) }], vout: [] }],
-  [{ txid: txid('deploy2-tx'), vin: [{ txid: txid('f6'), vout: 0, witness: witness(ser.deployNoTeam) }], vout: [] }],
+  [
+    // N = 3 here. A copy of GENE's DEPLOY seen in the mempool, its commit confirmed in block 3: refused (too young).
+    // The same DEPLOY in an OP_RETURN: refused (a DEPLOY uses the witness carrier). The original, committed in block 1.
+    { txid: txid('deploy-gene-copy-tx'), vin: [{ txid: txid('f5c'), vout: 0, witness: witness(ser.deployWithTeam), prevHeight: 3 }], vout: [] },
+    { txid: txid('deploy-gene-opreturn-tx'), vin: [input('f5o')], vout: [{ value: 0n, script: opReturn(ser.deployWithTeam) }] },
+    { txid: txid('deploy-gene-tx'), vin: [{ txid: txid('f5'), vout: 0, witness: witness(ser.deployWithTeam), prevHeight: 1 }], vout: [] },
+  ],
+  [{ txid: txid('deploy2-tx'), vin: [{ txid: txid('f6'), vout: 0, witness: witness(ser.deployNoTeam), prevHeight: 2 }], vout: [] }],
   [{ txid: txid('burn-tx'), vin: [{ txid: txid('f7'), vout: 0, witness: witness(ser.burn) }], vout: [] }],
   [
     { txid: txid('mint2'), vin: [input('f8')], vout: [{ value: 1000n, script: opReturn(ser.mintPaid) }] },
@@ -149,11 +155,13 @@ const verifier = {
   },
 };
 const hexFr = (x) => x.toString(16).padStart(64, '0');
-const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 1000n }, verifier });
+const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 1000n, deployMaturity: 3 }, verifier });
 const results = blocks.map((b) => ix.applyBlock(b));
 // The expected rejections: a copied LIST whose lock pays the copier, and a BURN beyond the turnstile.
 const expected = [
   { height: 2, txid: txid('list-copy-tx'), reason: 'lock output must be P2TR to lockKey' },
+  { height: 4, txid: txid('deploy-gene-copy-tx'), reason: 'DEPLOY commit confirmed less than 3 blocks before' },
+  { height: 4, txid: txid('deploy-gene-opreturn-tx'), reason: 'DEPLOY must use the witness carrier' },
   { height: 8, txid: txid('overburn-tx'), reason: 'more than the pool holds of this ticker' },
   { height: 11, txid: txid('claim-forged-tx'), reason: 'bad CLAIM signature' },
   { height: 13, txid: txid('two-envelopes-tx'), reason: 'more than one SH-20 envelope in the transaction' },
@@ -164,7 +172,7 @@ if (JSON.stringify(rejected) !== JSON.stringify(expected)) throw new Error(`unex
 
 const txJson = (t) => ({
   txid: t.txid,
-  vin: t.vin.map((i) => ({ txid: i.txid, vout: i.vout, witness: i.witness.map((w) => w.toString('hex')) })),
+  vin: t.vin.map((i) => ({ txid: i.txid, vout: i.vout, witness: i.witness.map((w) => w.toString('hex')), ...(i.prevHeight !== undefined ? { prevHeight: i.prevHeight } : {}) })),
   vout: t.vout.map((o) => ({ value: o.value.toString(), script: o.script.toString('hex') })),
 });
 
@@ -239,6 +247,7 @@ const out = {
     carriers: 'One transaction each, and what SPEC-WIRE §3 finds in it. expect is the hex of the one counted envelope, "none" when no envelope is counted (an envelope of another version alone is "none"), or "many" when two or more are counted (the transaction is refused). Inputs give their witness only; their outpoints play no part. {"coinbase": true} is the input of a coinbase.',
     'scenario.verifierCalls': 'Every call to the verifier, in order, with its nine public inputs in the order of SPEC-WIRE §4: R[anchorHeight], nf0, nf1, leaf0, leaf1, leaf2, bodyHash, vPub, tPub. The proof is checked last (§5), so a spend refused for another reason is not in the list. An anchor below A is checked against the empty root.',
     'scenario.after': 'For each block: root R[H], the event types, eventsH, and digest_H.',
+    'scenario.blocks': 'The transactions of each block. vin[].prevHeight is the height of the block that confirmed the output an input spends, given where a DEPLOY needs it (SPEC-WIRE §5: its commit must be N = deployMaturity blocks old; here N = 3).',
   },
   poseidon2: [
     { in: ['1', '2'], out: poseidon2(1n, 2n).toString() },
@@ -261,7 +270,7 @@ const out = {
   },
   carriers,
   scenario: {
-    profile: { activationHeight: 1, deployBurn: '1000', anchorWindow: 100, anchorMinDepth: 1 },
+    profile: { activationHeight: 1, deployBurn: '1000', anchorWindow: 100, anchorMinDepth: 1, deployMaturity: 3 },
     blocks: blocks.map((b) => ({ height: b.height, txs: b.txs.map(txJson) })),
     rejected,
     verifierCalls,

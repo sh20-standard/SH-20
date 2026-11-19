@@ -121,11 +121,11 @@ The verifier stays cross-checked against snarkjs' PLONK verifier.
   LIST's `lockKey`), so a copy only pays for what the original would have done. The LIST was the one exception: its
   body named the lock by output index only, and a copy could have locked the listed tokens to the copier (found by
   the clean-room indexer's review, 2026-11-19).
-- **Ticker sniping (open):** a DEPLOY can be seen in the mempool before it confirms, and the first valid DEPLOY
-  of a ticker wins, so anyone watching can deploy the same ticker with their own parameters and a higher fee. BRC-20
-  has the same weakness; Runes closes it by requiring the name to be committed in an output at least 6 blocks old. A
-  fix for SH-20: a commitment `SHA256(ticker ‖ salt)` published at least `N` blocks before the DEPLOY that reveals it,
-  the oldest revealed commitment winning. One more small transaction per DEPLOY; to decide before mainnet.
+- **Ticker sniping (closed in v0.3):** a ticker seen in the mempool could be copied and deployed first with a higher
+  fee, as with BRC-20. A DEPLOY now reveals a commit confirmed at least `N = 6` blocks earlier, in the witness carrier
+  only (Runes requires the same of a name's commitment), so a copier's own commit is always too young. Cost: about an
+  hour between the commit and the reveal of a DEPLOY, and no extra byte. Someone who guessed a ticker and committed to
+  it in advance can still deploy it first: that is a claim made before anyone else, not a copy.
 - **Still visible:** mints, listings, burns and purchases; the BTC inputs paying fees (mitigated by
   relayers, fresh addresses, delayed publication); timing.
 - **Anonymity at launch** is small and grows with every mint, purchase and ticker.
@@ -161,7 +161,6 @@ The verifier stays cross-checked against snarkjs' PLONK verifier.
 3. Tickers of 4 characters only, or also 5 to 12 (then `t` = the ticker's bytes as a big-endian number,
    still unique and below the field size, and ticker fields get a length byte).
 4. Several envelopes per transaction, so relayers can publish in batches.
-5. A commit-reveal DEPLOY against ticker sniping, and the delay `N` between commitment and DEPLOY.
 
 Decided in v0.3: the events inside the digest have a fixed byte encoding (`SPEC-WIRE.md` §6), so a second
 indexer in any language reproduces every digest; the GENESIS record commits to the profile's rules.

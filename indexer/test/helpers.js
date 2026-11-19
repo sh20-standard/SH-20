@@ -46,14 +46,16 @@ export function spend(anchorHeight, proof = 'valid-proof') {
   };
 }
 
-/** Transaction carrying an envelope. carrier: 'opreturn' | 'witness'. */
-export function tx({ env, carrier = 'opreturn', vin = [], vout = [], burnSats = 0n, id = txid() }) {
+/** Transaction carrying an envelope. carrier: 'opreturn' | 'witness' (the default for a DEPLOY, which must use it).
+ *  prevHeight: the height that confirmed the output the witness input spends (the DEPLOY commit). */
+export function tx({ env, carrier, vin = [], vout = [], burnSats = 0n, id = txid(), prevHeight = 0 }) {
   const outs = [...vout];
   const inputs = [...vin];
+  const via = carrier ?? (env?.type === 'DEPLOY' ? 'witness' : 'opreturn');
   if (env) {
     const bytes = serializeEnvelope(env);
-    if (carrier === 'opreturn') outs.unshift({ value: burnSats, script: opReturn(bytes) });
-    else inputs.unshift({ txid: txid(), vout: 0, witness: witnessFor(bytes) });
+    if (via === 'opreturn') outs.unshift({ value: burnSats, script: opReturn(bytes) });
+    else inputs.unshift({ txid: txid(), vout: 0, witness: witnessFor(bytes), prevHeight });
   }
   if (inputs.length === 0) inputs.push({ txid: txid(), vout: 0, witness: [] });
   return { txid: id, vin: inputs, vout: outs };

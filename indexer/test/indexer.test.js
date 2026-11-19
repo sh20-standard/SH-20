@@ -13,7 +13,7 @@ const reasons = (r) => r.rejected.map((x) => x.reason);
 
 function setup(profile = {}) {
   const verifier = mockVerifier();
-  const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n, ...profile }, verifier });
+  const ix = new Indexer({ profile: { deployMaturity: 0, activationHeight: 1, deployBurn: 0n, ...profile }, verifier });
   const c = chain(ix);
   return { ix, c, verifier };
 }
@@ -266,7 +266,7 @@ test('a LIST copied into another transaction cannot point its lock at the copier
 });
 
 test('the default verifier accepts no proof at all', () => {
-  const ix = new Indexer({ profile: { activationHeight: 1 } });
+  const ix = new Indexer({ profile: { deployMaturity: 0, activationHeight: 1 } });
   const c = chain(ix);
   c.block(mint('SH20', 0n));
   c.block();
@@ -275,7 +275,7 @@ test('the default verifier accepts no proof at all', () => {
 });
 
 test('envelopes before the activation height are ignored', () => {
-  const ix = new Indexer({ profile: { activationHeight: 3 }, verifier: mockVerifier() });
+  const ix = new Indexer({ profile: { deployMaturity: 0, activationHeight: 3 }, verifier: mockVerifier() });
   const c = chain(ix);
   c.block(tx({ env: deployEnv({ start: 4, unlock: 4 }) }));
   c.block();
@@ -312,4 +312,18 @@ test('a LIST whose txid already names a listing is refused (a chain built by han
   assert.deepEqual(reasons(c.block(list(2))), []);
   assert.deepEqual(reasons(c.block(list(3))), ['a listing already has this txid']);
   assert.equal(ix.listings.get('aa'.repeat(32)).amount, 10n);
+});
+
+test('a DEPLOY reveals a commit confirmed at least N blocks before, in the witness carrier only (no ticker sniping)', () => {
+  const { ix, c } = setup({ deployMaturity: 6 });
+  for (let i = 0; i < 9; i++) c.block();
+  const H = c.next; // 10
+  const env = deployEnv({ start: H + 1, unlock: H + 1 });
+  // A watcher copies the ticker from the mempool: its commit is fresh, so its reveal is refused.
+  const sniper = tx({ env: deployEnv({ start: H + 1, unlock: H + 1, payMode: 2, payScript: p2wpkh() }), prevHeight: H - 1 });
+  const viaOpReturn = tx({ env, carrier: 'opreturn' });
+  const original = tx({ env, prevHeight: H - 6 });
+  const b = c.block(sniper, viaOpReturn, original);
+  assert.deepEqual(reasons(b), ['DEPLOY commit confirmed less than 6 blocks before', 'DEPLOY must use the witness carrier']);
+  assert.equal(ix.token('GENE').deployTxid, original.txid);
 });

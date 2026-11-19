@@ -48,7 +48,7 @@ const spent = ({ nullifiers, positions }) => {
 const payload = (e) => {
   switch (e.type) {
     case 'GENESIS':
-      return [ticker(e.ticker), u64(e.max), u64(e.lim), u64(e.deployBurn), u32(e.anchorWindow), u32(e.anchorMinDepth)];
+      return [ticker(e.ticker), u64(e.max), u64(e.lim), u64(e.deployBurn), u32(e.anchorWindow), u32(e.anchorMinDepth), u32(e.deployMaturity)];
     case 'TEAM_UNLOCK':
       return [ticker(e.ticker), u64(e.v), u32(e.pos)];
     case 'DEPLOY':
