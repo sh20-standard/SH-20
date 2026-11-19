@@ -3,7 +3,7 @@
 
 use ark_bn254::Fr;
 use serde_json::Value;
-use sh20_indexer::chain::{counted_envelopes, envelopes};
+use sh20_indexer::chain::{counted_envelopes, envelopes, Carrier};
 use sh20_indexer::envelope::body_hash_of;
 use sh20_indexer::field::{fr_from_le, fr_to_be, h2, hex, note_leaf, tag_leaf, unhex, unhex32};
 use sh20_indexer::json::{block_from_vector, tx_from_vector};
@@ -102,6 +102,7 @@ fn scenario_profile(sc: &Value) -> Profile {
         deploy_burn: dec(p, "deployBurn"),
         anchor_window: p["anchorWindow"].as_u64().unwrap() as u32,
         anchor_min_depth: p["anchorMinDepth"].as_u64().unwrap() as u32,
+        deploy_maturity: p["deployMaturity"].as_u64().unwrap() as u32,
     }
 }
 
@@ -160,7 +161,7 @@ fn scenario() {
         .iter()
         .map(|r| (r["height"].as_u64().unwrap(), s(r, "txid").to_string()))
         .collect();
-    assert_eq!(want_rejected.len(), 5);
+    assert_eq!(want_rejected.len(), 7);
     assert_eq!(rejected, want_rejected);
 
     // the verifier: the same calls, in the same order, each with the same nine inputs
@@ -184,6 +185,10 @@ fn scenario() {
         nf0.reverse();
         assert_eq!(hex(&nf0), want_inputs[1]);
     }
+
+    // the digest of the last block, as announced with the maturity rule
+    assert!(hex(&indexer.digest()).starts_with("58ee8a6c"));
+    assert_eq!(hex(&indexer.digest()), s(after.last().unwrap(), "digest"));
 
     // the final state
     let f = &sc["final"];
@@ -234,10 +239,22 @@ fn scenario_carries_the_listed_envelopes() {
         v["envelopes"].as_object().unwrap().values().map(|e| unhex(s(e, "hex")).unwrap()).collect();
     let mut carried: Vec<Vec<u8>> = Vec::new();
     let (mut bare, mut several) = (0, 0);
+    let mut deploys_in_op_return = 0;
     for b in v["scenario"]["blocks"].as_array().unwrap() {
         for tx in block_from_vector(b).unwrap().txs {
             let found = counted_envelopes(&tx);
             assert_eq!(found, envelopes(&tx), "no envelope of another version in the scenario");
+            // a height is given for input 0 of every DEPLOY in a witness, and nowhere else
+            let witness_deploy = matches!(sh20_indexer::chain::counted(&tx).as_slice(), [one]
+                if one.carrier == Carrier::Witness && matches!(Envelope::decode(&one.bytes), Ok(Envelope::Deploy(_))));
+            assert_eq!(tx.vin[0].prev_height.is_some(), witness_deploy);
+            assert!(tx.vin[1..].iter().all(|i| i.prev_height.is_none()));
+            deploys_in_op_return += sh20_indexer::chain::counted(&tx)
+                .iter()
+                .filter(|c| {
+                    c.carrier == Carrier::OpReturn && matches!(Envelope::decode(&c.bytes), Ok(Envelope::Deploy(_)))
+                })
+                .count();
             match found.len() {
                 0 => bare += 1,
                 1 => {}
@@ -251,6 +268,7 @@ fn scenario_carries_the_listed_envelopes() {
         }
     }
     assert_eq!((bare, several), (1, 1));
+    assert_eq!(deploys_in_op_return, 1);
     assert!(listed.iter().all(|e| carried.contains(e)));
 }
 
@@ -521,7 +539,15 @@ fn sections_describe_the_parts() {
         let part = name.split('.').fold(&v, |at, key| &at[key]);
         assert!(!part.is_null(), "sections names {name}, which is not in the file");
     }
-    for name in ["envelopes", "claim", "preActivation", "carriers", "scenario.verifierCalls", "scenario.after"] {
+    for name in [
+        "envelopes",
+        "claim",
+        "preActivation",
+        "carriers",
+        "scenario.blocks",
+        "scenario.verifierCalls",
+        "scenario.after",
+    ] {
         assert!(sections.contains_key(name), "{name} has no description");
     }
     // the input of a coinbase is written {"coinbase": true}
@@ -535,4 +561,67 @@ fn sections_describe_the_parts() {
     assert_eq!(coinbase.len(), 1);
     assert_eq!(coinbase[0]["coinbase"], Value::Bool(true));
     assert!(tx_from_vector(&serde_json::json!({"vin": [{"coinbase": true}], "vout": []})).unwrap().vin[0].coinbase);
+}
+
+/// DEPLOY maturity, with the scenario's `N = 3`. Block 4 holds the same DEPLOY three times:
+/// revealed from a commit of block 3 (too young: refused), in an OP_RETURN (refused), and
+/// revealed from a commit of block 1 (accepted). The two copies do not reach the verifier and
+/// burn nothing, so the third still deploys the ticker. `N` is in the GENESIS record.
+#[test]
+fn scenario_refuses_the_copied_deploys() {
+    use sh20_indexer::state::Error;
+    use sh20_indexer::Event;
+    let v = vectors();
+    let sc = &v["scenario"];
+    let profile = scenario_profile(sc);
+    assert_eq!(profile.deploy_maturity, 3);
+    let blocks: Vec<sh20_indexer::Block> =
+        sc["blocks"].as_array().unwrap().iter().map(|b| block_from_vector(b).unwrap()).collect();
+    let block4 = &blocks[3];
+    assert_eq!(block4.height, 4);
+    let [young, op_return, mature] = block4.txs.as_slice() else { panic!() };
+    let deploy = unhex(s(&v["envelopes"]["deployWithTeam"], "hex")).unwrap();
+    for tx in [young, op_return, mature] {
+        assert_eq!(envelopes(tx), std::slice::from_ref(&deploy));
+    }
+    let carriers: Vec<Carrier> = block4.txs.iter().map(|tx| sh20_indexer::chain::counted(tx)[0].carrier).collect();
+    assert_eq!(carriers, [Carrier::Witness, Carrier::OpReturn, Carrier::Witness]);
+    let heights: Vec<Option<u32>> = block4.txs.iter().map(|tx| tx.vin[0].prev_height).collect();
+    assert_eq!(heights, [Some(3), None, Some(1)]); // H − N = 1
+
+    let asked = Rc::new(RefCell::new(Vec::new()));
+    let mut indexer = Indexer::new(profile, Box::new(Recording(asked.clone())));
+    let r1 = indexer.apply_block(&blocks[0]).unwrap();
+    // GENESIS ends with N (u32): 73 bytes
+    let Event::Genesis { maturity, .. } = &r1.events[0] else { panic!() };
+    assert_eq!(*maturity, 3);
+    assert_eq!(r1.events[0].encode().len(), 73);
+    assert_eq!(r1.events_bytes[69..73], 3u32.to_le_bytes());
+    indexer.apply_block(&blocks[1]).unwrap();
+    indexer.apply_block(&blocks[2]).unwrap();
+    asked.borrow_mut().clear();
+
+    let r4 = indexer.apply_block(block4).unwrap();
+    let refused: Vec<[u8; 32]> = r4.rejected.iter().map(|x| x.txid).collect();
+    assert_eq!(refused, [young.txid, op_return.txid]);
+    let [Event::Deploy { txid, ticker, burn: Some(_) }] = r4.events.as_slice() else { panic!() };
+    assert_eq!((*txid, ticker.as_str()), (mature.txid, "GENE"));
+    // the proof is checked last: one call, for the DEPLOY that passed the maturity rule
+    assert_eq!(asked.borrow().len(), 1);
+
+    // without the height of the commit an indexer stops instead of refusing: the same block,
+    // stripped of its heights, is an error and changes nothing
+    let mut indexer = Indexer::new(profile, Box::new(TestVerifier));
+    for b in &blocks[..3] {
+        indexer.apply_block(b).unwrap();
+    }
+    let before = indexer.digest();
+    let mut stripped = block4.clone();
+    for tx in &mut stripped.txs {
+        tx.vin[0].prev_height = None;
+    }
+    assert_eq!(indexer.apply_block(&stripped).unwrap_err(), Error::MissingCommitHeight { height: 4, txid: young.txid });
+    assert_eq!((indexer.tip(), indexer.digest()), (Some(3), before));
+    // with the heights back, the block applies as the vectors say
+    assert_eq!(hex(&indexer.apply_block(block4).unwrap().digest), s(&sc["after"][3], "digest"));
 }

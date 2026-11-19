@@ -9,6 +9,9 @@ pub struct TxIn {
     pub prevout: Option<(Bytes32, u32)>,
     /// The input of a coinbase transaction: its witness is not looked at (§3).
     pub coinbase: bool,
+    /// The height of the block that confirmed the output this input spends, when the source
+    /// gives it (`prevout.height` of `getblock <hash> 3`). A DEPLOY needs it for input 0 (§5).
+    pub prev_height: Option<u32>,
     pub witness: Vec<Vec<u8>>,
 }
 
@@ -186,13 +189,32 @@ pub fn witness_envelopes(script: &[u8]) -> Vec<Vec<u8>> {
     found
 }
 
+/// Where an envelope was found. A DEPLOY is accepted in a witness only (§5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Carrier {
+    OpReturn,
+    Witness,
+}
+
+/// An envelope and the carrier that held it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Carried {
+    pub carrier: Carrier,
+    pub bytes: Vec<u8>,
+}
+
 /// Every envelope candidate a transaction carries: the OP_RETURN outputs in output order,
 /// then the tapscript of input 0. Each starts with `SH20`; nothing else is checked here.
 /// A coinbase is read for its OP_RETURN outputs only: the witness of its input is not looked at.
-pub fn envelopes(tx: &Tx) -> Vec<Vec<u8>> {
-    let mut found: Vec<Vec<u8>> = tx.vout.iter().filter_map(|o| op_return_envelope(&o.script)).collect();
+pub fn carried(tx: &Tx) -> Vec<Carried> {
+    let mut found: Vec<Carried> = tx
+        .vout
+        .iter()
+        .filter_map(|o| op_return_envelope(&o.script))
+        .map(|bytes| Carried { carrier: Carrier::OpReturn, bytes })
+        .collect();
     if let Some(script) = tx.vin.first().filter(|i| !i.coinbase).and_then(|i| tapscript(&i.witness)) {
-        found.extend(witness_envelopes(script));
+        found.extend(witness_envelopes(script).into_iter().map(|bytes| Carried { carrier: Carrier::Witness, bytes }));
     }
     found
 }
@@ -200,8 +222,18 @@ pub fn envelopes(tx: &Tx) -> Vec<Vec<u8>> {
 /// The envelopes of a transaction that count (§3): every envelope found, except one whose
 /// fifth byte (the version) exists and is not `0x00`. One is applied; two or more refuse the
 /// transaction.
+pub fn counted(tx: &Tx) -> Vec<Carried> {
+    carried(tx).into_iter().filter(|c| c.bytes.len() < 5 || c.bytes[4] == VERSION).collect()
+}
+
+/// The bytes of `carried`.
+pub fn envelopes(tx: &Tx) -> Vec<Vec<u8>> {
+    carried(tx).into_iter().map(|c| c.bytes).collect()
+}
+
+/// The bytes of `counted`.
 pub fn counted_envelopes(tx: &Tx) -> Vec<Vec<u8>> {
-    envelopes(tx).into_iter().filter(|e| e.len() < 5 || e[4] == VERSION).collect()
+    counted(tx).into_iter().map(|c| c.bytes).collect()
 }
 
 /// True when the script is exactly `OP_1 <key>`: P2TR to that output key.

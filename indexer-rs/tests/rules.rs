@@ -268,7 +268,7 @@ fn any_transaction_can_carry_an_envelope() {
     // a coinbase has no outpoint to spend, and its outputs are read like any other
     let mut ix = indexer(1, 0);
     let mut coinbase = op_return_tx(1, &mint("SH20", 1, None), 0);
-    coinbase.vin = vec![TxIn { prevout: None, coinbase: true, witness: vec![vec![0; 32]] }];
+    coinbase.vin = vec![TxIn { prevout: None, coinbase: true, prev_height: None, witness: vec![vec![0; 32]] }];
     // the witness of a coinbase input is not looked at, whatever its shape
     let mut with_witness = witness_tx(8, &mint("SH20", 8, None));
     with_witness.vin[0].prevout = None;
@@ -299,7 +299,7 @@ fn block_order_and_empty_digest() {
     assert_eq!(ix.apply_block(&block(10, vec![])).unwrap_err(), Error::UnexpectedHeight { expected: 11, got: 10 });
     assert_eq!(ix.apply_block(&block(12, vec![])).unwrap_err(), Error::UnexpectedHeight { expected: 11, got: 12 });
 
-    // GENESIS: 0x80 ‖ 32 zero bytes ‖ SH20 ‖ max ‖ lim ‖ D ‖ W ‖ K_min
+    // GENESIS: 0x80 ‖ 32 zero bytes ‖ SH20 ‖ max ‖ lim ‖ D ‖ W ‖ K_min ‖ N
     let mut genesis = vec![0x80];
     genesis.extend([0u8; 32]);
     genesis.extend(b"SH20");
@@ -308,6 +308,8 @@ fn block_order_and_empty_digest() {
     genesis.extend(0u64.to_le_bytes());
     genesis.extend(100u32.to_le_bytes());
     genesis.extend(1u32.to_le_bytes());
+    genesis.extend(0u32.to_le_bytes()); // N of this test profile
+    assert_eq!(genesis.len(), 73);
     assert_eq!(r10.events_bytes, genesis);
     let empty_root = fr_to_le(&Tree::new().empty_root());
     let d10 = sha256(&[&sha256(&[b"sh20-v0"]), &10u32.to_le_bytes(), &empty_root, &sha256(&[&genesis])]);
@@ -327,7 +329,7 @@ fn block_order_and_empty_digest() {
 // ---------------------------------------------------------------- MINT
 
 fn deploy_tx(n: u64, d: Deploy) -> Tx {
-    op_return_tx(n, &Envelope::Deploy(d).encode(), 0)
+    reveal_tx(n, &Envelope::Deploy(d).encode(), 0)
 }
 
 #[test]
@@ -478,20 +480,123 @@ fn deploy_conditions() {
     assert_eq!(r.events[0].encode(), record);
 }
 
+/// DEPLOY maturity (§5): a DEPLOY is a reveal in the witness of input 0, of a commit confirmed
+/// at a height `≤ H − N`. Without that height the indexer stops; it does not refuse.
+#[test]
+fn deploy_maturity() {
+    // the profile's N = 6
+    let fresh = || Indexer::new(Profile::new(1, 0), Box::new(TestVerifier));
+    assert_eq!(fresh().profile().deploy_maturity, 6);
+    let env = |ticker: &str| Envelope::Deploy(deploy(ticker, 50)).encode();
+
+    let mut ix = fresh();
+    // below block N no commit is old enough, not even one of block 0
+    assert_eq!(
+        apply(&mut ix, 1, vec![reveal_tx(1, &env("AAAA"), 0)]).1,
+        ["DEPLOY commit confirmed less than N blocks before"]
+    );
+    for h in 2..=9 {
+        apply(&mut ix, h, vec![]);
+    }
+    // in block 10: a commit of block 4 or earlier is old enough, one of block 5 is not
+    let mut op_return = op_return_tx(24, &env("EEEE"), 0);
+    op_return.vin[0].prev_height = Some(0);
+    let r = ix
+        .apply_block(&block(
+            10,
+            vec![
+                reveal_tx(20, &env("AAAA"), 5),
+                reveal_tx(21, &env("AAAA"), 4),
+                reveal_tx(22, &env("BBBB"), 0),
+                reveal_tx(23, &env("CCCC"), 10), // a commit of this very block
+                reveal_tx(25, &env("DDDD"), 4_000_000_000),
+                op_return, // in an OP_RETURN, whatever the age of what it spends
+                op_return_tx(26, &env("FFFF"), 0),
+            ],
+        ))
+        .unwrap();
+    let deployed: Vec<&str> = r
+        .events
+        .iter()
+        .map(|e| match e {
+            Event::Deploy { ticker, .. } => ticker.as_str(),
+            other => panic!("{}", other.name()),
+        })
+        .collect();
+    assert_eq!(deployed, ["AAAA", "BBBB"]);
+    let reasons: Vec<&str> = r.rejected.iter().map(|x| x.reason).collect();
+    assert_eq!(
+        reasons,
+        [
+            "DEPLOY commit confirmed less than N blocks before",
+            "DEPLOY commit confirmed less than N blocks before",
+            "DEPLOY commit confirmed less than N blocks before",
+            "DEPLOY must use the witness carrier",
+            "DEPLOY must use the witness carrier"
+        ]
+    );
+    // the refused reveal of AAAA (tx 20) did not take the ticker from the one that follows it
+    assert!(ix.token(&tk("AAAA")).is_some() && ix.token(&tk("CCCC")).is_none());
+
+    // a DEPLOY in a witness without the height of its commit: the indexer stops, and nothing of
+    // the block is applied, not even the transactions before it
+    let before = (ix.tip(), ix.digest(), ix.tree_size());
+    let mint_then_deploy = |deploy: Tx| vec![op_return_tx(30, &mint("SH20", 30, None), 0), deploy];
+    let missing = witness_tx(31, &env("GGGG"));
+    assert_eq!(
+        ix.apply_block(&block(11, mint_then_deploy(missing))).unwrap_err(),
+        Error::MissingCommitHeight { height: 11, txid: txid(31) }
+    );
+    assert_eq!((ix.tip(), ix.digest(), ix.tree_size()), before);
+    assert_eq!(ix.token(&Ticker::SH20).unwrap().mints, 0);
+    // it stops even when the DEPLOY would be refused anyway (the ticker is taken)
+    assert!(ix.apply_block(&block(11, vec![witness_tx(32, &env("AAAA"))])).is_err());
+    // the height is not needed where no DEPLOY in a witness can apply
+    let mut two = witness_tx(33, &env("HHHH"));
+    two.vout.push(out(0, &op_return_script(&mint("SH20", 33, None))));
+    let mut broken = env("IIII");
+    broken.push(0); // trailing byte: the decoder refuses it
+    let (events, rejected) = apply(
+        &mut ix,
+        11,
+        vec![
+            two,
+            witness_tx(34, &broken),
+            op_return_tx(35, &env("JJJJ"), 0),
+            witness_tx(36, &mint("SH20", 36, None)),
+            reveal_tx(37, &env("GGGG"), 5),
+        ],
+    );
+    assert_eq!(events, ["MINT", "DEPLOY"]);
+    assert_eq!(rejected.len(), 3);
+
+    // N is in the GENESIS record: another N, another digest from the activation block on
+    let genesis = |n: u32| {
+        let mut ix = Indexer::new(Profile { deploy_maturity: n, ..Profile::new(1, 0) }, Box::new(TestVerifier));
+        ix.apply_block(&block(1, vec![])).unwrap()
+    };
+    let (six, three) = (genesis(6), genesis(3));
+    assert_eq!(six.events_bytes.len(), 73);
+    assert_eq!(six.events_bytes[69..], 6u32.to_le_bytes());
+    assert_eq!(three.events_bytes[69..], 3u32.to_le_bytes());
+    assert_eq!(six.events_bytes[..69], three.events_bytes[..69]);
+    assert_ne!(six.digest, three.digest);
+}
+
 #[test]
 fn deploy_burn() {
     // D = 0: a DEPLOY carries no spend
     let mut ix = indexer(1, 0);
     let with_spend = Envelope::Deploy(Deploy { spend: Some(spend(0, 1)), ..deploy("AAAA", 5) }).encode();
-    assert_eq!(apply(&mut ix, 1, vec![witness_tx(1, &with_spend)]).1, ["a spend in a DEPLOY while D = 0"]);
+    assert_eq!(apply(&mut ix, 1, vec![reveal_tx(1, &with_spend, 0)]).1, ["a spend in a DEPLOY while D = 0"]);
 
     // D = 1000: a DEPLOY burns it, and the turnstile holds it back while the pool is short
     let mut ix = indexer(1, 1_000);
     let no_spend = Envelope::Deploy(deploy("AAAA", 5)).encode();
-    let (events, rejected) = apply(&mut ix, 1, vec![op_return_tx(1, &no_spend, 0), witness_tx(2, &with_spend)]);
+    let (events, rejected) = apply(&mut ix, 1, vec![reveal_tx(1, &no_spend, 0), reveal_tx(2, &with_spend, 0)]);
     assert_eq!(events, ["GENESIS"]);
     assert_eq!(rejected, ["DEPLOY without the burn of D", "more than the pool holds of this ticker"]);
-    let (events, _) = apply(&mut ix, 2, vec![op_return_tx(3, &mint("SH20", 3, None), 0), witness_tx(4, &with_spend)]);
+    let (events, _) = apply(&mut ix, 2, vec![op_return_tx(3, &mint("SH20", 3, None), 0), reveal_tx(4, &with_spend, 0)]);
     assert_eq!(events, ["MINT", "DEPLOY"]);
     let sh20 = ix.token(&Ticker::SH20).unwrap();
     assert_eq!((sh20.pool, sh20.burned, sh20.mints), (0, 1_000, 1));
@@ -557,10 +662,8 @@ fn anchor_window() {
     assert_eq!(rejected, ["anchor too old", "anchor too recent", "anchor too recent"]);
 
     // a narrow window, so that roots after A fall out of it
-    let mut ix = Indexer::new(
-        Profile { activation_height: 1, deploy_burn: 0, anchor_window: 3, anchor_min_depth: 2 },
-        Box::new(TestVerifier),
-    );
+    let mut ix =
+        Indexer::new(Profile { anchor_window: 3, anchor_min_depth: 2, ..Profile::new(1, 0) }, Box::new(TestVerifier));
     for h in 1..=9 {
         apply(&mut ix, h, vec![]);
     }
@@ -677,7 +780,7 @@ fn verifier_inputs() {
     let mut list = witness_tx(4, &l_env);
     list.vout = vec![out(330, &p2tr(&[3; 32]))];
     let (events, rejected) =
-        apply(&mut ix, 6, vec![witness_tx(2, &t_env), witness_tx(3, &b_env), list, witness_tx(5, &d_env)]);
+        apply(&mut ix, 6, vec![witness_tx(2, &t_env), witness_tx(3, &b_env), list, reveal_tx(5, &d_env, 0)]);
     assert_eq!(events, ["TRANSFER", "BURN", "LIST", "DEPLOY"]);
     assert!(rejected.is_empty());
 
@@ -1066,6 +1169,7 @@ fn vector_blocks() -> (Profile, Vec<sh20_indexer::Block>, Vec<String>) {
         deploy_burn: sc["profile"]["deployBurn"].as_str().unwrap().parse().unwrap(),
         anchor_window: sc["profile"]["anchorWindow"].as_u64().unwrap() as u32,
         anchor_min_depth: sc["profile"]["anchorMinDepth"].as_u64().unwrap() as u32,
+        deploy_maturity: sc["profile"]["deployMaturity"].as_u64().unwrap() as u32,
     };
     let blocks = sc["blocks"].as_array().unwrap().iter().map(|b| block_from_vector(b).unwrap()).collect();
     let digests = sc["after"].as_array().unwrap().iter().map(|a| a["digest"].as_str().unwrap().to_string()).collect();

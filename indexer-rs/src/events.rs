@@ -66,6 +66,8 @@ pub enum Event {
         deploy_burn: u64,
         window: u32,
         min_depth: u32,
+        /// `N`, the maturity of a DEPLOY commit.
+        maturity: u32,
     },
     TeamUnlock {
         ticker: Ticker,
@@ -174,13 +176,14 @@ impl Event {
                 out.extend_from_slice(list_txid);
                 out.extend_from_slice(&pos.to_le_bytes());
             }
-            Event::Genesis { ticker, max, lim, deploy_burn, window, min_depth } => {
+            Event::Genesis { ticker, max, lim, deploy_burn, window, min_depth, maturity } => {
                 out.extend_from_slice(&ticker.0);
                 out.extend_from_slice(&max.to_le_bytes());
                 out.extend_from_slice(&lim.to_le_bytes());
                 out.extend_from_slice(&deploy_burn.to_le_bytes());
                 out.extend_from_slice(&window.to_le_bytes());
                 out.extend_from_slice(&min_depth.to_le_bytes());
+                out.extend_from_slice(&maturity.to_le_bytes());
             }
             Event::TeamUnlock { ticker, pre, pos } => {
                 out.extend_from_slice(&ticker.0);
@@ -226,7 +229,7 @@ mod tests {
             (Event::List { txid, ticker: t, amount: 1, price: 1, spent }, 129),
             (Event::Take { txid, list_txid: txid, outcome: Outcome::Cancelled, pos: 0 }, 70),
             (Event::Claim { txid, list_txid: txid, pos: 0 }, 69),
-            (Event::Genesis { ticker: t, max: 1, lim: 1, deploy_burn: 0, window: 100, min_depth: 1 }, 69),
+            (Event::Genesis { ticker: t, max: 1, lim: 1, deploy_burn: 0, window: 100, min_depth: 1, maturity: 6 }, 73),
             (Event::TeamUnlock { ticker: t, pre: 1, pos: 0 }, 49),
             (Event::Closed { txid, list_txid: txid }, 65),
         ];
