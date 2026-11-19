@@ -7,7 +7,8 @@ and signed by **Xverse, UniSat or Leather**. Tickers and mints are read from any
 What works today, without proofs:
 
 - a vault seed created in the browser, stored in `localStorage`, encrypted with AES-GCM under
-  a PBKDF2-SHA256 passphrase key (600,000 iterations), with backup and restore;
+  a PBKDF2-SHA256 passphrase key (600,000 iterations), which can be added or changed at any time,
+  with backup (only ever encrypted) and restore;
 - connecting a wallet and signing PSBTs that the vault builds itself;
 - **MINT** end to end: the 42-byte OP_RETURN envelope of `docs/SPEC-WIRE.md` (43 bytes for a
   batch of `k` mints), serialised by `indexer/src/codec.js` itself, in one transaction of 164 vB;
@@ -41,7 +42,7 @@ node dev/serve.js --isolate                   # with COOP/COEP: shared memory, t
 node dev/e2e.js          # headless Chrome: mint, TRANSFER, DEPLOY, BURN, LIST, TAKE, cancel, restore from the words
 E2E_PATH=/vault/dist/vault/ node dev/e2e.js   # the same flow on the IPFS build
 E2E_HOST=<cid>.ipfs.localhost node dev/e2e.js # a subdomain gateway: the page isolates itself (service worker)
-E2E_PATH=/ipfs/<cid>/vault/ node dev/e2e.js   # a path gateway: no service worker, one thread
+E2E_PATH=/ipfs/<cid>/vault/ node dev/e2e.js   # a path gateway: the page refuses to run and names its subdomain address
 E2E_LIAR=1 node dev/e2e.js                    # a lying indexer in the list: the mint is refused
 
 node dev/serve.js --deploy-burn 0             # profile with D = 0: GENE is deployed too
@@ -113,12 +114,19 @@ folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
 ## Hosting and keys
 
 - Use a **subdomain gateway** (`<cid>.ipfs.dweb.link`), a local IPFS node or a local copy. On a
-  path gateway (`…/ipfs/<cid>/`) every site shares one origin and could read the vault; the page
-  warns about it.
+  path gateway (`…/ipfs/<cid>/`) every site shares one origin and could read the vault, change its
+  servers or drive it once unlocked: the page refuses to run there (no vault is created, restored
+  or unlocked, the settings are not read) and names the same CID on a subdomain gateway and on a
+  local node (`src/isolation.js` `ownOrigins`). A vault stored at that origin by an earlier version
+  is flagged: treat its words as exposed.
 - Each CID is its own origin with its own empty storage. When moving to a new version, download
   the backup first and restore it on the new page.
-- The backup file is the stored record: encrypted if the vault has a passphrase. The seed derives
-  every note key, so the backup does not need to be refreshed after each mint.
+- The backup file is the stored record, and is only written encrypted: a vault without a
+  passphrase has to set one first ("Set a passphrase"; "Change passphrase" asks the current one).
+  A clear backup from an earlier version, restored with a passphrase, is encrypted with it. On an
+  encrypted vault the recovery words are shown after the passphrase. A tab that holds the vault
+  locks when another tab writes it, and never writes its older copy back. The seed derives every
+  note key, so the backup does not need to be refreshed after each mint.
 - Wallet extensions do not inject into `file://` pages, and ES modules do not load there: serve
   the folder over http(s), even locally.
 - A strict CSP allows only same-origin scripts plus the import map (by hash); no data from the
@@ -170,7 +178,9 @@ vout n  change to the payer                                     only if above du
   profile (`activationHeight`, `deployBurn`, the genesis ticker), if one does not know the
   ticker, or if two at the same height report different `digest`s. Indexers a block apart are
   retried, then compared on terms only, with a warning. An unreachable indexer, or a single one,
-  only warns.
+  only warns. After every sync, the others are asked for their digest after the synced block
+  (`/digest/:height`): the notes panel shows how many agree next to the balance, and a
+  disagreement in red (the notes come from the primary indexer's leaves).
 - After signing, the vault checks that the wallet did not change the transaction, records the
   note, then broadcasts through Esplora. Xverse and Leather return partial signatures and UniSat
   finalizes; `btc.finalizePsbt` handles both.
@@ -292,9 +302,16 @@ control block, signature message) is checked against the BIP341 vectors (`test/t
   offer or a TAKE. 918-byte envelope, 361 vB reveal.
 - **Offer** ("Copy offer", once the listing is ACTIVE): the lock key signs a spend of the lock with
   `SIGHASH_SINGLE | ANYONECANPAY` that pays the price to the payee at the same index (version 2,
-  locktime 0), shared as one line, `sh20offer1:<listing>:<signature>`.
+  locktime 0), shared as one line, `sh20offer1:<listing>:<signature>`. A txid does not cover the
+  witness, where the LIST is, so the terms signed are ones the vault vouches for (`offerTerms`):
+  those of its own record for a listing it sent, refused if the chain or the indexer say otherwise;
+  for a listing found again after a restore, a LIST whose nullifiers include one of this vault's
+  notes and whose proof verifies for its body against the local tree's root at its anchor. Failing
+  both, the page shows the price and payee and asks. The signed terms are shown with the offer.
 - **TAKE** ("Buy from an offer"): the vault reads the LIST from the chain (Esplora) and requires
-  every configured indexer to report the same listing, ACTIVE; it checks the seller's signature for
+  every indexer that answers to report the same listing, ACTIVE: one that does not know it refuses
+  it, and at least two must agree (`consensus.js` `listingCheck`, `TAKE_QUORUM`), since a LIST the
+  indexers rejected still looks like one on chain. It checks the seller's signature for
   that price and payee, then builds the buyer's transaction: the lock at input 0 with the seller's
   signature, the price at output 0, the TAKE (an OP_RETURN with a public note key of this vault) and
   the wallet's own inputs, which are the only ones the wallet signs. The tokens become a public note
@@ -352,7 +369,9 @@ checks every request the page sends). Instead `src/sync.js`:
   `Poseidon(nsk + τn, leaf, pos)`), so the nullifier key never leaves it;
 - **caches** the leaves and nullifiers in IndexedDB (public data only: everything, not what is
   yours), so the next sync downloads only new blocks. Each sync re-reads the last 6 blocks to absorb
-  reorgs; a deeper reorg shows as a root mismatch and triggers one full re-download. "Rescan from
+  reorgs; a deeper reorg shows as a root mismatch and triggers one full re-download. Leaves the
+  vault has not scanned yet (a sync while it was locked, or a scan that could not be made because
+  WebCrypto failed, which is an error, not "not ours") are read again until it has. "Rescan from
   zero" ignores the cache; a restored vault always rescans everything to find its notes.
 
 Loading a cached tree recomputes it (about 0.2 ms per leaf) to check it against the cached root.
@@ -446,7 +465,7 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | `src/deploy.js` | checks the indexer's mint terms against the DEPLOY transaction, or SH20's against the profile |
 | `src/profile.js` | profile constants the vault knows itself: the genesis token, the activation height |
 | `src/deploy-plan.js` | the deploy screen: DEPLOY rules, envelope size, the burn of `D` SH20 |
-| `src/consensus.js` | cross-checks several indexers before a mint |
+| `src/consensus.js` | cross-checks several indexers: before a mint, before a TAKE, and the state after every sync |
 | `src/btc.js` | addresses, transactions, PSBT v0, finalization, size estimates |
 | `src/wallets.js` | Xverse, UniSat, Leather adapters (injected providers, no SDK) |
 | `src/api.js` | indexer API and Esplora clients |

@@ -1,5 +1,6 @@
-// The findings of docs/AUDIT.md §8 (a reading of the vault's cryptography), one test or more each:
-// every test here fails on the code the reading was made on.
+// The findings of docs/AUDIT.md §8 (a reading of the vault's cryptography), one test or more each,
+// 8.1 to 8.6: each checks a behaviour the code read for §8 did not have (8.2 reproduces the reading:
+// a swapped LIST envelope under the same txid).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
