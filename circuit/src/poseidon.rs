@@ -62,7 +62,7 @@ impl Grain {
         push(t, 12);
         push(rf, 10);
         push(rp, 10);
-        bits.extend(std::iter::repeat(1u8).take(30));
+        bits.extend(std::iter::repeat_n(1u8, 30));
         let mut g = Grain { s: bits.try_into().expect("80 bits"), head: 0 };
         for _ in 0..160 {
             g.step();

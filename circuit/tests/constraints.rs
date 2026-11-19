@@ -77,7 +77,7 @@ fn every_choice_of_the_prover_reaches_a_check() {
         // per dummy input: 32 siblings and the inverse witness, all in that input's membership gates
         let mut want: Vec<String> = Vec::new();
         for i in dummies(&w) {
-            want.extend(std::iter::repeat(format!("in{i} membership")).take(TREE_DEPTH + 1));
+            want.extend(std::iter::repeat_n(format!("in{i} membership"), TREE_DEPTH + 1));
         }
         let got: Vec<String> = free.iter().map(|&v| cs.tag_of(probe.first_use(v)).to_string()).collect();
         assert_eq!(got, want, "{name}: free choices {free:?}");
