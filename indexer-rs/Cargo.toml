@@ -1,0 +1,24 @@
+[package]
+name = "sh20-indexer-rs"
+version = "0.3.0"
+edition = "2021"
+rust-version = "1.87"
+license = "MIT"
+description = "Second SH-20 indexer, written from docs/SPEC-WIRE.md alone (clean room)"
+publish = false
+
+[lib]
+name = "sh20_indexer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sh20-indexer-rs"
+path = "src/main.rs"
+
+[dependencies]
+ark-bn254 = "0.5"
+ark-ff = "0.5"
+light-poseidon = "0.4"
+secp256k1 = { version = "0.31", default-features = false, features = ["std"] }
+sha2 = "0.10"
+serde_json = { version = "1", features = ["arbitrary_precision"] }
