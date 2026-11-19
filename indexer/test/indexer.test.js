@@ -180,6 +180,49 @@ test('TAKE without payment is a cancel by the seller', () => {
   assert.equal(ix.listings.get(listTxid).state, 'CANCELLED');
 });
 
+test('turnstile: no spend takes more of a ticker out of the pool than went in, even with a broken circuit', () => {
+  // The mock verifier accepts any proof: it plays a circuit with a soundness bug, where hidden notes can be forged.
+  const { ix, c } = setup({ deployBurn: 1000n });
+  const burn = (ticker, vPub) => tx({ env: { type: 'BURN', ticker, vPub, spend: spend(c.next - 1) }, carrier: 'witness' });
+  const sh20Deploy = (ticker) => tx({ env: deployEnv({ ticker, start: c.next + 1, unlock: c.next + 1, spend: spend(c.next - 1) }), carrier: 'witness' });
+  const b1 = c.block(mint('SH20', 0n), sh20Deploy('NOPE'));
+  assert.deepEqual(reasons(b1), []); // 1,000 SH20 in the pool: the DEPLOY burns them
+  const b2 = c.block(burn('SH20', 1n), sh20Deploy('NOPF'), burn('GENE', 1n));
+  assert.deepEqual(reasons(b2), ['more than the pool holds of this ticker', 'more than the pool holds of this ticker', 'unknown ticker']);
+  assert.deepEqual([ix.token('SH20').pool, ix.token('SH20').burned], [0n, 1000n]);
+
+  // NOPE: two mints in, then exits up to exactly what went in.
+  const b3 = c.block(mint('NOPE'), mint('NOPE'));
+  assert.deepEqual(reasons(b3), []);
+  const lock = { value: 330n, script: p2tr(publicKey(randomBytes(32))) };
+  const list = (amount) => tx({ env: { type: 'LIST', ticker: 'NOPE', amount, price: 1n, lockVout: 0, payScript: p2wpkh(), spend: spend(c.next - 1) }, carrier: 'witness', vout: [lock] });
+  const b4 = c.block(list(2001n), list(1500n), burn('NOPE', 501n), burn('NOPE', 500n));
+  assert.deepEqual(reasons(b4), ['more than the pool holds of this ticker', 'more than the pool holds of this ticker']);
+  const t = ix.token('NOPE');
+  assert.deepEqual([t.pool, t.burned], [0n, 500n]);
+  // pool + what sits in listings + what was burned = what was issued
+  const listed = [...ix.listings.values()].filter((l) => l.ticker === 'NOPE' && ['ACTIVE', 'CLOSED'].includes(l.state)).reduce((a, l) => a + l.amount, 0n);
+  assert.equal(t.pool + listed + t.burned, t.mints * t.lim);
+});
+
+test('turnstile: TAKE, CLAIM and team unlocks bring units back into the pool, and a rollback restores it', () => {
+  const { ix, c, listTxid, lockIn, sk } = listed();
+  assert.equal(ix.token('GENE').pool, 0n); // 1,000 minted, 1,000 listed
+  c.block({ txid: txid(), vin: [lockIn], vout: [] }); // CLOSED
+  const back = opening();
+  const claimed = c.block(tx({ env: { type: 'CLAIM', listTxid, ...back, sig: sign(sk, Indexer.claimMessage(listTxid, back.npk)) } }));
+  assert.equal(ix.token('GENE').pool, 1000n);
+  ix.rollback(claimed.height - 1);
+  assert.equal(ix.token('GENE').pool, 0n);
+
+  const { ix: iy, c: cy } = setup();
+  cy.block(tx({ env: deployEnv({ pre: 5000n, team: opening(), start: 2, unlock: 3 }) }));
+  cy.block();
+  assert.equal(iy.token('GENE').pool, 0n);
+  cy.block();
+  assert.equal(iy.token('GENE').pool, 5000n);
+});
+
 test('lock spent without TAKE: CLOSED, then CLAIM signed by the lock key', () => {
   const { ix, c, sk, listTxid, lockIn } = listed();
   c.block({ txid: txid(), vin: [lockIn], vout: [] });

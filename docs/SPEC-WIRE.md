@@ -10,6 +10,7 @@ and nothing in a public note is hidden): a MINT is 42 bytes instead of 74, about
 The events inside the digest have an exact byte encoding (§6) instead of JSON, and the GENESIS record commits to the
 profile's rules, so a second implementation in any language can reproduce every digest.
 A MINT may carry a count `k` (2 to 10) as one more byte: one note of `k × lim` for `k × price` (§5).
+Each ticker has a turnstile, `pool[ticker]`: no BURN, LIST or DEPLOY burn may take out more than went in (§5).
 
 Changes from v0.1: tokens are named by their ticker everywhere. MINT, BURN and LIST carry `ticker(4)`
 instead of an indexer-assigned `tokenNum(4)` (same size), and the asset id inside notes and proofs is
@@ -133,21 +134,29 @@ Block `H`, profile constants `W = 100`, `K_min = 1`, `D` (deploy burn), activati
 **Every spend**: `H − W ≤ anchorHeight ≤ H − K_min`; root known (`anchorHeight < A` uses the empty root); nullifiers
 non-zero, distinct, never seen; output leaves non-zero; room in the tree; proof valid. Effect: record nullifiers, append the 3 leaves.
 
+**Turnstile.** Each ticker has a counter `pool[ticker]`, 0 when the token is created: what entered the shielded pool in
+public minus what left it in public. MINT adds `m × lim`, a team unlock adds `pre`, TAKE and CLAIM add the listing's
+`amount`; BURN subtracts `vPub`, LIST its `amount`, and a DEPLOY with `D > 0` subtracts `D` from `pool[SH20]`. A spend whose
+`vPub` is larger than `pool[tPub's ticker]` is rejected, before its proof is checked. Every term is public already, so the
+counter reveals nothing. It bounds what a soundness bug in the circuit could do: hidden notes might be forged, but no more
+of a ticker can ever come back into the open than was issued. At every block, for every ticker,
+`pool + Σ amount of ACTIVE and CLOSED listings + burned = m·lim over all mints + pre if unlocked`.
+
 | Type | Accepted when | Effect |
 | --- | --- | --- |
-| DEPLOY | ticker never deployed; `max > 0`, `lim > 0`, `pre < max`, `(max − pre) mod lim = 0`; `start > H`; `end = 0` or `end ≥ start`; `unlock ≥ start`; payMode 0 ⇔ `price = 0`. If `D > 0`: a spend with `vPub = D`, `tPub = t("SH20")`; if `D = 0`: no spend | token recorded under its ticker; `burned[SH20] += D`; team note scheduled for block `unlock` |
-| MINT | `ticker` deployed; `start ≤ H`; `end = 0` or `H ≤ end`; `left = (max − pre) / lim − mints > 0`; with `m = min(k, left)` (`k = 1` without the byte), paid in the same tx: payMode 1 = OP_RETURN outputs carry ≥ `m × price` sats, payMode 2 = outputs to `payScript` total ≥ `m × price` | one leaf `(t, m × lim, npk, 0)`; mints + `m` |
+| DEPLOY | ticker never deployed; `max > 0`, `lim > 0`, `pre < max`, `(max − pre) mod lim = 0`; `start > H`; `end = 0` or `end ≥ start`; `unlock ≥ start`; payMode 0 ⇔ `price = 0`. If `D > 0`: `D ≤ pool[SH20]` and a spend with `vPub = D`, `tPub = t("SH20")`; if `D = 0`: no spend | token recorded under its ticker, `pool = 0`; `burned[SH20] += D`, `pool[SH20] −= D`; team note scheduled for block `unlock` |
+| MINT | `ticker` deployed; `start ≤ H`; `end = 0` or `H ≤ end`; `left = (max − pre) / lim − mints > 0`; with `m = min(k, left)` (`k = 1` without the byte), paid in the same tx: payMode 1 = OP_RETURN outputs carry ≥ `m × price` sats, payMode 2 = outputs to `payScript` total ≥ `m × price` | one leaf `(t, m × lim, npk, 0)`; mints + `m`; `pool += m × lim` |
 | TRANSFER | spend with `vPub = tPub = 0` | — |
-| BURN | `ticker` deployed; `vPub > 0`; spend with `tPub = t(ticker)` | `burned[ticker] += vPub` |
-| LIST | `ticker` deployed; `amount > 0`, `price > 0`; output `lockVout` is P2TR with ≥ 330 sats; spend with `vPub = amount`, `tPub = t(ticker)` | listing ACTIVE, lock = `(txid, lockVout)` |
-| TAKE | the tx spends the lock of an ACTIVE listing (first in input order) | leaf `(t, amount, npk, 0)`; SOLD if outputs to `payScript` total ≥ `price`, else CANCELLED |
-| CLAIM | listing is CLOSED; BIP340 signature by the lock's output key over `SHA256("sh20/v0/claim" ‖ listTxid ‖ npk)` | leaf `(t, amount, npk, 0)`; CLAIMED |
+| BURN | `ticker` deployed; `0 < vPub ≤ pool[ticker]`; spend with `tPub = t(ticker)` | `burned[ticker] += vPub`, `pool −= vPub` |
+| LIST | `ticker` deployed; `0 < amount ≤ pool[ticker]`, `price > 0`; output `lockVout` is P2TR with ≥ 330 sats; spend with `vPub = amount`, `tPub = t(ticker)` | listing ACTIVE, lock = `(txid, lockVout)`; `pool −= amount` |
+| TAKE | the tx spends the lock of an ACTIVE listing (first in input order) | leaf `(t, amount, npk, 0)`; `pool += amount`; SOLD if outputs to `payScript` total ≥ `price`, else CANCELLED |
+| CLAIM | listing is CLOSED; BIP340 signature by the lock's output key over `SHA256("sh20/v0/claim" ‖ listTxid ‖ npk)` | leaf `(t, amount, npk, 0)`; `pool += amount`; CLAIMED |
 
 A rejected envelope changes nothing; sats it paid are not returned.
 
 ## 6. Block processing and digest
 
-1. If `H ≥ A`: in the first block read (`H = A`), create the genesis token (event `GENESIS`); append team notes whose `unlock = H` (by ticker, in byte order), then for each transaction in block order:
+1. If `H ≥ A`: in the first block read (`H = A`), create the genesis token (event `GENESIS`); append team notes whose `unlock = H` (by ticker, in byte order; `pool += pre`), then for each transaction in block order:
    note the ACTIVE listings whose lock it spends; apply its envelope; set any of those still ACTIVE to CLOSED.
 2. Record `R[H]`.
 3. `digest_H = SHA256(digest_{H−1} ‖ u32le(H) ‖ R[H] (32, LE) ‖ SHA256(events_H))`, `digest_start = SHA256("sh20-v0")`,

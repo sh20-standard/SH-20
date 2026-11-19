@@ -99,6 +99,7 @@ export class Indexer {
       const unlocks = (this.teamQueue.get(block.height) || []).slice().sort((a, b) => (a.ticker < b.ticker ? -1 : a.ticker > b.ticker ? 1 : 0));
       for (const u of unlocks) {
         const pos = this._append(noteLeaf(tickerT(u.ticker), u.v, u.npk, PUBLIC_RHO), { kind: 'TEAM', ticker: u.ticker, v: u.v, npk: hexFr(u.npk) });
+        this._intoPool(u.ticker, u.v);
         events.push({ type: 'TEAM_UNLOCK', ticker: u.ticker, v: u.v, pos });
       }
       for (const tx of block.txs) this._applyTx(tx, block.height, events, rejected);
@@ -274,12 +275,29 @@ export class Indexer {
     this._set(this.meta, 'genesis', g.ticker);
     this._set(this.tokens, g.ticker, {
       ticker: g.ticker, t: tickerT(g.ticker), max: g.max, lim: g.lim, pre: 0n, start: H, end: 0, unlock: H, price: 0n,
-      payMode: PAY_MODE.NONE, payScript: '', mints: 0n, burned: 0n, deployTxid: null, deployHeight: H, genesis: true,
+      payMode: PAY_MODE.NONE, payScript: '', mints: 0n, burned: 0n, pool: 0n, deployTxid: null, deployHeight: H, genesis: true,
     });
     // The record commits to the profile's rules, so indexers run with different
     // profiles part at the activation block, not at the first spend it touches.
     const { deployBurn, anchorWindow, anchorMinDepth } = this.profile;
     return { type: 'GENESIS', ticker: g.ticker, max: g.max, lim: g.lim, deployBurn, anchorWindow, anchorMinDepth };
+  }
+
+  // ---- the turnstile ------------------------------------------------------
+  // pool[t] = what entered the shielded pool in public (mints, team unlocks, TAKE, CLAIM) minus
+  // what left it in public (BURN, LIST, the DEPLOY burn). All of these amounts are public already.
+  // A spend may not take out more of a ticker than the pool holds: a soundness bug in the circuit
+  // could forge hidden notes, but never bring more than the honest supply back into the open.
+
+  _intoPool(ticker, v) {
+    const t = this.tokens.get(ticker);
+    this._set(this.tokens, ticker, { ...t, pool: t.pool + v });
+  }
+
+  _outOfPool(ticker, v, apply = true) {
+    const t = this.tokens.get(ticker);
+    if (v > t.pool) throw new Reject('more than the pool holds of this ticker');
+    if (apply) this._set(this.tokens, ticker, { ...t, pool: t.pool - v });
   }
 
   _deploy(env, body, tx, H) {
@@ -298,6 +316,7 @@ export class Indexer {
     let spent = null;
     if (D > 0n) {
       if (!env.spend) throw new Reject('DEPLOY must burn genesis units');
+      this._outOfPool(this.genesis, D, false);
       spent = this._checkSpend(env.spend, body, D, tickerT(this.genesis), H);
     } else if (env.spend) {
       throw new Reject('DEPLOY carries no burn when D = 0');
@@ -305,12 +324,13 @@ export class Indexer {
 
     const commit = spent ? this._commitSpend(spent) : null;
     if (spent) {
+      this._outOfPool(this.genesis, D);
       const g = this.tokens.get(this.genesis);
       this._set(this.tokens, g.ticker, { ...g, burned: g.burned + D });
     }
     this._set(this.tokens, env.ticker, {
       ticker: env.ticker, t: tickerT(env.ticker), max, lim, pre, start, end, unlock, price, payMode,
-      payScript: env.payScript.toString('hex'), mints: 0n, burned: 0n, deployTxid: tx.txid, deployHeight: H,
+      payScript: env.payScript.toString('hex'), mints: 0n, burned: 0n, pool: 0n, deployTxid: tx.txid, deployHeight: H,
     });
     if (pre > 0n) {
       const queue = (this.teamQueue.get(unlock) || []).concat([{ ticker: env.ticker, v: pre, npk: env.team.npk }]);
@@ -331,16 +351,17 @@ export class Indexer {
     this._roomFor(1);
     const v = t.lim * k;
     const pos = this._append(noteLeaf(t.t, v, env.npk, PUBLIC_RHO), { kind: 'MINT', ticker: t.ticker, v, npk: hexFr(env.npk) });
-    this._set(this.tokens, t.ticker, { ...t, mints: t.mints + k });
+    this._set(this.tokens, t.ticker, { ...t, mints: t.mints + k, pool: t.pool + v });
     return { type: 'MINT', ticker: t.ticker, v, pos };
   }
 
   _burn(env, body, H) {
     const t = this._token(env.ticker);
     if (env.vPub <= 0n) throw new Reject('burn amount must be positive');
+    this._outOfPool(t.ticker, env.vPub, false);
     const s = this._checkSpend(env.spend, body, env.vPub, t.t, H);
     const commit = this._commitSpend(s);
-    this._set(this.tokens, t.ticker, { ...t, burned: t.burned + env.vPub });
+    this._set(this.tokens, t.ticker, { ...t, burned: t.burned + env.vPub, pool: t.pool - env.vPub });
     return { type: 'BURN', ticker: t.ticker, v: env.vPub, ...commit };
   }
 
@@ -351,8 +372,10 @@ export class Indexer {
     if (!lock) throw new Reject('no lock output');
     if (!isP2TR(lock.script)) throw new Reject('lock output must be P2TR');
     if (lock.value < MIN_LOCK_SATS) throw new Reject('lock output below 330 sats');
+    this._outOfPool(t.ticker, env.amount, false);
     const s = this._checkSpend(env.spend, body, env.amount, t.t, H);
     const commit = this._commitSpend(s);
+    this._outOfPool(t.ticker, env.amount);
     const listing = {
       listTxid: tx.txid, ticker: t.ticker, amount: env.amount, price: env.price,
       payScript: env.payScript.toString('hex'), lock: `${tx.txid}:${env.lockVout}`,
@@ -370,6 +393,7 @@ export class Indexer {
     this._roomFor(1);
     const sold = this._paid(tx, PAY_MODE.PAY, l.price, Buffer.from(l.payScript, 'hex'));
     const pos = this._append(noteLeaf(tickerT(l.ticker), l.amount, env.npk, PUBLIC_RHO), { kind: 'TAKE', ticker: l.ticker, v: l.amount, npk: hexFr(env.npk) });
+    this._intoPool(l.ticker, l.amount);
     this._set(this.listings, id, { ...l, state: sold ? 'SOLD' : 'CANCELLED', takeTxid: tx.txid });
     return { type: 'TAKE', listTxid: id, outcome: sold ? 'SOLD' : 'CANCELLED', pos };
   }
@@ -382,6 +406,7 @@ export class Indexer {
     if (!schnorrVerify(Buffer.from(l.lockKey, 'hex'), msg, env.sig)) throw new Reject('bad CLAIM signature');
     this._roomFor(1);
     const pos = this._append(noteLeaf(tickerT(l.ticker), l.amount, env.npk, PUBLIC_RHO), { kind: 'CLAIM', ticker: l.ticker, v: l.amount, npk: hexFr(env.npk) });
+    this._intoPool(l.ticker, l.amount);
     this._set(this.listings, l.listTxid, { ...l, state: 'CLAIMED' });
     return { type: 'CLAIM', listTxid: l.listTxid, pos };
   }

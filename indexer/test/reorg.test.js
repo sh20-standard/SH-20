@@ -13,7 +13,8 @@ function scenario() {
     vout: [{ value: 330n, script: p2tr(publicKey(randomBytes(32))) }],
   });
   const blocks = [
-    [tx({ env: deployEnv({ pre: 1000000n, team: opening(), unlock: 4, spend: spend(0) }), carrier: 'witness' })],
+    // The two DEPLOY burns need SH20 in the pool: a batch of two free SH20 mints comes first.
+    [tx({ env: { type: 'MINT', ticker: 'SH20', ...opening(), k: 2 } }), tx({ env: deployEnv({ pre: 1000000n, team: opening(), unlock: 4, spend: spend(0) }), carrier: 'witness' })],
     [tx({ env: { type: 'MINT', ticker: 'GENE', ...opening() }, burnSats: 1000n }), tx({ env: { type: 'MINT', ticker: 'GENE', ...opening() }, burnSats: 1000n })],
     [list, tx({ env: { type: 'TRANSFER', spend: spend(2) }, carrier: 'witness' })],
     [tx({ env: { type: 'TAKE', ...opening() }, vin: [{ txid: list.txid, vout: 0, witness: [] }], vout: [{ value: 5000n, script: pay }] })],
