@@ -129,7 +129,9 @@ under 6 s. What is still unknown is how long a mid-range phone takes.
    `spend.pk` is 8.4 MB of binary: commit a new one only when the gates change (maintainer, 2026-11-18), never for a rebuild
    that gives the same bytes.
 5. The soundness-critical code is `circuit/src/gadgets.rs`, `circuit/src/spend.rs` and `circuit/src/plonk/verifier.rs`.
-   It is new and unaudited. Do not weaken a check to save gates without the maintainer.
+   It is new and unaudited. Do not weaken a check to save gates without the maintainer. `docs/AUDIT.md` maps each
+   constraint to its gates and lists what its author would check first; keep its line numbers and counts true when the
+   code moves (`sh20-circuit info` prints the gates of each part).
 6. The vault embeds the prover the way the test page does: `circuit/web/host.js` and the two workers, with the thread count
    of `defaultThreads()` (not `navigator.hardwareConcurrency`, which Safari under-reports on an iPhone). It computes note keys,
    nullifiers and signatures as `circuit/js/` does, and checks itself against `circuit/js/vectors.json`.

@@ -3,7 +3,7 @@
 //!   sh20-circuit srs <hermez.ptau> <out.srs>     extract the SRS from the pinned Hermez pot18
 //!   sh20-circuit keygen <srs> <out.vk>           derive the keys, write the verifying key, print its digest
 //!   sh20-circuit pk <srs> <out.pk>               derive the keys, write the proving key file, print its SHA-256
-//!   sh20-circuit info                            size of the circuit
+//!   sh20-circuit info                            size of the circuit, and the gates of each part of the relation
 //!   sh20-circuit sample <out.json>               a sample witness as circom input signals
 //!   sh20-circuit prove-sample <pk> <dir>         prove a sample spend; write proof, key and publics (binary and snarkjs JSON)
 //!   sh20-circuit verify <vk> <proof-hex> <public>×9 (decimal)
@@ -146,6 +146,9 @@ fn main() {
             let cs = spend::synthesize(&SpendWitness::default());
             let rows = plonk::keys::rows_for(cs.n_gates());
             println!("{} gates, {} variables, {} public inputs, domain 2^{} = {} rows, SRS {} powers", cs.n_gates(), cs.n_vars(), cs.n_public(), rows.trailing_zeros(), rows, srs_size());
+            for (tag, gates) in cs.gate_counts() {
+                println!("{gates:>7}  {tag}");
+            }
         }
         "keygen" => {
             let srs = load_srs(arg(1));
