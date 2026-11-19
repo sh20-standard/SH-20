@@ -40,7 +40,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
 | `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
 | `circuit/` | the spend circuit: PLONK prover and verifier in Rust, WebAssembly build, measurements ([`circuit/README.md`](circuit/README.md)) |
-| `circuit/js/` | what a wallet computes, in dependency-free JavaScript: the witness of a spend, and the addresses, sealing and scanning of `SPEC-NOTES.md`; checked against vectors written by the Rust models (`cd circuit/js && npm test`, 25 tests) |
+| `circuit/js/` | what a wallet computes, in dependency-free JavaScript: the witness of a spend, and the addresses, sealing and scanning of `SPEC-NOTES.md`. Two entry points with the same names and the same vectors: `index.js` (synchronous, `node:crypto`) and `webcrypto.js` (asynchronous, WebCrypto, for browsers). Checked against vectors written by the Rust models (`cd circuit/js && npm test`, 44 tests) |
 | `circuit/circom/` | the same relation in circom, used only to cross-check the Rust circuit |
 | `circuit/web/` | the phone test page, and the host side of the threaded WebAssembly prover |
 
@@ -111,10 +111,11 @@ profile constants (activation height, `D`).
 The relation, the proof system, the verifier and a prover that runs in a browser exist, and a recent iPhone proves in
 under 6 s. What is still unknown is how long a mid-range phone takes.
 
-1. **Phones.** One recent phone is measured (`circuit/README.md`, "On a phone"). Open: no mid-range phone and no Android
-   phone has been tried, and the phases of a proof on a phone are not recorded (six threads are 2.7 times faster than one
-   there, four are 2.1 times). `circuit/web/README.md` says how to serve the page and what to send back; the page has a
-   thread sweep and a key-loading diagnosis for that.
+1. **Phones.** One recent phone is measured (`circuit/README.md`, "On a phone"), with the phases of a proof from 1 to 6
+   threads: none falls behind (six threads are 2.7 times faster than one, and every phase gains 2.5 to 2.9 times), which points at the phone's mix
+   of fast and slow cores rather than at the prover. Open: no mid-range phone and no Android phone has been tried, and one
+   lead for the next sweep is noted in `circuit/README.md` ("Next"). `circuit/web/README.md` says how to serve the page and
+   what to send back; the page has a thread sweep and a key-loading diagnosis for that.
 2. **Act on them.** If memory fails (the prover needs about 230 MB), hold less: the wire evaluations and the key file are
    kept longer than needed. If time is the problem, see 3.
 3. **Fewer gates.** A 2^16 domain (65,536 gates) would halve the proving time. Sparse Poseidon partial rounds, 2-bit windows
@@ -132,6 +133,9 @@ under 6 s. What is still unknown is how long a mid-range phone takes.
 6. The vault embeds the prover the way the test page does: `circuit/web/host.js` and the two workers, with the thread count
    of `defaultThreads()` (not `navigator.hardwareConcurrency`, which Safari under-reports on an iPhone). It computes note keys,
    nullifiers and signatures as `circuit/js/` does, and checks itself against `circuit/js/vectors.json`.
+7. In the browser the vault should take `circuit/js/webcrypto.js` instead of `index.js` behind stand-ins: the same names,
+   asynchronous, with X25519, HKDF, AES-GCM and the hashes of secrets run by WebCrypto rather than by JavaScript that is not
+   constant-time. Its `node:crypto` stand-in then only hashes public tags (`circuit/js/README.md`, "Two entry points").
 
 Where the relation comes from: Tacit's Bitcoin shielded pool (MIT, `https://github.com/z0r0z/tacit`),
 `dapp/circuits/btc-pool/spend.circom` and `contracts/sp1/confidential/btc-pool-halo2/`. SH-20 changed the ticker to a private `t`

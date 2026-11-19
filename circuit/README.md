@@ -93,8 +93,24 @@ sessions settled:
   day was not recorded; Low Power Mode or heat are the likely causes. Note the conditions with every
   phone figure.
 
-Not measured yet: a mid-range phone, an Android phone, and the phases of a proof on the phone. Six
-threads are 2.7 times faster than one there and four are 2.1 times, well short of the thread count.
+The phases of a proof on that phone, from the same sweep (mean of the two passes, in seconds):
+
+| Threads | Proof | Commitments | Transforms | Quotient | Rest |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 15.5 | 10.5 | 3.9 | 0.74 | 0.33 |
+| 2 | 9.8 | 6.5 | 2.4 | 0.47 | 0.33 |
+| 3 | 9.1 | 6.1 | 2.2 | 0.41 | 0.34 |
+| 4 | 7.4 | 4.8 | 1.8 | 0.37 | 0.35 |
+| 5 | 6.5 | 4.1 | 1.6 | 0.34 | 0.35 |
+| 6 | 5.7 | 3.7 | 1.4 | 0.30 | 0.33 |
+
+No phase falls behind: from one thread to six the commitments gain 2.9 times, the transforms 2.8
+and the quotient 2.5, and the rest runs on one thread. What is short of the thread count is the same
+in every phase: two threads are 1.6 times faster than one, and a third adds almost nothing. That is
+what a phone with two fast cores and four slow ones would give (the page cannot see the cores, so
+this is read from the figures), not something one phase of the prover does.
+
+Not measured yet: a mid-range phone and an Android phone.
 
 ### Where the time goes
 
@@ -220,9 +236,14 @@ node bench/tx-vsize.mjs
 
 ## Next
 
-1. **Phone figures**: one recent phone is measured (above). Still missing: a mid-range phone, an
-   Android phone, and the phases of a proof on a phone, to see whether the commitments or the
-   transforms hold back its slow cores.
+1. **Phone figures**: one recent phone is measured (above). Still missing: a mid-range phone and an
+   Android phone. One lead for the next sweep, not built: a parallel region ends when its slowest
+   task does, and a commitment is only 20 tasks, one per window, so a slow core that picks up the
+   last window keeps the fast ones waiting. On the iPhone the third thread adds 0.12 of one thread's
+   speed to the commitments, where the fifth and the sixth add 0.33 each. Committing the polynomials
+   of a round in one region (60 tasks instead of three times 20), or cutting a window into smaller
+   tasks, would leave the tail to the fast cores. It holds several digit tables at once: measure the
+   memory with it.
 2. **Memory**: 224 MB at peak. The wire evaluations and the key file are still held longer than
    needed; there is room below 200 MB.
 3. **Fewer gates**: the circuit is 86,232 gates and a 2^16 domain, which would halve the proving

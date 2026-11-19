@@ -14,6 +14,10 @@
 //   const out = seal(to, 'GENE', 700n, e);                  // { leaf, pkEph, ct } and { secrets, npk }
 //   const note = scan(keys.ivk, keys.address, out);         // null unless it is ours and hashes to its leaf
 //   const { sk, nk } = spendKeys(keys, note.secrets);
+//
+// This entry point is synchronous and takes X25519, HKDF, AES-GCM and the hashes from node:crypto:
+// it is the one for Node. A browser wallet takes webcrypto.js: the same names, asynchronous, on the
+// platform's WebCrypto.
 
 export { P, poseidon } from '../../indexer/src/poseidon.js';
 export { noteLeaf, tickerT } from '../../indexer/src/notes.js';

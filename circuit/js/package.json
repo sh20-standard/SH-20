@@ -2,10 +2,10 @@
   "name": "sh20-circuit-js",
   "version": "0.1.0",
   "private": true,
-  "description": "What a wallet computes for an SH-20 spend, in plain JavaScript: note keys, nullifiers, EdDSA-Poseidon signatures. Checked against vectors written by the circuit's own model.",
+  "description": "What a wallet computes for SH-20, in plain JavaScript: note keys, nullifiers, EdDSA-Poseidon signatures, addresses, sealing and scanning. Synchronous on node:crypto (index.js) and asynchronous on WebCrypto for browsers (webcrypto.js). Checked against vectors written by the circuit's own models.",
   "type": "module",
   "license": "MIT",
-  "exports": "./index.js",
-  "scripts": { "test": "node --test 'test/*.test.js'" },
+  "exports": { ".": "./index.js", "./webcrypto": "./webcrypto.js", "./subtle": "./subtle.js" },
+  "scripts": { "test": "node --test 'test/*.test.js'", "test:browser": "node test/browser.mjs" },
   "engines": { "node": ">=20" }
 }
