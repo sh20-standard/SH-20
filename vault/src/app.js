@@ -17,7 +17,7 @@ import { toHex, fromHex } from './bytes.js';
 import { loadProver } from './prover.js';
 import { ensureIsolation } from './isolation.js';
 import { available } from './sh20.js';
-import { planTransfer, planDeployBurn, proveSpend, planCarrier, revealFor, pendingRecord, planFromPending, planPlainDeploy, revealSchedule } from './send.js';
+import { planTransfer, planDeployBurn, proveSpend, planCarrier, revealFor, pendingRecord, planFromPending, planPlainDeploy, revealSchedule, tickerState } from './send.js';
 import { poolProblem, claimProblem, planBurn, planList, listOutputs, signOffer, encodeOffer, decodeOffer, offerValid, listingFromChain, buildTake, buildCancel, buildClaim } from './market.js';
 
 if (window.top !== window.self) {
@@ -631,8 +631,12 @@ async function processDeploys() {
       if (sched.state !== 'ready') continue;
       // the ticker may have been taken meanwhile (another DEPLOY confirmed first): then the reveal would be rejected.
       // From the full lists: asking /token/<ticker> would tell the indexer the ticker before the reveal shows it.
-      const lists = await Promise.allSettled(indexers.map((a) => a.tokens()));
-      if (lists.some((r) => r.status === 'fulfilled' && r.value.some((t) => t.ticker === p.deploy.ticker))) {
+      const ticker = tickerState(await Promise.allSettled(indexers.map((a) => a.tokens())), p.deploy.ticker);
+      if (ticker === 'unknown') {
+        await v.updatePending(p.id, { schedule: 'no indexer answered: the reveal waits' }); // never revealed blind
+        continue;
+      }
+      if (ticker === 'taken') {
         await v.releaseInputs(p.inputs);
         await v.updatePending(p.id, { status: 'ticker taken' });
         continue;
@@ -908,7 +912,9 @@ function renderPending() {
         return h('tr', {}, h('td', {}, p.kind), h('td', {}, p.status), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', {}, '—'), h('td', {}));
       }
       if (p.status === 'waiting maturity') {
-        const left = p.schedule === 'unconfirmed' || p.revealIn === undefined ? 'the commit is not confirmed yet' : `reveal in ${p.revealIn} block${p.revealIn === 1 ? '' : 's'}`;
+        const left = p.schedule === 'unconfirmed' || p.revealIn === undefined ? 'the commit is not confirmed yet'
+          : /no indexer answered/.test(p.schedule ?? '') ? 'due, but no indexer answered: the reveal waits for one to say the ticker is free'
+          : `reveal in ${p.revealIn} block${p.revealIn === 1 ? '' : 's'}`;
         const commitAgain = h('button', { type: 'button', class: 'small secondary' }, 'Broadcast the commit again');
         commitAgain.addEventListener('click', busy(commitAgain, async () => {
           try { await esplora.broadcast(p.commitHex); } catch (e) { if (!/already|known|exists|conflict/i.test(e.message)) throw e; }
