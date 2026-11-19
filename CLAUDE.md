@@ -35,7 +35,10 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `docs/SPEC-WIRE.md` | wire format and acceptance rules, draft v0.3 (normative for the indexer) |
 | `docs/SPEC-NOTES.md` | wallet keys, addresses, note sealing (`pk_eph`, `ct`) and scanning, draft v0.3 (normative for wallets; reviewed once by the circuit session, §8 lists the changes; not audited) |
 | `indexer/` | reference indexer, Node ≥ 20, zero dependencies |
-| `indexer/vectors/v0.3.json` | deterministic vectors for a second implementation |
+| `indexer/vectors/v0.3.json` | deterministic vectors for a second implementation: primitives, envelopes with `bodyHash`, carrier cases, a CLAIM, and an 11-block scenario with every root, `eventsH`, digest, refusal and verifier input |
+| `indexer-rs/` | a second indexer in Rust, written from the spec alone (clean room): `cargo test --release` replays the vectors |
+| `docs/SPEC-GAPS.md` | what the clean-room indexer found open in the spec, and where each point is now settled |
+| `docs/AUDIT.md` | the dossier for an external zero-knowledge auditor: scope, the relation constraint by constraint, threat model, open doubts |
 | `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` (for the vault and relayers) |
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
 | `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
@@ -46,7 +49,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 55 tests (4 need the verifier module below and are skipped without it)
+npm test            # 57 tests (4 need the verifier module below and are skipped without it)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 2` JSON files>
 
@@ -102,9 +105,14 @@ threads, 31.9 s on one); they did not reproduce and the code runs as fast on the
 likely causes, so note the conditions with every phone figure. Growing the memory costs nothing on the phone (224 MB in
 223 steps: 62 ms): `sh20_reserve` stays unused.
 
-Not done: an audit; a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the circuit session; its reference code and vectors are in `circuit/js`); transfers in the vault (it mints and syncs privately
-today); a relayer; a second independent indexer; the
-profile constants (activation height, `D`).
+Done since: a second indexer in Rust (`indexer-rs/`), written from `SPEC-WIRE.md` and the vectors alone without opening
+`indexer/`; it reproduces every vector, and the 28 points it found open (`docs/SPEC-GAPS.md`) are settled in the spec
+(2026-11-19). The vault proves transfers, burns, listings and DEPLOY burns, buys, cancels and claims (`vault/`).
+The audit dossier is `docs/AUDIT.md`.
+
+Not done: an audit; a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the
+circuit session; its reference code and vectors are in `circuit/js`); a real wallet signing in the vault; a relayer; the
+profile constants (activation height, `D`); a public signet run.
 
 ## Next task: the phone figures, then the vault
 

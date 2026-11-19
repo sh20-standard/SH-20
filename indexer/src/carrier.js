@@ -1,22 +1,27 @@
-// Finds the SH-20 envelope in a transaction.
+// Finds the SH-20 envelope in a transaction (SPEC-WIRE §3).
 //
-// Two carriers are allowed:
-//  - OP_RETURN: an output `OP_RETURN <one minimal push>` whose data starts with "SH20".
-//    Cheapest for small envelopes (MINT, TAKE, CLAIM, genesis DEPLOY): one transaction.
-//  - Witness: a tapscript on input 0 holding `OP_0 OP_IF "SH20" <pushes...> OP_ENDIF`.
-//    Needed for envelopes with a proof (about 2.4 KB), paid at the witness rate.
-// A transaction carries at most one envelope; two of any kind reject it.
+// Two carriers:
+//  - OP_RETURN: an output that is exactly `OP_RETURN <one minimal push>`, whose data starts with "SH20".
+//    Cheapest for small envelopes (MINT, TAKE, CLAIM, a DEPLOY without a spend): one transaction.
+//  - Witness: in the tapscript of input 0, `OP_0 OP_IF <push "SH20"> <minimal pushes of ≤ 520 bytes> OP_ENDIF`.
+//    For envelopes with a proof, paid at the witness rate.
+// Anything that does not match a carrier exactly carries no envelope. An envelope whose version byte is not 0x00
+// belongs to another version: it is not counted. A transaction with two or more counted envelopes is refused.
 
-import { MAGIC, MAX_PUSH } from './constants.js';
+import { MAGIC, MAX_PUSH, VERSION } from './constants.js';
 
 const OP_0 = 0x00;
 const OP_PUSHDATA1 = 0x4c;
 const OP_PUSHDATA2 = 0x4d;
 const OP_PUSHDATA4 = 0x4e;
+const OP_1NEGATE = 0x4f;
+const OP_1 = 0x51;
+const OP_16 = 0x60;
 const OP_IF = 0x63;
 const OP_ENDIF = 0x68;
 const OP_RETURN = 0x6a;
 
+/** Splits a script into opcodes; a push keeps its data. Throws when a push runs past the end. */
 export function parseScript(script) {
   const ops = [];
   let i = 0;
@@ -48,15 +53,26 @@ export function parseScript(script) {
   return ops;
 }
 
-function isMinimalPush({ op, data }) {
+/**
+ * The data an opcode pushes when it is a minimal push in Bitcoin's sense (CheckMinimalPush), else null.
+ * OP_0 pushes nothing, OP_1..OP_16 push the byte 1..16, OP_1NEGATE pushes 0x81; any other data uses the
+ * shortest length prefix.
+ */
+export function minimalPushData({ op, data }) {
+  if (op === OP_0) return Buffer.alloc(0);
+  if (op >= OP_1 && op <= OP_16) return Buffer.from([op - 0x50]);
+  if (op === OP_1NEGATE) return Buffer.from([0x81]);
+  if (!data) return null;
   const n = data.length;
-  if (n <= 75) return op === n;
-  if (n <= 255) return op === OP_PUSHDATA1;
-  if (n <= 65535) return op === OP_PUSHDATA2;
-  return false;
+  if (n === 0) return null; // must be OP_0
+  if (n === 1 && ((data[0] >= 1 && data[0] <= 16) || data[0] === 0x81)) return null; // must be OP_1..OP_16 or OP_1NEGATE
+  if (n <= 75) return op === n ? data : null;
+  if (n <= 255) return op === OP_PUSHDATA1 ? data : null;
+  if (n <= 65535) return op === OP_PUSHDATA2 ? data : null;
+  return op === OP_PUSHDATA4 ? data : null;
 }
 
-const startsWithMagic = (d) => d && d.length >= MAGIC.length && d.subarray(0, MAGIC.length).equals(MAGIC);
+const startsWithMagic = (d) => d.length >= MAGIC.length && d.subarray(0, MAGIC.length).equals(MAGIC);
 
 function fromOpReturn(tx) {
   const found = [];
@@ -66,27 +82,25 @@ function fromOpReturn(tx) {
     try {
       ops = parseScript(out.script.subarray(1));
     } catch {
-      return; // malformed OP_RETURN that cannot hold an envelope
+      return; // does not split into opcodes: no envelope
     }
-    const tagged = ops.some((o) => startsWithMagic(o.data));
-    if (!tagged) return;
-    if (ops.length !== 1 || !isMinimalPush(ops[0])) {
-      found.push({ error: 'OP_RETURN envelope must be one minimal push', index });
-    } else {
-      found.push({ bytes: Buffer.from(ops[0].data), index });
-    }
+    if (ops.length !== 1) return;
+    const data = minimalPushData(ops[0]);
+    if (data && startsWithMagic(data)) found.push({ bytes: Buffer.from(data), index });
   });
   return found;
 }
 
-function tapscriptOf(witness) {
+/** The tapscript of a script-path spend, recognised from the witness alone; null otherwise. */
+export function tapscriptOf(witness) {
   if (!witness || witness.length < 2) return null;
   let items = witness;
   const last = items[items.length - 1];
-  if (items.length >= 3 && last.length > 0 && last[0] === 0x50) items = items.slice(0, -1); // annex
+  if (last.length > 0 && last[0] === 0x50) items = items.slice(0, -1); // annex
   if (items.length < 2) return null;
   const control = items[items.length - 1];
-  if (control.length < 33 || (control.length - 33) % 32 !== 0 || (control[0] & 0xfe) !== 0xc0) return null;
+  const m = (control.length - 33) / 32;
+  if (control.length < 33 || !Number.isInteger(m) || m > 128 || (control[0] & 0xfe) !== 0xc0) return null;
   return items[items.length - 2];
 }
 
@@ -99,44 +113,51 @@ function fromWitness(tx) {
   try {
     ops = parseScript(script);
   } catch {
-    return [];
+    return []; // does not split into opcodes: no envelope
   }
   const found = [];
-  for (let i = 0; i + 2 < ops.length; i++) {
-    if (ops[i].op !== OP_0 || ops[i + 1].op !== OP_IF) continue;
-    const tag = ops[i + 2].data;
-    if (!tag || !tag.equals(MAGIC)) continue;
+  let i = 0;
+  while (i + 2 < ops.length) {
+    const tag = ops[i + 2];
+    const opens = ops[i].op === OP_0 && ops[i + 1].op === OP_IF && tag.op === MAGIC.length && tag.data.equals(MAGIC);
+    if (!opens) {
+      i += 1;
+      continue;
+    }
     const chunks = [MAGIC];
     let j = i + 3;
     let closed = false;
-    let bad = false;
     for (; j < ops.length; j++) {
       if (ops[j].op === OP_ENDIF) {
         closed = true;
         break;
       }
-      if (!ops[j].data || ops[j].data.length > MAX_PUSH || !isMinimalPush(ops[j])) {
-        bad = true;
-        break;
-      }
-      chunks.push(ops[j].data);
+      const data = minimalPushData(ops[j]);
+      if (!data || data.length > MAX_PUSH) break;
+      chunks.push(data);
     }
-    if (!closed || bad) found.push({ error: 'malformed witness envelope' });
-    else found.push({ bytes: Buffer.concat(chunks) });
-    i = j;
+    if (closed) {
+      found.push({ bytes: Buffer.concat(chunks) });
+      i = j + 1; // after OP_ENDIF
+    } else {
+      i += 1; // no envelope at this OP_0: look again from the next opcode
+    }
   }
   return found;
 }
+
+// An envelope of another version is not counted (SPEC-WIRE §3); one too short to have a version byte is v0.
+const counted = (x) => x.bytes.length <= MAGIC.length || x.bytes[MAGIC.length] === VERSION;
 
 /**
  * @returns {{none: true} | {error: string} | {bytes: Buffer, carrier: 'opreturn'|'witness', index?: number}}
  */
 export function extractEnvelope(tx) {
-  const a = fromOpReturn(tx);
-  const b = fromWitness(tx);
-  const all = [...a.map((x) => ({ ...x, carrier: 'opreturn' })), ...b.map((x) => ({ ...x, carrier: 'witness' }))];
+  const all = [
+    ...fromOpReturn(tx).map((x) => ({ ...x, carrier: 'opreturn' })),
+    ...fromWitness(tx).map((x) => ({ ...x, carrier: 'witness' })),
+  ].filter(counted);
   if (all.length === 0) return { none: true };
   if (all.length > 1) return { error: 'more than one SH-20 envelope in the transaction' };
-  if (all[0].error) return { error: all[0].error };
   return all[0];
 }

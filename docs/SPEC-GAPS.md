@@ -4,6 +4,34 @@
 opening the reference indexer. This file lists every place where the spec did not settle what the code had to do:
 what was unclear, what `indexer-rs` does, why, and whether the vectors confirm it.
 
+## Resolution (2026-11-19)
+
+Every point below is now settled in [`SPEC-WIRE.md`](SPEC-WIRE.md), in the place listed here. The spec, not this file, is
+normative: an implementation re-reads the spec for each point. Where the reference indexer read a point differently from
+the text now written, the reference was changed to match the text; the vectors were extended to pin the points that
+can be pinned (`bodyHash` of every spend envelope, the nine verifier inputs of every spend in the scenario, 23 carrier
+cases, a CLAIM with its signature, a listing CLOSED then claimed and one CANCELLED, `digest_{A−1}`).
+
+| # | Settled in | Pinned by the vectors |
+| --- | --- | --- |
+| 1.1 | §1, `SHA256(…) mod r` | `domainLeaf`, every `bodyHash` |
+| 1.2 | §4, "Field elements" | — |
+| 1.3 | §4, `body` | `envelopes.*.bodyHash`, `scenario.verifierCalls` |
+| 2.1, 2.2, 3.3 | §3, last paragraph; §4, header | `carriers` |
+| 2.3 | §3, "minimal push" | `carriers` |
+| 2.4, 2.5 | §3, "Witness" | `carriers` |
+| 2.6, 2.7 | §3, last paragraph | `carriers` (coinbase) |
+| 3.1, 3.2 | §4, `payMode` and `payScript` | — |
+| 3.4 | §4, re-serialising | — |
+| 4.1 | §5 intro, §6 | `preActivation` |
+| 4.2, 4.3 | §5 Details, "Payment" | `mintPaid`, `mintBatch` |
+| 4.4, 4.5, 4.13 | §5 Details, "DEPLOY"; §6 step 1 | — |
+| 4.6 | §5 Details, "Room in the tree" | — |
+| 4.7, 4.9, 4.10 | §5 Details, "Locks" | blocks 9 to 11 |
+| 4.8 | §5 Details, "CLAIM message" | `claim`, block 11 |
+| 4.11, 4.12 | §5, "Every spend" | anchors 1 to 8 |
+| 4.14 | §5 Details, "Listings" | — |
+
 ## Result
 
 - **The spec was enough for everything the vectors test.** `indexer-rs` reproduces
