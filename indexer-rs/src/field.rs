@@ -46,7 +46,7 @@ pub fn sha256(parts: &[&[u8]]) -> Bytes32 {
     h.finalize().into()
 }
 
-/// `SHA256(tag ‖ data) mod r`, the digest read as a big-endian integer (see SPEC-GAPS §1.1).
+/// `SHA256(tag ‖ data) mod r`, the digest read as a big-endian integer (§1).
 pub fn sha256_mod_r(parts: &[&[u8]]) -> Fr {
     Fr::from_be_bytes_mod_order(&sha256(parts))
 }

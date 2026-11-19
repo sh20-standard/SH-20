@@ -1,7 +1,7 @@
 //! A second SH-20 indexer, written from `docs/SPEC-WIRE.md` (draft v0.3) alone.
 //!
-//! Clean room: the reference indexer's code was never opened. What the spec left open, and
-//! what was chosen, is in `docs/SPEC-GAPS.md`.
+//! Clean room: the reference indexer's code was never opened. What the spec left open, what
+//! was chosen, and what a recheck against the settled text still found is in `docs/SPEC-GAPS.md`.
 
 pub mod chain;
 pub mod envelope;

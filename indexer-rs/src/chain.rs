@@ -1,6 +1,6 @@
 //! What the indexer reads from Bitcoin: blocks, transactions, and the two carriers (SPEC-WIRE §3).
 
-use crate::envelope::MAGIC;
+use crate::envelope::{MAGIC, VERSION};
 use crate::field::Bytes32;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,7 +50,9 @@ pub enum Instr {
     Op(u8),
 }
 
-/// Bitcoin's rule for a minimal push (`CheckMinimalPush`): the shortest opcode that pushes `data`.
+/// A minimal push, as §3 defines it: `OP_0` for no data, `OP_1`…`OP_16` and `OP_1NEGATE` for
+/// the single bytes they push, then the opcode `n`, `OP_PUSHDATA1`, `OP_PUSHDATA2` by length.
+/// §3 names no minimal form above 65,535 bytes, so `OP_PUSHDATA4` is never one (SPEC-GAPS R1).
 fn is_minimal(opcode: u8, data: &[u8]) -> bool {
     match data.len() {
         0 => opcode == OP_0,
@@ -59,7 +61,7 @@ fn is_minimal(opcode: u8, data: &[u8]) -> bool {
         n if n <= 75 => opcode as usize == n,
         n if n <= 255 => opcode == OP_PUSHDATA1,
         n if n <= 65535 => opcode == OP_PUSHDATA2,
-        _ => opcode == OP_PUSHDATA4,
+        _ => false,
     }
 }
 
@@ -190,6 +192,13 @@ pub fn envelopes(tx: &Tx) -> Vec<Vec<u8>> {
         found.extend(witness_envelopes(script));
     }
     found
+}
+
+/// The envelopes of a transaction that count (§3): every envelope found, except one whose
+/// fifth byte (the version) exists and is not `0x00`. One is applied; two or more refuse the
+/// transaction.
+pub fn counted_envelopes(tx: &Tx) -> Vec<Vec<u8>> {
+    envelopes(tx).into_iter().filter(|e| e.len() < 5 || e[4] == VERSION).collect()
 }
 
 /// True when the script is exactly `OP_1 <key>`: P2TR to that output key.

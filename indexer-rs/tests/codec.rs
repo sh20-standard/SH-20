@@ -34,7 +34,7 @@ const R_LE: &str = "010000f093f5e1439170b97948e833285d588181b64550b829a031e1724e
 fn every_vector_envelope_round_trips() {
     let v = vectors();
     let names: Vec<&String> = v["envelopes"].as_object().unwrap().keys().collect();
-    assert_eq!(names.len(), 11);
+    assert_eq!(names.len(), 16);
     for name in names {
         vector_envelope(&v, name);
     }
@@ -138,7 +138,7 @@ fn sizes_of_the_table() {
         pay_script: vec![0xab; ps],
         spend: spend(1, 4),
     };
-    assert_eq!(size(list(0)), 884);
+    assert_eq!(size(list(1)), 884 + 1);
     assert_eq!(size(list(34)), 884 + 34);
     assert_eq!(size(Envelope::Take { opening: fe(5) }), 38);
     assert_eq!(size(Envelope::Claim { list_txid: [0xff; 32], opening: fe(6), sig: [0xff; 64] }), 134);
@@ -361,8 +361,10 @@ fn deploy_layout_rules() {
     // payMode
     assert!(!ok(&Deploy { pay_mode: 3, ..base.clone() }));
     assert!(!ok(&Deploy { pay_mode: 255, ..base.clone() }));
-    // payScript only with payMode 2, 34 bytes at most
+    // payScript: 1 to 34 bytes, required with payMode 2 and absent otherwise
     assert!(ok(&Deploy { pay_mode: 2, pay_script: vec![1; 34], ..base.clone() }));
+    assert!(ok(&Deploy { pay_mode: 2, pay_script: vec![1], ..base.clone() }));
+    assert!(!ok(&Deploy { pay_mode: 2, pay_script: Vec::new(), ..base.clone() }));
     assert!(!ok(&Deploy { pay_mode: 2, pay_script: vec![1; 35], ..base.clone() }));
     assert!(!ok(&Deploy { pay_mode: 1, pay_script: vec![1; 22], ..base.clone() }));
     assert!(!ok(&Deploy { pay_mode: 0, pay_script: vec![1], ..base.clone() }));
@@ -385,6 +387,8 @@ fn deploy_layout_rules() {
         .encode()
     };
     assert!(Envelope::decode(&list(34)).is_ok());
+    assert!(Envelope::decode(&list(1)).is_ok());
+    assert!(rejected(&list(0)));
     assert!(rejected(&list(35)));
 }
 

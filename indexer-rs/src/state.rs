@@ -1,8 +1,8 @@
 //! The state machine: acceptance rules (SPEC-WIRE §5), block processing and digest (§6),
 //! and the per-block undo log for reorgs.
 
-use crate::chain::{burned_sats, envelopes, is_p2tr_to, paid_to, Block, Tx};
-use crate::envelope::{body_hash_of, DecodeError, Deploy, Envelope, Spend, Ticker, VERSION};
+use crate::chain::{burned_sats, counted_envelopes, is_p2tr_to, paid_to, Block, Tx};
+use crate::envelope::{body_hash_of, DecodeError, Deploy, Envelope, Spend, Ticker};
 use crate::events::{encode_all, Event, Outcome, Spent};
 use crate::field::{fr_from_le, fr_to_le, public_leaf, sha256, Bytes32};
 use crate::tree::{Tree, TreeSnapshot};
@@ -400,7 +400,7 @@ impl Indexer {
         let t = self.tokens.get(&ticker)?;
         let opening = t.team_opening?;
         if t.team_unlocked || t.pre == 0 || self.tree.room() < 1 {
-            return None; // a full tree is unspecified: SPEC-GAPS §4.6
+            return None; // a team note that does not fit is dropped: no event, pool unchanged (§5)
         }
         let pre = t.pre;
         let leaf = public_leaf(ticker.t(), pre, &fr_from_le(&opening)?);
@@ -425,8 +425,8 @@ impl Indexer {
             }
         }
 
-        // at most one envelope; an unknown version is ignored and does not count
-        let found: Vec<Vec<u8>> = envelopes(tx).into_iter().filter(|e| !(e.len() >= 5 && e[4] != VERSION)).collect();
+        // one counted envelope is applied; two or more refuse the transaction
+        let found = counted_envelopes(tx);
         let outcome: Option<Result<Event, Reject>> = match found.as_slice() {
             [] => None,
             [raw] => Some(match Envelope::decode(raw) {
@@ -540,6 +540,8 @@ impl Indexer {
                 if lock_out.value < LOCK_MIN_SATS {
                     return Err("lock output below 330 sats");
                 }
+                // §5 says a LIST txid is unique (BIP30, BIP34), and so gives no rule for a second
+                // listing under one txid; it is refused here (SPEC-GAPS R4)
                 if self.listings.contains_key(&txid) {
                     return Err("a listing with this txid exists");
                 }

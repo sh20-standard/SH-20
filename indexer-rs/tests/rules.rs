@@ -68,6 +68,16 @@ fn op_return_carrier() {
     let mut s = vec![0x6a, 0x4e, 0x2c, 0x01, 0, 0];
     s.extend_from_slice(&long);
     assert!(envelopes(&with_script(s)).is_empty());
+    // 65,535 bytes is the longest minimal push (OP_PUSHDATA2). §3 gives no minimal form beyond:
+    // 65,536 bytes in OP_PUSHDATA4 carry nothing (SPEC-GAPS R1)
+    long.resize(65_535, 0xaa);
+    let mut s = vec![0x6a, 0x4d, 0xff, 0xff];
+    s.extend_from_slice(&long);
+    assert_eq!(envelopes(&with_script(s)), vec![long.clone()]);
+    long.push(0xaa);
+    let mut s = vec![0x6a, 0x4e, 0x00, 0x00, 0x01, 0x00];
+    s.extend_from_slice(&long);
+    assert!(envelopes(&with_script(s)).is_empty());
 }
 
 #[test]
@@ -432,7 +442,7 @@ fn deploy_conditions() {
         base.clone(),
         Deploy { ticker: tk("BBBB"), end: 5, start: 5, unlock: 5, ..base.clone() }, // end = start
         Deploy { ticker: tk("CCCC"), pre: 999_000, team_opening: Some(fe(1)), unlock: 4_000_000_000, ..base.clone() },
-        Deploy { ticker: tk("DDDD"), price: u64::MAX, pay_mode: 2, pay_script: Vec::new(), ..base.clone() },
+        Deploy { ticker: tk("DDDD"), price: u64::MAX, pay_mode: 2, pay_script: vec![0x51], ..base.clone() },
         Deploy { ticker: tk("0000"), max: u64::MAX, lim: 1, ..base.clone() },
         Deploy { ticker: tk("AAAA"), max: 5, lim: 5, ..base.clone() }, // taken a moment ago
     ];

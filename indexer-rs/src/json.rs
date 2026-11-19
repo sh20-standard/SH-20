@@ -90,20 +90,34 @@ pub fn block_from_vector(b: &Value) -> Res<Block> {
     let height = u32_of(b, "height")?;
     let mut txs = Vec::new();
     for t in array_of(b, "txs")? {
-        let txid = txid_of(str_of(t, "txid")?)?;
-        let mut vin = Vec::new();
-        for i in array_of(t, "vin")? {
-            let prevout = Some((txid_of(str_of(i, "txid")?)?, u32_of(i, "vout")?));
-            vin.push(TxIn { prevout, witness: witness_of(i.get("witness"))? });
-        }
-        let mut vout = Vec::new();
-        for o in array_of(t, "vout")? {
-            let value = str_of(o, "value")?.parse::<u64>().map_err(|e| e.to_string())?;
-            vout.push(TxOut { value, script: hex_of(str_of(o, "script")?)? });
-        }
-        txs.push(Tx { txid, vin, vout });
+        str_of(t, "txid")?;
+        txs.push(tx_from_vector(t)?);
     }
     Ok(Block { height, txs })
+}
+
+/// A transaction as the vectors write it, in the scenario or in a carrier case. A carrier case
+/// has no txid (32 zero bytes here), and an input may have no outpoint (`"coinbase"`, or
+/// nothing but its witness): it then spends nothing.
+pub fn tx_from_vector(t: &Value) -> Res<Tx> {
+    let txid = match t.get("txid") {
+        Some(_) => txid_of(str_of(t, "txid")?)?,
+        None => [0u8; 32],
+    };
+    let mut vin = Vec::new();
+    for i in array_of(t, "vin")? {
+        let prevout = match i.get("txid") {
+            Some(_) if i.get("coinbase").is_none() => Some((txid_of(str_of(i, "txid")?)?, u32_of(i, "vout")?)),
+            _ => None,
+        };
+        vin.push(TxIn { prevout, witness: witness_of(i.get("witness"))? });
+    }
+    let mut vout = Vec::new();
+    for o in array_of(t, "vout")? {
+        let value = str_of(o, "value")?.parse::<u64>().map_err(|e| e.to_string())?;
+        vout.push(TxOut { value, script: hex_of(str_of(o, "script")?)? });
+    }
+    Ok(Tx { txid, vin, vout })
 }
 
 #[cfg(test)]

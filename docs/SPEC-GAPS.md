@@ -32,6 +32,56 @@ cases, a CLAIM with its signature, a listing CLOSED then claimed and one CANCELL
 | 4.11, 4.12 | §5, "Every spend" | anchors 1 to 8 |
 | 4.14 | §5 Details, "Listings" | — |
 
+## Recheck against the settled spec (2026-11-19)
+
+`indexer-rs` was re-read against the new `SPEC-WIRE.md`, point by point, and against the extended vectors, again
+without opening `indexer/` (read: `SPEC-WIRE.md`, the table above, `indexer/vectors/v0.3.json`).
+
+- **It replays the extended vectors in full**: the 11 blocks (roots, events, `eventsH`, digests), the 3 refusals, the
+  final state with its 3 listings, the `bodyHash` of the 8 spend envelopes, the 7 verifier calls with their nine
+  inputs each, the 23 carrier cases, the CLAIM message and signature, and `digest_{A−1}`.
+- **The text sides with what `indexer-rs` already did on 26 of the 28 points.** Two needed a change:
+  - **3.2** An empty `payScript` is now rejected with payMode 2 and in a LIST (it was accepted).
+  - **2.3** `OP_PUSHDATA4` is no longer a minimal push for any length (see R1).
+- **No contradiction** between the new text and the vectors.
+- Blocks 9 to 11 (CLOSED, CANCELLED, the forged and the signed CLAIM) replayed with the code as it was, written
+  from the first text. The two changes above cannot touch the other new vectors: none has an empty `payScript` or
+  a push above 65,535 bytes.
+
+### Still open
+
+Six points where the text can still be read two ways, or where the vectors need a guess. None changes a digest on
+a chain of ordinary transactions.
+
+| # | Point | Chosen in `indexer-rs` | Vectors |
+| --- | --- | --- | --- |
+| R1 | **A push of more than 65,535 bytes.** §3 calls "minimal" Bitcoin's `CheckMinimalPush`, then lists forms up to `OP_PUSHDATA2` and says any other way is not minimal. Under `CheckMinimalPush`, `OP_PUSHDATA4` is the minimal form above 65,535 bytes; under the list, such data has no minimal push. It matters for the count only: an OP_RETURN of 70,000 bytes starting with `SH20` beside a real envelope either refuses the transaction or is not there. | The list: `OP_PUSHDATA4` never carries an envelope. | silent |
+| R2 | **The order of the checks before the proof.** §5 puts the turnstile before the proof and says nothing of the other conditions. A refusal has no effect, so the order does not change the state; it does change which spends reach the verifier, and `verifierCalls` lists 7 calls: none for the copied LIST of block 2, whose proof is the valid one. Either the lock is checked before the proof, or the list holds accepted spends only. The vectors do not say which. | Every other condition first, the proof last: 7 calls. | agree, without saying what they list |
+| R3 | **Coinbase.** "Read like any other (only its OP_RETURN outputs can carry an envelope)": a remark (a coinbase witness is one 32-byte element, so it can hold no tapscript), or a rule (the witness of a coinbase is not looked at)? The same on a valid chain; different on hand-made JSON. | A remark: both carriers are read. | the case has no witness |
+| R4 | **A second listing under one txid.** §5 states that a LIST txid is unique (BIP30, BIP34) and so gives no rule. An implementation still does something if it is not, for example on a regtest chain built by hand. | The second LIST is refused. | silent |
+| R5 | **The new vector sections are not described.** `notes` covers the scenario only. Guessed here: `carriers[].expect` is the one *counted* envelope, `"none"` or `"many"` (case 21, a version-1 envelope alone, is `"none"` though a carrier holds it); an input written `{"coinbase": "true"}` spends nothing; `verifierCalls[].publicInputs` are the nine inputs, big-endian hex, in the order of §4; `claim.npk` is big-endian like every field element of the file, and little-endian inside the message. | As guessed; every test passes. | — |
+| R6 | **Editorial.** The first lines still say the file is "normative for `indexer/src/`". With two implementations it is normative for every indexer. | — | — |
+
+### Pinned less than the table above says
+
+The table's last column is right for most rows. For these, the vectors pin part of the point only:
+
+- **4.1** `preActivation` pins the constant `SHA256("sh20-v0")`. No vector has a block below `A`, and no spend is
+  anchored below `A`, so "the empty root before `A`" is not pinned either (every anchor is 1 to 8, with `A = 1`).
+- **4.7, 4.9** Blocks 9 to 11 pin: a lock spent with no envelope (CLOSED), an unpaid TAKE (CANCELLED), a forged CLAIM
+  refused, a signed CLAIM accepted. Not pinned: a lock spent by a transaction whose envelope is refused or that has
+  two envelopes, several locks spent by one transaction, a CLAIM in the transaction that spends the lock.
+- **2.1** The carrier cases pin what is counted. No scenario transaction has two envelopes, so the refusal itself
+  (nothing applied, locks still closed) is not pinned.
+- **2.6** A MINT in a witness is pinned (carrier cases through the rules). A spend in an OP_RETURN is not.
+- Still with no vector, as the table says: 1.2, 3.1, 3.2, 3.4, 4.4, 4.5, 4.6, 4.13 (two team notes in one block),
+  4.14. Also: payMode 2, a refused DEPLOY, a minted-out token, the anchor window at its bounds, a reused nullifier,
+  a reorg.
+
+Each of these has a test in `indexer-rs/tests/rules.rs` or `tests/codec.rs`; they state this implementation's reading.
+
+The sections below are the record of the first pass, before the resolution. They are left as written.
+
 ## Result
 
 - **The spec was enough for everything the vectors test.** `indexer-rs` reproduces
