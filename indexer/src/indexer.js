@@ -371,6 +371,7 @@ export class Indexer {
 
   _list(env, body, tx, H) {
     const t = this._token(env.ticker);
+    if (this.listings.has(tx.txid)) throw new Reject('a listing already has this txid');
     if (env.amount <= 0n || env.price <= 0n) throw new Reject('amount and price must be positive');
     const lock = tx.vout[env.lockVout];
     if (!lock) throw new Reject('no lock output');

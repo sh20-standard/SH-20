@@ -56,6 +56,7 @@ const lockKey2 = publicKey(h('lock2-secret'));
 const lockKey3 = publicKey(h('lock3-secret'));
 const list2Txid = txid('list2-tx');
 const list3Txid = txid('list3-tx');
+const lockKeyN = (n) => publicKey(h(`lock${n}-secret`));
 const envs = {
   mintGenesis: { type: 'MINT', ticker: 'SH20', ...op('mint1') },
   mintGenesisBatch: { type: 'MINT', ticker: 'SH20', ...op('mint0'), k: 2 },
@@ -75,6 +76,14 @@ const envs = {
   cancel3: { type: 'TAKE', ...op('seller3') },
   claim2: { type: 'CLAIM', listTxid: list2Txid, ...op('claim2'), sig: sign(h('lock2-secret'), Indexer.claimMessage(list2Txid, op('claim2').npk)) },
   claimForged: { type: 'CLAIM', listTxid: list2Txid, ...op('forged'), sig: sign(h('not-the-lock'), Indexer.claimMessage(list2Txid, op('forged').npk)) },
+  // Blocks 12 and 13: four listings (one anchored below A, on the empty root), then a transaction with two envelopes
+  // that spends a lock, a CLAIM in the transaction that spends its own lock, and a TAKE that spends two locks.
+  list4: { type: 'LIST', ticker: 'GENE', amount: 100n, price: 1000n, lockVout: 0, lockKey: lockKeyN(4), payScript: pay, spend: spend('list4', 0) },
+  list5: { type: 'LIST', ticker: 'GENE', amount: 100n, price: 1000n, lockVout: 0, lockKey: lockKeyN(5), payScript: pay, spend: spend('list5', 11) },
+  list6: { type: 'LIST', ticker: 'GENE', amount: 100n, price: 1000n, lockVout: 0, lockKey: lockKeyN(6), payScript: pay, spend: spend('list6', 11) },
+  list7: { type: 'LIST', ticker: 'GENE', amount: 100n, price: 1000n, lockVout: 0, lockKey: lockKeyN(7), payScript: pay, spend: spend('list7', 11) },
+  claimTooEarly: { type: 'CLAIM', listTxid: txid('list5-tx'), ...op('claim5'), sig: sign(h('lock5-secret'), Indexer.claimMessage(txid('list5-tx'), op('claim5').npk)) },
+  take6: { type: 'TAKE', ...op('buyer6') },
 };
 const ser = Object.fromEntries(Object.entries(envs).map(([k, v]) => [k, serializeEnvelope(v)]));
 
@@ -113,6 +122,15 @@ const txs = [
     { txid: txid('claim-forged-tx'), vin: [input('ff')], vout: [{ value: 0n, script: opReturn(ser.claimForged) }] },
     { txid: txid('claim2-tx'), vin: [input('fg')], vout: [{ value: 0n, script: opReturn(ser.claim2) }] },
   ],
+  [4, 5, 6, 7].map((n) => ({ txid: txid(`list${n}-tx`), vin: [{ txid: txid(`fh${n}`), vout: 0, witness: witness(ser[`list${n}`]) }], vout: [{ value: 330n, script: p2tr(lockKeyN(n)) }] })),
+  [
+    // Two envelopes: refused, nothing applied, and the lock it spends is still CLOSED.
+    { txid: txid('two-envelopes-tx'), vin: [{ txid: txid('list4-tx'), vout: 0, witness: [] }], vout: [{ value: 0n, script: opReturn(ser.mintGenesis) }, { value: 0n, script: opReturn(ser.take) }] },
+    // A CLAIM in the transaction that spends its own lock: refused (the listing is ACTIVE when it applies), then CLOSED.
+    { txid: txid('claim-too-early-tx'), vin: [{ txid: txid('list5-tx'), vout: 0, witness: [] }], vout: [{ value: 0n, script: opReturn(ser.claimTooEarly) }] },
+    // A paid TAKE spending the locks of list6 then list7: list6 SOLD, then list7 CLOSED.
+    { txid: txid('take6-tx'), vin: [{ txid: txid('list6-tx'), vout: 0, witness: [] }, { txid: txid('list7-tx'), vout: 0, witness: [] }], vout: [{ value: 0n, script: opReturn(ser.take6) }, { value: 1000n, script: pay }] },
+  ],
 ];
 const blocks = txs.map((t, i) => ({ height: i + 1, hash: `b${i + 1}`, txs: t }));
 
@@ -138,6 +156,8 @@ const expected = [
   { height: 2, txid: txid('list-copy-tx'), reason: 'lock output must be P2TR to lockKey' },
   { height: 8, txid: txid('overburn-tx'), reason: 'more than the pool holds of this ticker' },
   { height: 11, txid: txid('claim-forged-tx'), reason: 'bad CLAIM signature' },
+  { height: 13, txid: txid('two-envelopes-tx'), reason: 'more than one SH-20 envelope in the transaction' },
+  { height: 13, txid: txid('claim-too-early-tx'), reason: 'listing is not CLOSED' },
 ];
 const rejected = results.flatMap((r) => r.rejected.map((x) => ({ height: r.height, txid: x.txid, reason: x.reason })));
 if (JSON.stringify(rejected) !== JSON.stringify(expected)) throw new Error(`unexpected rejections: ${JSON.stringify(rejected)}`);
@@ -212,6 +232,14 @@ const carriers = carrierCases.map(([name, tx, expect]) => {
 const out = {
   version: 'SH-20 draft v0.3',
   notes: 'Field elements are hex, big-endian here for readability; on the wire they are 32-byte little-endian. The scenario uses a test verifier that accepts exactly one 480-byte proof: \"valid-proof\" padded with zeros. eventsH is the byte string of SPEC-WIRE §6 whose SHA-256 enters the digest. rejected lists the envelopes an indexer must refuse; the reason is informative, only the refusal is normative.',
+  sections: {
+    envelopes: 'Each envelope of the scenario: its bytes, and for a spend its bodyHash (SPEC-WIRE §4: SHA256("sh20/v0/body" ‖ body) mod r, body from "SH20" up to the proof).',
+    claim: 'One CLAIM: the message SHA256("sh20/v0/claim" ‖ listTxid ‖ npk) and its BIP340 signature by lockKey, with 32 zero bytes of auxiliary randomness.',
+    preActivation: 'digest_{A-1}: the digest an indexer starts from at block A.',
+    carriers: 'One transaction each, and what SPEC-WIRE §3 finds in it. expect is the hex of the one counted envelope, "none" when no envelope is counted (an envelope of another version alone is "none"), or "many" when two or more are counted (the transaction is refused). Inputs give their witness only; their outpoints play no part. {"coinbase": true} is the input of a coinbase.',
+    'scenario.verifierCalls': 'Every call to the verifier, in order, with its nine public inputs in the order of SPEC-WIRE §4: R[anchorHeight], nf0, nf1, leaf0, leaf1, leaf2, bodyHash, vPub, tPub. The proof is checked last (§5), so a spend refused for another reason is not in the list. An anchor below A is checked against the empty root.',
+    'scenario.after': 'For each block: root R[H], the event types, eventsH, and digest_H.',
+  },
   poseidon2: [
     { in: ['1', '2'], out: poseidon2(1n, 2n).toString() },
     { in: ['0', '0'], out: poseidon2(0n, 0n).toString() },
@@ -242,7 +270,7 @@ const out = {
       treeSize: ix.tree.size,
       sh20: { mints: ix.token('SH20').mints.toString(), burned: ix.token('SH20').burned.toString(), pool: ix.token('SH20').pool.toString() },
       gene: { mints: ix.token('GENE').mints.toString(), pool: ix.token('GENE').pool.toString(), teamUnlocked: ix.notes.some((x) => x.kind === 'TEAM' && x.ticker === 'GENE') },
-      listings: Object.fromEntries([listTxid, list2Txid, list3Txid].map((id) => [id, ix.listings.get(id).state])),
+      listings: Object.fromEntries([listTxid, list2Txid, list3Txid, ...[4, 5, 6, 7].map((n) => txid(`list${n}-tx`))].map((id) => [id, ix.listings.get(id).state])),
     },
   },
 };
