@@ -26,7 +26,7 @@ node bin/follow.js --esplora https://mempool.space/signet/api --activation H
 | `GET /listing/:txid` | one listing, or 404 |
 | `GET /digest/:height` | `{ height, digest }` after that block: two honest indexers give the same value at the same height |
 | `GET /blocks?before=H&limit=20` | blocks with SH-20 activity, newest first: `[{ height, hash, digest, root, leaves, events, rejected }]`; `limit` ≤ 200 |
-| `GET /tx/:txid` | one SH-20 transaction: `{ txid, height, event, rejected, notes }` (the accepted event or the rejection reason, and the notes it created) |
+| `GET /tx/:txid` | one SH-20 transaction: `{ txid, height, event, rejected, events, rejections, notes }` (the accepted event or the rejection reason, and the notes it created; a batch of TRANSFERs has several events and rejections, each with its `envelope` index: `events` and `rejections` list them all, `event` and `rejected` keep the first) |
 
 **Tokens.** `t` is the ticker's id inside notes and proofs (`tickerT`, SPEC-WIRE §2), as a decimal string;
 a wallet can recompute it from the ticker. Before paying for a mint, a wallet should check the token's

@@ -143,9 +143,10 @@ claims exist. What is left before people can try it, in order (review of 2026-11
    Testers send the phone page's JSON: that is where mid-range and Android phones get measured.
 3. **Before mainnet** (each with an owner and a test):
    - **Sender privacy: relayers.** The Bitcoin inputs that pay a transfer show who sent something; a relayer pays them
-     and is paid in tokens by the third output. Decided (2026-11-20): several TRANSFER envelopes per transaction, each
-     judged alone; every other type stays one per transaction. To specify (cap per transaction, order, vectors) before
-     the relayer is built.
+     and is paid in tokens by the third output. Specified (2026-11-20, `SPEC-WIRE.md` §3): two or more TRANSFERs in the
+     witness of one transaction are a batch, applied in tapscript order, each accepted or refused alone; no count limit
+     beyond Bitcoin's own; every other type stays one per transaction. Vectors: block 17 and four carrier cases.
+     Still to build: the relayer itself (it collects proved TRANSFERs, pays the fees, and is paid by their third output).
    - **Differential fuzzing.** Random chains (valid and broken envelopes, both carriers, lock spends, reorgs) through
      `indexer/` and `indexer-rs/`, digests compared at every block: the vectors only cover the cases someone thought of.
    - **Scale.** The note tree is no longer the limit (2026-11-19: an append hashes only the subtrees it completes,
@@ -195,7 +196,7 @@ Keep only what the protocol needs; add nothing that costs bytes without a clear 
 | --- | --- | --- |
 | MINT (proof-less, OP_RETURN) | 42-byte envelope (v0.3), about 164 vB with one input and one change output; up to 10 mints in 43 bytes, about 165 vB | ~165 vB |
 | TRANSFER, alone | 830-byte envelope (480-byte PLONK proof), about 339 vB + commit | ≤ ~350 vB |
-| TRANSFER, in a relayer batch | not supported yet | ≤ ~150 vB per transfer |
+| TRANSFER, in a relayer batch | allowed (`SPEC-WIRE.md` §3): `(515 + 840 n) / 4` vB for `n` transfers, about 223 vB each at `n = 10`, plus a share of the commit | ≤ ~150 vB per transfer |
 
 Sizes are computed from serialized envelopes by `circuit/bench/tx-vsize.mjs` (a P2TR payment comes out at 154 vB by the same
 count); nothing has been broadcast yet. The batch target is out of reach of lever 1 alone: a spend section is 824 bytes, 206 vB

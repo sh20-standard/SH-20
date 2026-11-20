@@ -192,16 +192,20 @@ export class Indexer {
 
     const found = extractEnvelope(tx);
     if (found.error) rejected.push({ txid: tx.txid, reason: found.error });
-    if (found.bytes) {
+    // One envelope, or the envelopes of a batch one after the other, each accepted or refused alone (SPEC-WIRE §3).
+    const list = found.batch ?? (found.bytes ? [found] : []);
+    list.forEach((x, i) => {
+      const at = found.batch ? { envelope: i } : {};
+      this._ctx = { height: H, txid: tx.txid, ...at };
       try {
-        const { env, body } = parseEnvelope(found.bytes);
-        const event = this._apply(env, body, tx, H, spentLocks, found.carrier);
-        events.push({ txid: tx.txid, ...event });
+        const { env, body } = parseEnvelope(x.bytes);
+        const event = this._apply(env, body, tx, H, spentLocks, x.carrier);
+        events.push({ txid: tx.txid, ...at, ...event });
       } catch (e) {
         if (!(e instanceof Reject) && !(e instanceof CodecError)) throw e;
-        rejected.push({ txid: tx.txid, reason: e.message });
+        rejected.push({ txid: tx.txid, ...at, reason: e.message });
       }
-    }
+    });
 
     for (const id of spentLocks) {
       const l = this.listings.get(id);
