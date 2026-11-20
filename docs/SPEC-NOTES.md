@@ -93,8 +93,21 @@ amounts and recipients of past payments are only in the wallet's own records.
 
 For every note of kind `OUT` (`docs/API.md`: `leaf`, `pkEph`, `ct`, position `pos`):
 
-1. `z = X25519(ivk, pk_eph)`; skip the note if `z` is all zeros, or if the library refuses to compute it (some refuse a
-   low-order `pk_eph` instead of returning zeros). Derive `s`, then `key ‖ nonce` with this `leaf`.
+1. Skip the note if `pk_eph` is a point of low order: with bit 255 cleared, one of the seven encodings below, the only
+   values for which `X25519(k, pk_eph)` is all zeros (for any `k`). Decide it from the bytes of `pk_eph`, before the
+   library is asked: some libraries refuse such a point instead of returning zeros, with the error they also give for
+   a failure of their own. Otherwise `z = X25519(ivk, pk_eph)`; a library that fails here, or returns zeros, is an
+   error to report, never a skipped note. Derive `s`, then `key ‖ nonce` with this `leaf`.
+
+   ```
+   0000000000000000000000000000000000000000000000000000000000000000    0
+   0100000000000000000000000000000000000000000000000000000000000000    1
+   e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800    order 8
+   5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157    order 8
+   ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f    p − 1
+   edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f    p = 2^255 − 19
+   eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f    p + 1
+   ```
 2. Open `ct` with AES-256-GCM and `aad = leaf`. A failed tag means the note is not for this wallet.
 3. Skip the note unless the last 4 bytes of the plaintext are a ticker (`[A-Z0-9]`).
 4. **Check the leaf.** Derive `τa, τn, rho` from `s`, compute `npk` from `A, N` and
@@ -175,5 +188,11 @@ end-to-end test replays a chain made the same way (`indexer/test/fixtures/plonk-
 5. §4: the ticker check before the leaf check; notes are identified by position; some libraries throw on a low-order `pk_eph`.
 6. Added: encodings, unused inputs, what a restored wallet cannot recover, the address-substitution risk, why the leaf
    check also covers the lack of key commitment in AES-GCM, and the review of `rho = 0`.
+
+2026-11-20, circuit session. Changed:
+
+7. §4, step 1: a low-order `pk_eph` is recognised from its bytes, listed there, and a failure of the library no longer
+   skips a note. The text let any refusal of the library be read as "not for this wallet"; the reference did the same
+   with every `OperationError` of WebCrypto (`docs/AUDIT.md` §8.6).
 
 Still to do: an outside review and the audit.
