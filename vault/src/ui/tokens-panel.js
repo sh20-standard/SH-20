@@ -3,7 +3,7 @@
 
 import { finalizePsbt, sameUnsignedTx, scriptType } from '../btc.js';
 import { toHex } from '../bytes.js';
-import { TERMS, crossCheck, profileOf } from '../consensus.js';
+import { TERMS, crossCheck, profileCheck } from '../consensus.js';
 import { verifyMintTerms } from '../deploy.js';
 import { buildMint, mintProblems, mintsLeft } from '../mint.js';
 import { MINT_BATCH_MAX, PAY_MODE } from '../sh20.js';
@@ -33,10 +33,9 @@ export async function refresh() {
     st.tokens = [];
     fill('indexer-status', h('span', { class: 'err' }, `Indexer unreachable (${indexer.base}): ${e.message}`));
   }
-  // the other indexers' profiles (D, activation height), for the deploy screen
-  const others = await Promise.allSettled(indexers.slice(1).map((a) => a.status()));
-  st.profiles = [st.status ? { base: indexer.base, ...profileOf(st.status) } : null,
-    ...others.map((r, i) => (r.status === 'fulfilled' ? { base: indexers[i + 1].base, ...profileOf(r.value) } : null))].filter(Boolean);
+  // every indexer against the vault's own profile (profile.js): one that differs is named, and nothing is done
+  st.profile = await profileCheck(indexers);
+  if (st.profile.problems.length) $('indexer-status')?.append(h('span', { class: 'err', id: 'profile-problems' }, ` · This vault acts on nothing: ${st.profile.problems.join('. ')}.`));
   try {
     st.tip = await esplora.tipHeight();
   } catch {
@@ -136,7 +135,7 @@ async function prepareMint(shown, feeRate, k, out) {
   const token = check.token;
   if (TERMS.some((k) => String(token[k]) !== String(shown[k]))) throw new Error('the token terms changed since they were shown; open the mint again');
   // the mint terms come from the chain (the DEPLOY) or the profile (SH20), not from the indexer alone
-  const source = await verifyMintTerms(esplora, token, check.profile);
+  const source = await verifyMintTerms(esplora, token);
   const tip = await esplora.tipHeight();
   const w = st.wallet;
   let utxos = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;

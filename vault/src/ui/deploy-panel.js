@@ -5,8 +5,10 @@ import { addressToScript } from '../btc.js';
 import { fromHex, toHex } from '../bytes.js';
 import { planDeploy } from '../deploy-plan.js';
 import { frFromHex, frHex } from '../fr.js';
-import { planDeployBurn, planPlainDeploy, revealSchedule, tickerState } from '../send.js';
-import { busy, esplora, fill, h, indexers, report, result, resultBox, st, units } from './context.js';
+import { deploySchedule, planDeployBurn, planPlainDeploy, tickerState } from '../send.js';
+import { PROFILE } from '../profile.js';
+import { profileCheck } from '../consensus.js';
+import { busy, esplora, fill, h, indexers, report, requireProfile, result, resultBox, st, units } from './context.js';
 import { getSyncer, syncNotes } from './notes-panel.js';
 import { checkPool, renderPending } from './send-panel.js';
 import { carry, txLink } from './spends.js';
@@ -19,14 +21,12 @@ const deployForm = { ticker: '', max: '21000000', lim: '1000', pre: '0', start: 
 const bigField = (x) => (/^[0-9]{1,20}$/.test(x.trim()) ? BigInt(x.trim()) : null);
 const heightField = (x) => (/^[0-9]{1,10}$/.test(x.trim()) ? Number(x.trim()) : null);
 
-/** D as the configured indexers report it: one value, or null with the reason. */
+/** D, from the vault's own profile (profile.js); null, with the reason, while an indexer follows another one. */
 function deployBurn() {
-  const ps = st.profiles;
-  if (!ps.length) return { D: null, why: 'no indexer answered' };
-  const values = new Set(ps.map((p) => String(p.deployBurn)));
-  if (values.size > 1) return { D: null, why: `indexers disagree: ${ps.map((p) => `${p.base} ${p.deployBurn}`).join(', ')}` };
-  if (ps[0].deployBurn === null) return { D: null, why: 'the indexer does not report deployBurn' };
-  return { D: ps[0].deployBurn, agreed: ps.length };
+  const pr = st.profile;
+  if (!pr.answered) return { D: null, why: 'no indexer answered' };
+  if (pr.problems.length) return { D: null, why: pr.problems.join('. ') };
+  return { D: PROFILE.deployBurn, agreed: pr.answered };
 }
 
 /** The DEPLOY terms the form holds now, as deploy-plan.js reads them. */
@@ -74,11 +74,11 @@ export function renderDeploy() {
 
   let burnRow;
   let yours = null;
-  if (D === null) burnRow = h('span', { class: 'err' }, `unknown (${why}): nothing can be deployed`);
+  if (D === null) burnRow = h('span', { class: 'err' }, `${why}: nothing can be deployed`);
   else if (D === 0n) burnRow = 'none: this profile has D = 0, so a DEPLOY carries no proof';
   else {
     burnRow = [h('strong', {}, `${units(D)} SH20`), ` burned with a proof: a spend of your SH20 notes (vPub = ${units(D)}, tPub = SH20), the change comes back to you as a shielded note`,
-      agreed > 1 ? ` · ${agreed} indexers agree on D` : ' · D as reported by one indexer'];
+      agreed > 1 ? ` · ${agreed} indexers agree on D` : ' · one indexer agrees on D'];
     const inp = plan.inputs;
     yours = !st.vault ? 'unlock the vault to see your SH20'
       : !st.sync?.nullifiersKnown ? 'sync your notes first: spends of your SH20 notes are not known yet'
@@ -103,7 +103,7 @@ export function renderDeploy() {
       h('dt', {}, 'Deploy burn'), h('dd', {}, burnRow),
       yours ? [h('dt', {}, 'Your SH20'), h('dd', {}, yours)] : null,
       plan.mints !== null ? [h('dt', {}, 'Public mints'), h('dd', {}, `${units(plan.mints)} × ${units(d.lim)} ${d.ticker}`)] : null,
-      plan.bytes !== null ? [h('dt', {}, 'Envelope'), h('dd', {}, `${units(plan.bytes)} bytes in a tapscript witness (a commit, then the reveal ${deployMaturity() ?? 'N'} blocks later; ≈ ${Math.ceil(plan.bytes / 4)} vB for the envelope)`)] : null),
+      plan.bytes !== null ? [h('dt', {}, 'Envelope'), h('dd', {}, `${units(plan.bytes)} bytes in a tapscript witness (a commit, then the reveal ${PROFILE.deployMaturity} blocks later; ≈ ${Math.ceil(plan.bytes / 4)} vB for the envelope)`)] : null),
     plan.problems.map((p) => h('div', { class: 'warn' }, p)),
     deployButton(d, plan, D),
     resultBox('deploy-out'));
@@ -112,11 +112,10 @@ export function renderDeploy() {
 function deployButton(d, plan, D) {
   const need = [];
   if (plan.problems.length || plan.bytes === null) need.push('fix the terms');
-  if (D === null) need.push('agree on D');
+  if (D === null) need.push('use indexers that follow this vault\'s profile');
   if (!st.vault) need.push('unlock the vault');
   if (!st.wallet) need.push('connect a wallet');
   if (D > 0n && !plan.inputs?.pick) need.push('hold enough unspent SH20');
-  if (deployMaturity() === null) need.push('indexers that report the DEPLOY maturity N (SPEC-WIRE §5)');
   const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: '2', class: 'narrow', name: 'deploy-fee' });
   const b = h('button', { type: 'button', disabled: need.length > 0, name: 'deploy' }, D > 0n ? `Prove the burn of ${units(D)} SH20, sign and broadcast` : 'Sign and broadcast');
   b.addEventListener('click', busy(b, () => sendDeploy(d, D, Number(fee.value))));
@@ -124,22 +123,21 @@ function deployButton(d, plan, D) {
     need.length ? h('p', { class: 'muted' }, `First ${need.join(', ')}.`) : null,
     h('p', { class: 'muted' }, `${D > 0n
       ? 'The burn is a spend: the vault proves it on this device (about half a minute on one thread). '
-      : ''}Your wallet signs a commit transaction, which hides the ticker; the vault keeps the signed reveal and broadcasts it once the commit is ${deployMaturity() ?? 'N'} blocks deep, so nobody who sees the ticker can deploy it first (SPEC-WIRE §5). Keep the vault open, or come back: the countdown survives a reload. A DEPLOY rejected by the indexers is not refunded.`)];
+      : ''}Your wallet signs a commit transaction, which hides the ticker; the vault keeps the signed reveal and broadcasts it once the commit is ${PROFILE.deployMaturity} blocks deep, so nobody who sees the ticker can deploy it first (SPEC-WIRE §5). Keep the vault open, or come back: the countdown survives a reload. A DEPLOY rejected by the indexers is not refunded.`)];
 }
 
 const termsKey = (d) => JSON.stringify(d, (_, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v));
 
 async function sendDeploy(shown, D, feeRate) {
   const out = 'deploy-out';
-  await refresh(); // D, the tickers taken and the tip, now
-  if (String(deployBurn().D) !== String(D)) throw new Error('D changed: check again');
+  await refresh(); // the tickers taken and the tip, now
+  await requireProfile(); // every indexer on the vault's profile, asked now
   const tip = await esplora.tipHeight();
   const plan = planDeploy(shown, { nextHeight: tip + 1, taken: st.tokens.map((t) => t.ticker), deployBurn: D, notes: st.vault.state.notes });
   if (plan.problems.length) throw new Error(plan.problems.join('; '));
   if (termsKey(currentTerms().d) !== termsKey(shown)) throw new Error('the terms changed: check them again');
   if (!confirm(`Deploy ${shown.ticker}${D > 0n ? `, burning ${units(D)} SH20` : ''}? The terms are public and final.`)) return;
-  const N = deployMaturity();
-  if (N === null) throw new Error('the indexers do not report deployMaturity (or disagree on it): they predate SPEC-WIRE §5\'s DEPLOY maturity');
+  const N = PROFILE.deployMaturity; // never an indexer's: one reporting less would have the reveal sent early
   // the team note, if any, is a public note of this vault, created at block `unlock`
   const team = shown.pre > 0n ? { npk: (await st.vault.reserveNote()).npk } : null;
   if (D > 0n) await checkPool('SH20', D, 'DEPLOY burn');
@@ -148,16 +146,10 @@ async function sendDeploy(shown, D, feeRate) {
     kind: 'DEPLOY', out, feeRate, tip,
     plan: () => (D > 0n ? planDeployBurn({ vault: st.vault, sync: s, tip, d: shown, D, team }) : planPlainDeploy({ d: shown, team })),
     label: D > 0n ? `DEPLOY of ${shown.ticker}, burning ${units(D)} SH20` : `DEPLOY of ${shown.ticker}`,
-    deploy: { terms: encodeTerms(shown), team: team ? frHex(team.npk) : null, D: String(D), N, W: anchorWindow(), ticker: shown.ticker },
+    deploy: { terms: encodeTerms(shown), team: team ? frHex(team.npk) : null, D: String(D), N, W: PROFILE.anchorWindow, ticker: shown.ticker },
   });
 }
 
-/** N, the DEPLOY maturity, as every configured indexer reports it (one value), or null. */
-function deployMaturity() {
-  const values = new Set(st.profiles.map((p) => p.deployMaturity));
-  return values.size === 1 && Number.isInteger([...values][0]) ? [...values][0] : null;
-}
-const anchorWindow = () => (Number.isInteger(st.status?.anchorWindow) ? st.status.anchorWindow : 100);
 
 const encodeTerms = (d) => JSON.parse(JSON.stringify(d, (_, v) => (typeof v === 'bigint' ? `${v}n` : v instanceof Uint8Array ? `0x${toHex(v)}` : v)));
 const decodeTerms = (t) => JSON.parse(JSON.stringify(t), (_, v) => (typeof v === 'string' && /^\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : typeof v === 'string' && /^0x[0-9a-f]*$/.test(v) ? fromHex(v.slice(2)) : v));
@@ -169,8 +161,9 @@ let deploysRunning = false;
  * A reveal sent early is rejected, loses its fees and shows the ticker to whoever watches the mempool.
  */
 export async function broadcastDeployReveal(p) {
+  await requireProfile();
   const [cs, tip] = await Promise.all([esplora.txStatus(p.commitTxid).catch(() => null), esplora.tipHeight()]);
-  const sched = revealSchedule({ commitHeight: cs?.confirmed ? cs.block_height : null, tip, N: p.deploy.N, anchorHeight: p.anchorHeight ?? null, W: p.deploy.W });
+  const sched = deploySchedule(p, { commitHeight: cs?.confirmed ? cs.block_height : null, tip });
   if (sched.state !== 'ready') throw new Error(`the DEPLOY reveal is not due: ${sched.state}${sched.blocks ? `, ${sched.blocks} block(s) to go` : ''}`);
   await esplora.broadcast(p.revealHex);
 }
@@ -189,7 +182,7 @@ export async function processDeploys() {
     for (const p of (v.state.pending ?? []).filter((x) => x.kind === 'DEPLOY' && x.status === 'waiting maturity')) {
       const [cs, tip] = await Promise.all([esplora.txStatus(p.commitTxid).catch(() => null), esplora.tipHeight()]);
       const commitHeight = cs?.confirmed ? cs.block_height : null;
-      const sched = revealSchedule({ commitHeight, tip, N: p.deploy.N, anchorHeight: p.anchorHeight ?? null, W: p.deploy.W });
+      const sched = deploySchedule(p, { commitHeight, tip }); // N and W of the vault's profile, whatever the record or the indexers say
       await v.updatePending(p.id, { commitHeight, revealIn: sched.blocks, schedule: sched.state });
       if (sched.state === 'expired') {
         await v.updatePending(p.id, { status: 'anchor expired' });
@@ -208,9 +201,14 @@ export async function processDeploys() {
         await v.updatePending(p.id, { status: 'ticker taken' });
         continue;
       }
+      const pc = await profileCheck(indexers);
+      if (pc.problems.length) {
+        await v.updatePending(p.id, { schedule: `due, but ${pc.problems.join('. ')}: the reveal waits` });
+        continue;
+      }
       await broadcastDeployReveal(p);
       await v.updatePending(p.id, { status: 'broadcast' });
-      result('deploy-out', h('p', { class: 'ok' }, `DEPLOY of ${p.deploy.ticker}: the commit is ${p.deploy.N} blocks deep, the reveal is broadcast.`), txLink(p.revealTxid));
+      result('deploy-out', h('p', { class: 'ok' }, `DEPLOY of ${p.deploy.ticker}: the commit is ${PROFILE.deployMaturity} blocks deep, the reveal is broadcast.`), txLink(p.revealTxid));
     }
   } finally {
     deploysRunning = false;

@@ -96,7 +96,7 @@ test('no path of the page broadcasts a DEPLOY reveal before its commit is N bloc
   const app = ['app.js', ...readdirSync(new URL('../src/ui/', import.meta.url)).sort().map((f) => `ui/${f}`)]
     .map((f) => readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8')).join('\n');
   const gate = app.slice(app.indexOf('async function broadcastDeployReveal'), app.indexOf('async function processDeploys'));
-  assert.match(gate, /revealSchedule\(/);
+  assert.match(gate, /await requireProfile\(\);[\s\S]*deploySchedule\(p, /, 'indexers on the vault\'s profile, then N and W of that profile');
   assert.match(gate, /if \(sched\.state !== 'ready'\) throw/);
   // every broadcast of a reveal: the gate itself, or a path a DEPLOY never takes
   const calls = [...app.matchAll(/await esplora\.broadcast\((p\.revealHex|reveal\.hex)\)/g)].map((m) => m.index);

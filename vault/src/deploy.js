@@ -62,20 +62,16 @@ export function deployMismatches(token, rawHex, height) {
 }
 
 /**
- * Compares the indexer's genesis token with the profile constants. `activationHeight`
- * is what the indexers report (agreed by consensus.js) unless profile.js fixes it.
+ * Compares the indexer's genesis token with the profile constants: its start is the vault's own
+ * activation height (profile.js), never the one an indexer reports.
  */
-export function genesisMismatches(token, activationHeight) {
+export function genesisMismatches(token) {
   if (token.ticker !== GENESIS.ticker) return [`only ${GENESIS.ticker} is a genesis token; ${token.ticker} needs a DEPLOY`];
-  if (!Number.isInteger(activationHeight)) return ['the activation height is unknown'];
-  if (ACTIVATION_HEIGHT !== null && activationHeight !== ACTIVATION_HEIGHT) {
-    return [`activation height: the vault has ${ACTIVATION_HEIGHT}, indexer says ${activationHeight}`];
-  }
   const out = [];
   if (token.genesis !== true) out.push('the indexer does not mark it as the genesis token');
   if (token.deployTxid !== null) out.push(`the genesis token has no DEPLOY, indexer names ${token.deployTxid}`);
   if (token.t !== null && token.t !== undefined && BigInt(token.t) !== tickerT(GENESIS.ticker)) out.push(`t: the ticker gives ${tickerT(GENESIS.ticker)}, indexer says ${token.t}`);
-  const want = { ...GENESIS, start: activationHeight };
+  const want = { ...GENESIS, start: ACTIVATION_HEIGHT };
   for (const k of ['max', 'lim', 'pre', 'start', 'end', 'price', 'payMode', 'payScript']) {
     const a = String(want[k]);
     const b = String(token[k]);
@@ -89,9 +85,9 @@ export function genesisMismatches(token, activationHeight) {
  * a deployed token, the profile constants for SH20. A token the indexer calls
  * genesis but is not SH20, or SH20 shown with a DEPLOY, is refused.
  */
-export async function verifyMintTerms(esplora, token, { activationHeight } = {}) {
+export async function verifyMintTerms(esplora, token) {
   if (token.ticker === GENESIS.ticker || token.genesis) {
-    const bad = genesisMismatches(token, activationHeight);
+    const bad = genesisMismatches(token);
     if (bad.length) throw new Error(`refusing to mint ${token.ticker}: the indexer disagrees with the genesis profile (${bad.join('; ')})`);
     return 'genesis';
   }

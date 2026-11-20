@@ -2,6 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { crossCheck } from '../src/consensus.js';
+import { PROFILE } from '../src/profile.js';
+
+// what an honest indexer on the vault's profile reports in /status
+const ON_PROFILE = { activationHeight: PROFILE.activationHeight, deployBurn: String(PROFILE.deployBurn), deployMaturity: PROFILE.deployMaturity, anchorWindow: PROFILE.anchorWindow, genesis: PROFILE.genesis };
 
 const GENE = {
   ticker: 'GENE', t: 1195724357n, max: 21000000n, lim: 1000n, pre: 0n, start: 2, end: 0, unlock: 2, price: 1000n,
@@ -16,7 +20,7 @@ function ix(base, { token = GENE, height = 10, digest = 'd'.repeat(64), network 
     base,
     async status() {
       if (down) throw new Error('connection refused');
-      return { network, height: heights ? heights[Math.min(call++, heights.length - 1)] : height, digest };
+      return { ...ON_PROFILE, network, height: heights ? heights[Math.min(call++, heights.length - 1)] : height, digest };
     },
     async token() {
       if (!token) throw notFound();
@@ -69,5 +73,5 @@ test('one indexer, or one unreachable: warnings only', async () => {
   await assert.rejects(crossCheck([ix('a', { down: true })], 'GENE', fast), /no indexer reachable/);
   await assert.rejects(crossCheck([ix('a', { token: null })], 'GENE', fast), /unknown ticker/);
   r = await crossCheck([ix('a', { network: 'mainnet' })], 'GENE', fast);
-  assert.match(r.problems.join(), /follows mainnet/);
+  assert.deepEqual(r.problems, ['a follows another profile: network mainnet, the vault has signet']);
 });

@@ -5,7 +5,7 @@
 //
 //   node vault/dev/serve.js &   then   node vault/dev/e2e.js [path to Chrome]
 //   (after `npm run build`, E2E_PATH=/vault/dist/vault/ tests the IPFS build)
-//   With `serve.js --deploy-burn 0`, run E2E_D0=1: mints GENE, whose terms come from its DEPLOY.
+//   With `serve.js --deploy-burn 0 [--deploy-maturity 0]`, run E2E_OTHER_PROFILE=1: every indexer on another profile.
 
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -17,10 +17,11 @@ const CHROME = process.argv[2] || '/Applications/Google Chrome.app/Contents/MacO
 // E2E_PATH=/vault/dist/vault/ runs the same flow on the IPFS build.
 // E2E_LIAR=1 adds the lying indexer (:8031) and expects the mint to be refused.
 const LIAR = !!process.env.E2E_LIAR;
-// Default profile (D = 1000): mint the genesis token SH20, checked against the profile.
-// E2E_D0=1 (serve.js --deploy-burn 0): mint GENE, checked against its DEPLOY transaction.
-const D0 = !!process.env.E2E_D0;
-const TICKER = D0 ? 'GENE' : 'SH20';
+// The vault's profile (D = 1000, N = 6): mint the genesis token SH20, checked against the profile.
+// E2E_OTHER_PROFILE=1 (serve.js --deploy-burn 0, and --deploy-maturity 0 for N too): every indexer
+// reports another profile, all lying together; the page must name each and do nothing.
+const OTHER = !!process.env.E2E_OTHER_PROFILE;
+const TICKER = 'SH20';
 // a wallet of circuit/js/vectors.json to send to: its own scan must find the note (checked in test/spend.test.js)
 const RECIPIENT = JSON.parse(readFileSync(new URL('../../circuit/js/vectors.json', import.meta.url), 'utf8')).wallets.find((w) => w.name === 'recipient').addressTest;
 // a fresh ticker each run: the dev chain lives as long as serve.js, across runs
@@ -188,6 +189,28 @@ async function main() {
   await waitFor(`document.querySelector('#wallet-body').innerText.includes('connected')`, 'wallet');
   step('wallet: ' + (await evaluate(`document.querySelector('#wallet-body p').innerText`)));
 
+  if (OTHER) {
+    // every indexer named, with what differs from the vault's profile
+    await waitFor(`!!document.querySelector('#profile-problems')`, 'the profile warning');
+    const named = await evaluate(`document.querySelector('#profile-problems').innerText`);
+    for (const w of ['127.0.0.1:8020 follows another profile', '127.0.0.1:8030 follows another profile', 'deployBurn 0, the vault has 1000']) {
+      if (!named.includes(w)) throw new Error(`the profile warning lacks "${w}": ${named}`);
+    }
+    step(named);
+    await evaluate(`${row}.querySelector('button').click()`);
+    await waitFor(`document.querySelector('#mint-body').innerText.includes('Mint refused')`, 'the mint refused');
+    const refused = await evaluate(`document.querySelector('#mint-body .err').innerText`);
+    if (!/follows another profile: deployBurn 0, the vault has 1000/.test(refused)) throw new Error('mint refused for the wrong reason: ' + refused);
+    if (!(await evaluate(`[...document.querySelectorAll('#mint-body button')].find((b) => b.textContent.includes('Prepare')).disabled`))) throw new Error('Prepare still enabled');
+    step('mint: ' + refused);
+    await evaluate(`(() => { const i = document.querySelector('#deploy-body input'); i.value = '${NEW_TICKER}'; i.dispatchEvent(new Event('change')); })()`);
+    await waitFor(`document.querySelector('#deploy-body').innerText.includes('nothing can be deployed')`, 'the deploy refused');
+    if (!(await evaluate(`document.querySelector('#deploy-body button[name=deploy]').disabled`))) throw new Error('Deploy still enabled');
+    step('deploy: ' + (await evaluate(`document.querySelector('#deploy-body dl dd').innerText`)).slice(0, 160) + '…');
+    ws.close();
+    console.log('\nOK: indexers on another profile: named, and nothing minted or deployed');
+    return;
+  }
   await evaluate(`${row}.querySelector('button').click()`);
   await waitFor(`[...document.querySelectorAll('#mint-body button')].some((b) => b.textContent.includes('Prepare'))`, 'mint panel');
   if (LIAR) {
@@ -205,7 +228,7 @@ async function main() {
   if (!(await evaluate(`document.querySelector('#mint-body dl').innerText.includes('2,000 ${TICKER} (one public note, 2 mints)')`))) throw new Error('batch not shown');
   await click('#mint-body button', 'Prepare');
   await waitFor(`[...document.querySelectorAll('#mint-body button')].some((b) => b.textContent.includes('Sign with'))`, 'prepared tx');
-  const source = D0 ? 'checked against the DEPLOY' : 'checked against the profile constants';
+  const source = 'checked against the profile constants';
   if (!(await evaluate(`document.querySelector('#mint-body').innerText.includes(${JSON.stringify(source)})`))) throw new Error(`"${source}" not shown`);
   if (!(await evaluate(`document.querySelector('#mint-body').innerText.includes('2 agree on these terms')`))) throw new Error('cross-check not shown');
   step('prepared: ' + (await evaluate(`document.querySelector('#mint-body div dl').innerText.replace(/\\n/g, ' | ')`)));
@@ -243,7 +266,7 @@ async function main() {
   await evaluate(`(() => { const i = document.querySelector('#deploy-body input'); i.value = '${NEW_TICKER}'; i.dispatchEvent(new Event('change')); })()`);
   await waitFor(`document.querySelector('#deploy-body').innerText.includes('Envelope')`, 'deploy plan');
   const plan = await evaluate(`document.querySelector('#deploy-body dl').innerText.replace(/\\n/g, ' | ')`);
-  const want = D0 ? ['D = 0', '56 bytes in a tapscript witness (a commit, then the reveal 6 blocks later'] : ['1,000 SH20 burned with a proof', '2 indexers agree on D', 'one note would pay the burn', '880 bytes in a tapscript witness (a commit, then the reveal 6 blocks later'];
+  const want = ['1,000 SH20 burned with a proof', '2 indexers agree on D', 'one note would pay the burn', '880 bytes in a tapscript witness (a commit, then the reveal 6 blocks later'];
   for (const w of want) if (!plan.includes(w)) throw new Error(`deploy screen lacks "${w}": ${plan}`);
   step('deploy screen: ' + plan);
   await waitFor(`!document.querySelector('#deploy-body button[name=deploy]').disabled`, 'deploy enabled');
@@ -253,7 +276,7 @@ async function main() {
   const countdown = () => evaluate(`document.querySelector('#pending-body .countdown')?.textContent ?? ''`);
   await waitFor(`/reveal in 5 blocks/.test(document.querySelector('#pending-body .countdown')?.textContent ?? '')`, 'the countdown');
   step('countdown: ' + (await countdown()));
-  if (!D0 && !/ 1,300 spending/.test(await evaluate(`document.querySelector('#notes-body tbody').innerText.replace(/\\s+/g, ' ')`))) throw new Error('the SH20 note the burn spends is not reserved');
+  if (!/ 1,300 spending/.test(await evaluate(`document.querySelector('#notes-body tbody').innerText.replace(/\\s+/g, ' ')`))) throw new Error('the SH20 note the burn spends is not reserved');
   const mine = (count) => fetch(`http://127.0.0.1:8020/esplora/mine?n=${count}`, { method: 'POST' }).then((r) => r.text());
   // two blocks pass, then the page is reloaded: the signed reveal and the countdown come back from the encrypted vault
   await mine(2);
@@ -277,7 +300,7 @@ async function main() {
   await waitFor(`[...document.querySelectorAll('#tokens-body strong')].some((x) => x.textContent === '${NEW_TICKER}')`, 'the new ticker deployed');
   step('tickers now: ' + (await evaluate(`[...document.querySelectorAll('#tokens-body strong')].map((x) => x.textContent).join(', ')`)));
   await click('#notes button', 'Sync');
-  if (!D0) await waitFor(`document.querySelector('#notes-body').innerText.replace(/\\s+/g, ' ').includes(' 300 in tree')`, 'the change of the burn', 600);
+  await waitFor(`document.querySelector('#notes-body').innerText.replace(/\\s+/g, ' ').includes(' 300 in tree')`, 'the change of the burn', 600);
   await waitFor(`!document.querySelector('#scan').disabled`, 'the sync to finish', 600);
 
   // BURN, then LIST → offer → TAKE (bought by this vault itself), and a LIST cancelled

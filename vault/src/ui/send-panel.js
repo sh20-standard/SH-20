@@ -172,6 +172,7 @@ export function renderPending() {
       if (p.status === 'waiting maturity') {
         const left = p.schedule === 'unconfirmed' || p.revealIn === undefined ? 'the commit is not confirmed yet'
           : /no indexer answered/.test(p.schedule ?? '') ? 'due, but no indexer answered: the reveal waits for one to say the ticker is free'
+          : /^due, but/.test(p.schedule ?? '') ? p.schedule
           : `reveal in ${p.revealIn} block${p.revealIn === 1 ? '' : 's'}`;
         const commitAgain = h('button', { type: 'button', class: 'small secondary' }, 'Broadcast the commit again');
         commitAgain.addEventListener('click', busy(commitAgain, async () => {

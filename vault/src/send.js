@@ -14,10 +14,10 @@ import { buildFunded } from './mint.js';
 import { addressToScript } from './btc.js';
 import { serializeEnvelope, decodeAddress, tickerT } from './sh20.js';
 import { NETWORK_HRP } from './notekeys.js';
-import { GENESIS } from './profile.js';
+import { GENESIS, PROFILE } from './profile.js';
 import { toHex, fromHex } from './bytes.js';
 
-export const ANCHOR_MAX_AGE = 90; // blocks; the indexers accept 100 (anchorWindow)
+export const ANCHOR_MAX_AGE = PROFILE.anchorWindow - 10; // blocks; the indexers accept W, and the spend takes a few blocks to confirm
 
 /** Three outputs in random order, so their positions say nothing about which one is the change. */
 export function shuffled(xs) {
@@ -29,9 +29,11 @@ export function shuffled(xs) {
   return a;
 }
 
-function anchor(sync, tip) {
+export function anchor(sync, tip) {
   if (sync?.height === null || sync?.height === undefined) throw new Error('sync the notes first: a spend is anchored to the synced tree');
   if (Number.isInteger(tip) && tip - sync.height > ANCHOR_MAX_AGE) throw new Error(`the synced tree is ${tip - sync.height} blocks old: sync again`);
+  // the spend confirms at tip + 1 at the earliest, and its anchor must be K_min blocks below that block
+  if (Number.isInteger(tip) && sync.height > tip + 1 - PROFILE.anchorMinDepth) throw new Error(`the synced tree is less than K_min = ${PROFILE.anchorMinDepth} block(s) deep: wait for a block`);
   return { anchorHeight: sync.height, root: sync.tree.root };
 }
 
@@ -138,6 +140,14 @@ export function revealSchedule({ commitHeight, tip, N, anchorHeight = null, W = 
   const blocks = commitHeight + N - (tip + 1);
   return blocks > 0 ? { state: 'waiting', blocks } : { state: 'ready', blocks: 0 };
 }
+
+/**
+ * When a pending DEPLOY `p` may be revealed: revealSchedule with N and W of the vault's own profile
+ * (profile.js). Neither the record (`p.deploy.N`, written by an older vault from the indexers) nor
+ * an indexer can make the reveal go out before the commit is PROFILE.deployMaturity blocks deep.
+ */
+export const deploySchedule = (p, { commitHeight, tip }) =>
+  revealSchedule({ commitHeight, tip, N: PROFILE.deployMaturity, anchorHeight: p.anchorHeight ?? null, W: PROFILE.anchorWindow });
 
 /** The signed reveal for a commit that pays output 0. */
 export function revealFor(plan, commitTxid) {

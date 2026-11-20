@@ -3,16 +3,18 @@
 // agreeing indexers), over the reference indexer fed with a small demo chain.
 // :8031 is a lying indexer: same answers, except its own payScript for every token.
 //
-// The profile is the reference one (D = 1000: a DEPLOY burns SH20 with a proof), so
-// the demo chain has only the genesis token SH20 and two mints of it. With
-// --deploy-burn 0 it also deploys GENE (a proof-less DEPLOY, 1000 sats burned per mint).
+// The profile is the reference one, the vault's own (indexer/src/constants.js DEFAULT_PROFILE:
+// D = 1000, a DEPLOY burns SH20 with a proof; N = 6), so the demo chain starts at the activation
+// height with the genesis token SH20 and two mints of it. --deploy-burn and --deploy-maturity put
+// every indexer here on another profile, all lying together: the vault must refuse to act
+// (E2E_OTHER_PROFILE=1). With --deploy-burn 0 the chain also deploys GENE (a proof-less DEPLOY).
 //
 // It also mocks an Esplora server under :8020/esplora: one UTXO for any address,
 // raw transactions and their status, and POST /tx mines the transaction in the
 // next block of the demo chain, so the whole mint flow runs without a real
 // wallet or signet coins (see e2e.js).
 //
-//   node vault/dev/serve.js [--port 8000] [--api-port 8020] [--api-port2 8030] [--liar-port 8031] [--deploy-burn 1000] [--isolate]
+//   node vault/dev/serve.js [--port 8000] [--api-port 8020] [--api-port2 8030] [--liar-port 8031] [--deploy-burn 1000] [--deploy-maturity 6] [--isolate]
 //
 // Spends are verified with the real PLONK verifier (vault/prover/sh20_circuit.wasm). --isolate sends
 // the cross-origin isolation headers, so the page gets shared memory and proves on a thread pool;
@@ -27,6 +29,7 @@ import { Indexer } from '../../indexer/src/indexer.js';
 import { plonkVerifier } from '../../indexer/src/adapters/plonk.js';
 import { apiHandler } from '../../indexer/src/api.js';
 import { serializeEnvelope } from '../../indexer/src/codec.js';
+import { DEFAULT_PROFILE } from '../../indexer/src/constants.js';
 import { deployEnv, opening } from '../../indexer/test/helpers.js';
 import { parseTx, serializeTx, txid as txidOf, opReturnScript } from '../src/btc.js';
 import { fromHex, toHex } from '../src/bytes.js';
@@ -38,12 +41,14 @@ const API_PORT = Number(arg('--api-port', 8020));
 const API_PORT2 = Number(arg('--api-port2', 8030)); // a second, agreeing indexer
 const LIAR_PORT = Number(arg('--liar-port', 8031)); // a lying indexer
 
-const DEPLOY_BURN = BigInt(arg('--deploy-burn', '1000'));
+const DEPLOY_BURN = BigInt(arg('--deploy-burn', String(DEFAULT_PROFILE.deployBurn)));
+const DEPLOY_MATURITY = Number(arg('--deploy-maturity', String(DEFAULT_PROFILE.deployMaturity)));
+const A = DEFAULT_PROFILE.activationHeight;
 
 // spends are checked with the pinned PLONK verifier, from the vault's own single-thread module
 const verifier = plonkVerifier({ wasm: new Uint8Array(readFileSync(new URL('../prover/sh20_circuit.wasm', import.meta.url))) });
 const ISOLATE = process.argv.includes('--isolate'); // COOP/COEP: shared memory, so the prover's thread pool
-const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: DEPLOY_BURN }, verifier });
+const idx = new Indexer({ profile: { activationHeight: A, deployBurn: DEPLOY_BURN, deployMaturity: DEPLOY_MATURITY }, verifier });
 const api = apiHandler(idx, { network: 'signet' });
 const chainTxs = new Map(); // txid -> { hex, height }
 
@@ -52,7 +57,7 @@ const chainTxs = new Map(); // txid -> { hex, height }
 // DEPLOY maturity; a real indexer reads it from getblock verbosity 3 or Esplora). `prevHeights` sets it
 // for inputs the demo chain did not mine (the fixtures).
 function mine(txs, prevHeights = []) {
-  const height = (idx.height ?? 0) + 1;
+  const height = idx.height === null ? A : idx.height + 1; // the demo chain starts at the activation height
   const itxs = txs.map((t, k) => {
     const id = txidOf(t);
     chainTxs.set(id, { hex: toHex(serializeTx(t)), height });
@@ -88,11 +93,11 @@ const envTx = (env, value = 0n) => ({
   vout: [{ value, script: opReturnScript(serializeEnvelope(env)) }],
 });
 
-// Demo chain: SH20 from block 1 (free mint), two mints of it; with D = 0, GENE too
-// (burn 1000 sats per mint, open from block 2) and two mints of it.
+// Demo chain: SH20 from block A (free mint), two mints of it; with D = 0, GENE too
+// (burn 1000 sats per mint, open from block A + 2) and two mints of it.
 const D0 = DEPLOY_BURN === 0n;
-// the GENE fixture's commit counts as confirmed N blocks before block 1 (the demo chain starts there)
-mine(D0 ? [deployTx(deployEnv({ ticker: 'GENE', start: 2, unlock: 2, price: 1000n, payMode: 1 }))] : [], [1 - idx.profile.deployMaturity]);
+// the GENE fixture's commit counts as confirmed N blocks before block A (the demo chain starts there)
+mine(D0 ? [deployTx(deployEnv({ ticker: 'GENE', start: A + 2, unlock: A + 2, price: 1000n, payMode: 1 }))] : [], [A - idx.profile.deployMaturity]);
 mine([
   ...[0, 1].map(() => envTx({ type: 'MINT', ticker: 'SH20', ...opening() })),
   ...(D0 ? [0, 1].map(() => envTx({ type: 'MINT', ticker: 'GENE', ...opening() }, 1000n)) : []),
@@ -176,4 +181,4 @@ createServer(async (req, res) => {
 }).listen(STATIC_PORT, '127.0.0.1');
 
 console.log(`vault http://localhost:${STATIC_PORT}/vault/`);
-console.log(`indexer API http://127.0.0.1:${API_PORT} and :${API_PORT2}, lying indexer :${LIAR_PORT}, mock Esplora at /esplora (demo chain, height ${idx.height}, D = ${DEPLOY_BURN})`);
+console.log(`indexer API http://127.0.0.1:${API_PORT} and :${API_PORT2}, lying indexer :${LIAR_PORT}, mock Esplora at /esplora (demo chain, height ${idx.height}, D = ${DEPLOY_BURN}, N = ${DEPLOY_MATURITY})`);

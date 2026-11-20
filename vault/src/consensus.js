@@ -7,24 +7,46 @@
 // Any disagreement refuses the mint; an unreachable indexer or a single one
 // only warns.
 
+import { PROFILE } from './profile.js';
+
 // Fixed at DEPLOY (plus where the indexer says it is): must be identical everywhere.
 // mints and burned change every block, so they are not compared.
 export const TERMS = ['ticker', 't', 'max', 'lim', 'pre', 'start', 'end', 'unlock', 'price', 'payMode', 'payScript', 'deployTxid', 'deployHeight', 'genesis'];
-// Profile constants from /status: the genesis token's start is the activation height,
-// and every DEPLOY burns deployBurn SH20. Indexers on the same profile report the same.
-export const PROFILE = ['activationHeight', 'deployBurn', 'deployMaturity', 'genesis'];
+// What /status reports of the profile. Each value must be the vault's own (profile.js): an indexer
+// that reports another one, or none, follows other rules, and the vault acts on nothing while it is
+// configured. K_min is not in /status; the vault applies its own.
+export const REPORTED = ['network', 'activationHeight', 'deployBurn', 'deployMaturity', 'anchorWindow', 'genesis'];
 
-/** The profile an indexer reports, with deployBurn as a bigint (null when absent). */
-export function profileOf(status) {
-  const n = (x) => (x === undefined || x === null || x === '' ? null : x);
-  return {
-    activationHeight: Number.isInteger(status?.activationHeight) ? status.activationHeight : null,
-    // anything but a whole number is unknown (never thrown: an indexer must not break the page)
-    deployBurn: /^[0-9]{1,20}$/.test(String(n(status?.deployBurn))) ? BigInt(status.deployBurn) : null,
-    genesis: n(status?.genesis),
-    // N: a DEPLOY reveals a commit confirmed at least N blocks earlier (SPEC-WIRE §5); null if not reported
-    deployMaturity: Number.isInteger(status?.deployMaturity) && status.deployMaturity >= 0 ? status.deployMaturity : null,
-  };
+const shown = (x) => (typeof x === 'object' ? JSON.stringify(x) : String(x));
+
+/** How an indexer's /status differs from the vault's profile: [] when it follows the same one. */
+export function profileDiff(status) {
+  const out = [];
+  for (const k of REPORTED) {
+    const got = status?.[k];
+    if (got === undefined || got === null || got === '') out.push(`${k} not reported (the vault has ${PROFILE[k]})`);
+    else if (String(got) !== String(PROFILE[k])) out.push(`${k} ${shown(got)}, the vault has ${PROFILE[k]}`);
+  }
+  return out;
+}
+
+/** One line per indexer that follows another profile than the vault, naming it and each difference. */
+export function profileProblems(answers) {
+  return answers
+    .map(({ base, status }) => ({ base, diff: profileDiff(status) }))
+    .filter((x) => x.diff.length)
+    .map(({ base, diff }) => `${base} follows another profile: ${diff.join('; ')}`);
+}
+
+/**
+ * Asks every indexer's /status now. `problems` (profileProblems) must refuse any action; an
+ * indexer that does not answer is not compared, but at least one must. Returns { answered, problems }.
+ */
+export async function profileCheck(apis) {
+  const settled = await Promise.allSettled(apis.map((a) => a.status()));
+  const answers = settled.map((r, i) => (r.status === 'fulfilled' ? { base: apis[i].base, status: r.value } : null)).filter(Boolean);
+  if (!answers.length) return { answered: 0, problems: ['no indexer answered'] };
+  return { answered: answers.length, problems: profileProblems(answers) };
 }
 
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -54,15 +76,9 @@ export async function crossCheck(apis, ticker, { retries = 2, delayMs = 1500, sl
 
     const problems = [];
     const warnings = [];
-    for (const r of ok) if (r.status.network && r.status.network !== 'signet') problems.push(`${r.base} follows ${r.status.network}, not signet`);
+    problems.push(...profileProblems(ok)); // each against the vault's own profile, not against each other
 
     const ref = ok[0];
-    const profile = profileOf(ref.status);
-    for (const r of ok.slice(1)) {
-      const p = profileOf(r.status);
-      const diff = PROFILE.filter((k) => String(p[k]) !== String(profile[k]));
-      if (diff.length) problems.push(`${r.base} and ${ref.base} follow different profiles: ${diff.map((k) => `${k} ${p[k]} ≠ ${profile[k]}`).join(', ')}`);
-    }
     if (!ref.token && ok.every((r) => !r.token)) throw new Error(`unknown ticker ${ticker}`);
     for (const r of ok.slice(1)) {
       if (!r.token !== !ref.token) {
@@ -87,7 +103,7 @@ export async function crossCheck(apis, ticker, { retries = 2, delayMs = 1500, sl
     if (down.length) warnings.push(`unreachable, not compared: ${down.join(', ')}`);
     if (ok.length === 1) warnings.push('only one indexer answered: which DEPLOY of this ticker came first is not cross-checked. Add independent indexers in Settings.');
 
-    return { token: ref.token, profile, agreed: problems.length ? 0 : ok.length, problems, warnings };
+    return { token: ref.token, profile: PROFILE, agreed: problems.length ? 0 : ok.length, problems, warnings };
   }
 }
 

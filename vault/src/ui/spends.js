@@ -4,7 +4,8 @@
 import { finalizePsbt, sameUnsignedTx } from '../btc.js';
 import { loadProver } from '../prover.js';
 import { pendingRecord, planCarrier, proveSpend, revealFor } from '../send.js';
-import { MAX_FEE_SATS, esplora, explorerTx, h, result, sats, st } from './context.js';
+import { PROFILE } from '../profile.js';
+import { MAX_FEE_SATS, esplora, explorerTx, h, requireProfile, result, sats, st } from './context.js';
 import { processDeploys } from './deploy-panel.js';
 import { renderAll } from './render.js';
 
@@ -45,6 +46,7 @@ export async function carry(args) {
 
 async function carryOnce({ kind, out, feeRate, tip, plan, label, outputs, onRevealed, deploy, sweep }) {
   const status = (t) => result(out, h('p', { class: 'muted' }, t));
+  await requireProfile(); // a DEPLOY, a burn, a LIST, a transfer: only with indexers on the vault's profile
   status('Building the envelope: note keys, sealed outputs, signatures…');
   await new Promise((r) => setTimeout(r, 30));
   const built = await plan();
@@ -59,7 +61,7 @@ async function carryOnce({ kind, out, feeRate, tip, plan, label, outputs, onReve
   }
   const cp = planCarrier({ envelope, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip, outputs, sweep });
   const draft = revealFor(cp, '00'.repeat(32));
-  const wait = deploy ? ` The reveal goes out once the commit is ${deploy.N} blocks deep (SPEC-WIRE §5): keep the vault open, or come back.` : '';
+  const wait = deploy ? ` The reveal goes out once the commit is ${PROFILE.deployMaturity} blocks deep (SPEC-WIRE §5): keep the vault open, or come back.` : '';
   if (!confirm(`${label}${proveS ? `: proved in ${proveS} s` : ''}. Commit ≈ ${cp.commit.vsizeEstimate} vB, reveal ${draft.vsize} vB, network fees ≈ ${sats(cp.commit.fee + draft.fee)}.${wait} Sign the commit with ${st.wallet.adapter.name}?`)) {
     status('Not sent.');
     return;
@@ -75,7 +77,7 @@ async function carryOnce({ kind, out, feeRate, tip, plan, label, outputs, onReve
     // the signed reveal stays in the encrypted state until the commit is N blocks deep (processDeploys)
     renderAll();
     result(out,
-      h('p', { class: 'ok' }, `${label}: the commit is broadcast. The reveal waits until it is ${deploy.N} blocks deep, against ticker sniping; the notes it burns stay reserved meanwhile.`),
+      h('p', { class: 'ok' }, `${label}: the commit is broadcast. The reveal waits until it is ${PROFILE.deployMaturity} blocks deep, against ticker sniping; the notes it burns stay reserved meanwhile.`),
       h('p', { class: 'muted' }, 'Commit:'), txLink(done.txid),
       h('p', { class: 'muted', id: 'deploy-countdown' }, 'Spends sent from this vault (below) shows the countdown.'));
     await processDeploys();
