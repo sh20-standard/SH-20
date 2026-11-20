@@ -249,6 +249,9 @@ original goes in. So the vault:
 
 A team allocation gets one of the vault's public note keys, found by the sync when its block comes.
 Before signing, the vault asks the indexers again for their profile, the tickers taken and the tip.
+A DEPLOY (or any spend) the indexers refused anyway records no nullifier, so it burns nothing: once its
+reveal is 6 blocks below the synced tip and none of its notes is spent there, the sync gives the notes
+back and says so (`send.js` `refusedSpend`; only the network fees are lost).
 `test/deploy-maturity.test.js` checks the schedule (the countdown, the anchor window), a DEPLOY
 without a burn refused one block early and accepted at `N`, one in an OP_RETURN refused, the key-path
 sweep of an old commit, and the reserved notes kept across a reload; `test/spend.test.js` runs a

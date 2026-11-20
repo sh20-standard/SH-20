@@ -165,6 +165,10 @@ export function renderPending() {
         }));
         return h('tr', {}, h('td', {}, p.kind), h('td', {}, 'signed; the commit may not be out yet'), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', {}, 'kept, signed'), h('td', {}, commit));
       }
+      if (/^refused/.test(p.status)) {
+        // refused: nothing was spent, the notes are back; broadcasting it again would be refused again
+        return h('tr', {}, h('td', {}, p.kind), h('td', {}, `${p.status}: its notes are back`), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', { class: 'mono' }, short(p.revealTxid ?? '')), h('td', {}));
+      }
       if (p.kind === 'DEPLOY' && p.status !== 'broadcast' && p.status !== 'waiting maturity') {
         // ticker taken, replaced: nothing to broadcast
         return h('tr', {}, h('td', {}, p.kind), h('td', {}, p.status), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', {}, '—'), h('td', {}));

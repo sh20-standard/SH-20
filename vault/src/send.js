@@ -149,6 +149,24 @@ export function revealSchedule({ commitHeight, tip, N, anchorHeight = null, W = 
 export const deploySchedule = (p, { commitHeight, tip }) =>
   revealSchedule({ commitHeight, tip, N: PROFILE.deployMaturity, anchorHeight: p.anchorHeight ?? null, W: PROFILE.anchorWindow });
 
+/** Blocks a refused spend's reveal must be below the synced tip before its notes are given back. */
+export const REFUSAL_DEPTH = 6;
+
+/**
+ * Whether the indexers refused spend `p`, sent from this vault: its reveal is confirmed at
+ * `revealHeight`, the synced tree (with the full nullifier list) is REFUSAL_DEPTH blocks past it, and
+ * no note it spends has its nullifier recorded there. A refused envelope records no nullifier (a DEPLOY
+ * refused for its commit's maturity, its ticker or its proof burns nothing), so those notes are still
+ * the vault's: the caller gives them back (Vault.releaseInputs). `notes` must have been checked
+ * against that tree (`spent`, `pathAt`).
+ */
+export function refusedSpend(p, notes, { revealHeight, syncHeight, nullifiersKnown, depth = REFUSAL_DEPTH }) {
+  if (p.status !== 'broadcast' || !p.inputs?.length || !nullifiersKnown) return false;
+  if (!Number.isInteger(revealHeight) || !Number.isInteger(syncHeight) || syncHeight - revealHeight + 1 < depth) return false;
+  const inputs = notes.filter((n) => p.inputs.includes(n.id));
+  return inputs.length === p.inputs.length && inputs.every((n) => n.spent === 'no' && n.pathAt === syncHeight);
+}
+
 /** The signed reveal for a commit that pays output 0. */
 export function revealFor(plan, commitTxid) {
   return signReveal({ secret: plan.secret, c: plan.c, commitTxid, value: plan.value, returnScript: plan.returnScript, outputs: plan.outputs, feeRate: plan.feeRate });

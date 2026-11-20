@@ -1,16 +1,29 @@
 // The vault's own profile (profile.js): N, D, W, K_min and A embedded in the page, every /status
-// compared with it, and a DEPLOY reveal that waits N blocks of that profile.
+// compared with it, a DEPLOY reveal that waits N blocks of that profile, and a refused DEPLOY whose
+// burnt notes come back.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { Indexer } from '../../indexer/src/indexer.js';
+import { listen } from '../../indexer/src/api.js';
 import { DEFAULT_PROFILE } from '../../indexer/src/constants.js';
+import { deployEnv, fr, mockVerifier, spend, tx as helperTx } from '../../indexer/test/helpers.js';
 import { PROFILE } from '../src/profile.js';
 import { REPORTED, crossCheck, profileCheck, profileDiff } from '../src/consensus.js';
-import { ANCHOR_MAX_AGE, anchor, deploySchedule } from '../src/send.js';
+import { ANCHOR_MAX_AGE, REFUSAL_DEPTH, anchor, deploySchedule, refusedSpend } from '../src/send.js';
+import { IndexerApi } from '../src/api.js';
+import { Vault } from '../src/keys.js';
+import { Sync } from '../src/sync.js';
+import { memoryCache } from '../src/cache.js';
+import { frHex } from '../src/fr.js';
 
 const src = (f) => readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8');
 // the page's code, every module of it (app.js and src/ui/)
 const page = () => ['app.js', ...readdirSync(new URL('../src/ui/', import.meta.url)).sort().map((f) => `ui/${f}`)].map(src).join('\n');
+const memStorage = () => {
+  const m = new Map();
+  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)) };
+};
 // what an honest indexer on the reference profile reports in /status (indexer/src/api.js)
 const honest = () => ({
   network: DEFAULT_PROFILE.network, height: 20, digest: 'd'.repeat(64), activationHeight: DEFAULT_PROFILE.activationHeight,
@@ -104,6 +117,83 @@ test('3. a DEPLOY reveal waits N blocks of the embedded profile, whatever the re
   assert.equal([...pg.matchAll(/deploySchedule\(p, /g)].length, 2, 'processDeploys and broadcastDeployReveal');
   assert.doesNotMatch(pg, /p\.deploy\.(N|W)\b|deploy\.N\b/);
   assert.match(pg, /const N = PROFILE\.deployMaturity;/);
+});
+
+// blocks from A on (indexer/test/helpers.js chain() starts at 1)
+function chainFrom(indexer, start) {
+  let h = start;
+  return { block: (...txs) => indexer.applyBlock({ height: h++, hash: `h${h}`, txs }), get next() { return h; } };
+}
+
+/** A vault holding one SH20 note of D, and a DEPLOY that burns it, mined `age` blocks after its commit. */
+async function deployBurning(age) {
+  const idx = new Indexer({ profile: { activationHeight: PROFILE.activationHeight }, verifier: mockVerifier() }); // the reference profile: D = 1000, N = 6
+  const c = chainFrom(idx, PROFILE.activationHeight);
+  c.block();
+  const v = await Vault.create(memStorage());
+  const o = await v.reserveNote();
+  const mint = c.block(helperTx({ env: { type: 'MINT', ticker: 'SH20', npk: o.npk } }));
+  const note = await v.addNote({ index: o.index, ticker: 'SH20', v: PROFILE.deployBurn, txid: null, status: 'in tree', pos: mint.events[0].pos });
+  const nf = await v.nullifier(note);
+  const sp = spend(c.next - 1);
+  sp.nf = [nf, fr()];
+  const H = c.next;
+  const revealTxid = 'ab'.repeat(32);
+  const r = c.block(helperTx({ env: deployEnv({ ticker: 'SNIP', start: H + 20, unlock: H + 20, spend: sp }), id: revealTxid, prevHeight: H - age }));
+  for (let i = 1; i < REFUSAL_DEPTH; i++) c.block();
+  const pid = await v.addPending({ kind: 'DEPLOY', inputs: [note.id], revealTxid });
+  await v.updatePending(pid, { status: 'broadcast' });
+  return { idx, v, note, nf, r, H, pid };
+}
+
+/** The vault's sync, and the spent status of its notes as notes-panel.js checkOwned sets it. */
+async function synced(idx, v) {
+  const server = await listen(idx, { port: 0 });
+  try {
+    const s = new Sync(memoryCache(), 'profile');
+    await s.sync(new IndexerApi(`http://127.0.0.1:${server.address().port}`));
+    for (const n of v.state.notes) {
+      const at = s.spentAt(frHex(await v.nullifier(n)));
+      await v.updateNote(n.id, { pathAt: s.height, spent: at === undefined ? 'unknown' : at === null ? 'no' : `block ${at}` });
+    }
+    return s;
+  } finally {
+    server.close();
+  }
+}
+
+test('4. a refused DEPLOY records no nullifier, and the vault gives back the notes it had reserved', async () => {
+  // refused: its commit is one block old, not N
+  const { idx, v, note, nf, r, H, pid } = await deployBurning(1);
+  assert.deepEqual(r.rejected.map((x) => x.reason), [`DEPLOY commit confirmed less than ${PROFILE.deployMaturity} blocks before`]);
+  assert.equal(idx.nullifiers.has(frHex(nf)), false, 'no nullifier recorded: the SH20 are not burnt');
+  assert.equal(idx.token('SH20').burned, 0n);
+  assert.equal(v.state.notes[0].status, 'spending', 'reserved by the DEPLOY');
+  const s = await synced(idx, v);
+  const p = v.state.pending.find((x) => x.id === pid);
+  assert.equal(v.state.notes[0].spent, 'no', 'the vault does not count it as spent');
+  const at = { revealHeight: H, syncHeight: s.height, nullifiersKnown: s.nullifiersKnown };
+  assert.equal(refusedSpend(p, v.state.notes, at), true);
+  assert.equal(refusedSpend(p, v.state.notes, { ...at, syncHeight: H + REFUSAL_DEPTH - 2 }), false, 'not before the reveal is REFUSAL_DEPTH deep');
+  assert.equal(refusedSpend(p, v.state.notes, { ...at, nullifiersKnown: false }), false, 'not without the full nullifier list');
+  assert.equal(refusedSpend(p, v.state.notes, { ...at, revealHeight: null }), false, 'not while the reveal is unconfirmed');
+  assert.equal(refusedSpend({ ...p, status: 'waiting maturity' }, v.state.notes, at), false);
+  await v.releaseInputs(p.inputs);
+  assert.equal(v.state.notes.find((n) => n.id === note.id).status, 'in tree', 'back in the balance and spendable');
+
+  // accepted (its commit is N blocks old): the nullifier is recorded, and the note stays spent
+  const ok = await deployBurning(PROFILE.deployMaturity);
+  assert.deepEqual(ok.r.rejected, []);
+  assert.equal(ok.idx.nullifiers.has(frHex(ok.nf)), true);
+  const s2 = await synced(ok.idx, ok.v);
+  assert.equal(ok.v.state.notes[0].spent, `block ${ok.H}`);
+  assert.equal(refusedSpend(ok.v.state.pending[0], ok.v.state.notes, { revealHeight: ok.H, syncHeight: s2.height, nullifiersKnown: true }), false);
+
+  // the page: after every sync, refused spends give their notes back and say so
+  const pg = page();
+  const sn = pg.slice(pg.indexOf('export async function syncNotes('));
+  assert.ok(sn.indexOf('await checkOwned(s);') < sn.indexOf('refused = await settleRefused(s);'), 'once the notes\' spends are known');
+  assert.match(pg, /if \(!refusedSpend\(p, v\.state\.notes, [^\n]*\)\) continue;\s*await v\.releaseInputs\(p\.inputs\);/);
 });
 
 test('5. every indexer lying together on N and D: the vault refuses to mint, deploy, burn or spend, names each, and still waits N', async () => {
