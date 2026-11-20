@@ -143,6 +143,39 @@ M1 and M2 cannot change a digest: an indexer that stops has no digest for that b
 indexers given the same incomplete data both stop. The vectors pin a commit exactly `N` blocks old (accepted, blocks
 4 and 5) and one `N − 2` blocks old (refused); `N − 1` has only this crate's test.
 
+## Batches, and the vectors of blocks 14 to 17 (2026-11-20)
+
+`indexer-rs` follows the batch rule of `SPEC-WIRE.md` §3 (and §6 for the order of the events), read alone, and
+replays the vectors that go with it: the 17 blocks with `W = 12`, the 15 refusals, the 18 verifier calls, the 29
+carrier cases, and the `reorg` part (back to block 15, two new blocks, the same state as an indexer that never saw
+the first 16 and 17). **No contradiction** between the text and the vectors. The three points M1 to M3 above are in
+the text as chosen here; nothing changed in the code for them.
+
+What the text leaves open on batches:
+
+| # | Point | Chosen in `indexer-rs` | Vectors |
+| --- | --- | --- | --- |
+| B1 | **Is a batch decided by the type byte, or by decoding?** The text says "all with the type byte `0x03`". It does not say what becomes of an envelope with that byte that does not decode as a TRANSFER, or of an envelope too short to have a type byte (`SH20`, `SH20 00`). | By the byte, as written. `SH20 00 03 …` that does not decode is a member, refused alone; the others still apply. An envelope with no type byte is not "of type `0x03`": the transaction is not a batch and is refused as one. | silent: every `0x03` envelope in them decodes |
+| B2 | **What `envelope` counts.** `sections` calls it "the index of the envelope in the transaction". With an envelope of another version between two TRANSFERs, is the second one index 1 or 2? | The index among the counted envelopes, from 0, in the order of the tapscript: the envelope of another version takes none. | block 17 gives 0, 1, 2 with nothing in between |
+| B3 | **A batch that spends a lock.** §6 puts the listings a transaction closes after "the accepted envelopes of a batch". Clear, but with no vector. | The batch's events in order, then one CLOSED per lock. | silent |
+
+B1 can change a digest: an indexer that decided by decoding would refuse the whole transaction where this one
+applies the envelopes that decode. B2 cannot: the index is in `rejected` and `verifierCalls`, not in an event.
+
+Pinned by the vectors: two TRANSFERs in a witness are a batch; a TRANSFER with a MINT, or with a TRANSFER in an
+OP_RETURN, is refused whole; a TRANSFER beside an envelope of another version is alone; in block 17 the second of
+three spends a nullifier of the first and is refused alone, the third follows the first in the tree, and the two
+events share the txid. That last case also pins what "as if it were the only one" means next to "one after the
+other": each envelope sees what the ones before it did.
+
+Two remarks on the file, neither a doubt about a rule:
+
+- `reorg` has no `rejected` list (nothing is refused in its two blocks) and its `final` gives three values only
+  (`treeSize`, `pay2.mints`, `beta.mints`); `sections.reorg` does not say that `final` is partial. The test compares
+  what is given.
+- §5 writes `W = 100` among the profile constants and the scenario runs with `W = 12` (`scenario.profile`,
+  `sections`): an implementation must read `W`, `K_min`, `N`, `D` and `A` from the profile, never fix them.
+
 The sections below are the record of the first pass, before the resolution. They are left as written.
 
 ## Result
