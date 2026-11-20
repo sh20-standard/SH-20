@@ -7,6 +7,8 @@
 // Both return blocks as { height, hash, prev, txs } in the indexer's format.
 
 import { fromBitcoindBlock } from './adapters/bitcoind.js';
+import { extractEnvelope } from './carrier.js';
+import { MAGIC, TYPE } from './constants.js';
 
 const hexBufs = (list) => (list || []).map((h) => Buffer.from(h, 'hex'));
 
@@ -44,6 +46,15 @@ export class EsploraSource {
         });
       }
     }
+    // A DEPLOY needs the height that confirmed the output its input 0 spends (SPEC-WIRE §5): Esplora gives it per
+    // transaction, so it is fetched for witness DEPLOYs only.
+    for (const tx of txs) {
+      const found = extractEnvelope(tx);
+      if (found.carrier === 'witness' && found.bytes.length > MAGIC.length + 1 && found.bytes[MAGIC.length + 1] === TYPE.DEPLOY) {
+        const status = await this._get(`/tx/${tx.vin[0].txid}/status`);
+        if (Number.isInteger(status.block_height)) tx.vin[0].prevHeight = status.block_height;
+      }
+    }
     return { height: head.height, hash: head.id, prev: head.previousblockhash ?? null, txs };
   }
 }
@@ -78,7 +89,7 @@ export class BitcoindSource {
   }
 
   async block(hash) {
-    const json = await this.rpc('getblock', [hash, 2]);
+    const json = await this.rpc('getblock', [hash, 3]); // 3: with each input's spent output and its height
     return { ...fromBitcoindBlock(json), prev: json.previousblockhash ?? null };
   }
 }

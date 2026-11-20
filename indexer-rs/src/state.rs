@@ -1,10 +1,10 @@
 //! The state machine: acceptance rules (SPEC-WIRE §5), block processing and digest (§6),
 //! and the per-block undo log for reorgs.
 
-use crate::chain::{burned_sats, counted_envelopes, is_p2tr_to, paid_to, Block, Tx};
+use crate::chain::{burned_sats, counted, is_p2tr_to, paid_to, Block, Carried, Carrier, Tx};
 use crate::envelope::{body_hash_of, DecodeError, Deploy, Envelope, Spend, Ticker};
 use crate::events::{encode_all, Event, Outcome, Spent};
-use crate::field::{fr_from_le, fr_to_le, public_leaf, sha256, Bytes32};
+use crate::field::{fr_from_le, fr_to_le, hex, public_leaf, sha256, Bytes32};
 use crate::tree::{Tree, TreeSnapshot};
 use crate::verifier::{PublicInputs, SpendVerifier};
 use ark_bn254::Fr;
@@ -21,11 +21,23 @@ pub struct Profile {
     pub anchor_window: u32,
     /// `K_min`.
     pub anchor_min_depth: u32,
+    /// `N`: a DEPLOY reveals a commit confirmed at least `N` blocks earlier.
+    pub deploy_maturity: u32,
 }
 
+/// `N` of the profile in SPEC-WIRE §5.
+pub const DEPLOY_MATURITY: u32 = 6;
+
 impl Profile {
+    /// `W = 100`, `K_min = 1`, `N = 6`.
     pub fn new(activation_height: u32, deploy_burn: u64) -> Profile {
-        Profile { activation_height, deploy_burn, anchor_window: 100, anchor_min_depth: 1 }
+        Profile {
+            activation_height,
+            deploy_burn,
+            anchor_window: 100,
+            anchor_min_depth: 1,
+            deploy_maturity: DEPLOY_MATURITY,
+        }
     }
 }
 
@@ -116,6 +128,10 @@ pub enum Error {
     UnexpectedHeight { expected: u32, got: u32 },
     /// A rollback deeper than the undo log.
     NoUndo,
+    /// A transaction of the block carries a DEPLOY in its witness, and the height of the block
+    /// that confirmed the output its input 0 spends was not given. The indexer stops rather
+    /// than guess (§5, "DEPLOY maturity"): nothing of the block is applied.
+    MissingCommitHeight { height: u32, txid: Bytes32 },
 }
 
 impl std::fmt::Display for Error {
@@ -123,6 +139,12 @@ impl std::fmt::Display for Error {
         match self {
             Error::UnexpectedHeight { expected, got } => write!(f, "expected block {expected}, got block {got}"),
             Error::NoUndo => write!(f, "no undo data left for this block"),
+            Error::MissingCommitHeight { height, txid } => write!(
+                f,
+                "block {height}, transaction {}: it carries a DEPLOY, and the height of the block that confirmed \
+                 the output its input 0 spends is not known (use `getblock <hash> 3`, which gives prevout.height)",
+                hex(txid)
+            ),
         }
     }
 }
@@ -270,6 +292,14 @@ impl Indexer {
         if h != self.next_height() {
             return Err(Error::UnexpectedHeight { expected: self.next_height(), got: h });
         }
+        // what each transaction carries; a DEPLOY in a witness needs the height of its commit,
+        // and without it the indexer stops before anything of the block is applied
+        let found: Vec<Vec<Carried>> = block.txs.iter().map(counted).collect();
+        for (tx, found) in block.txs.iter().zip(&found) {
+            if is_witness_deploy(found) && tx.vin.first().and_then(|i| i.prev_height).is_none() {
+                return Err(Error::MissingCommitHeight { height: h, txid: tx.txid });
+            }
+        }
         let tree_before = self.tree.snapshot();
         let digest_before = self.digest;
         self.journal.clear();
@@ -287,8 +317,8 @@ impl Indexer {
                 }
             }
         }
-        for tx in &block.txs {
-            self.apply_tx(h, tx, &mut events, &mut rejected);
+        for (tx, found) in block.txs.iter().zip(&found) {
+            self.apply_tx(h, tx, found, &mut events, &mut rejected);
         }
 
         // 2. R[H]
@@ -393,6 +423,7 @@ impl Indexer {
             deploy_burn: self.profile.deploy_burn,
             window: self.profile.anchor_window,
             min_depth: self.profile.anchor_min_depth,
+            maturity: self.profile.deploy_maturity,
         }
     }
 
@@ -414,7 +445,7 @@ impl Indexer {
 
     // ---- transactions ----
 
-    fn apply_tx(&mut self, h: u32, tx: &Tx, events: &mut Vec<Event>, rejected: &mut Vec<Rejection>) {
+    fn apply_tx(&mut self, h: u32, tx: &Tx, found: &[Carried], events: &mut Vec<Event>, rejected: &mut Vec<Rejection>) {
         // the ACTIVE listings whose lock this transaction spends, in input order
         let mut spent_locks: Vec<Bytes32> = Vec::new();
         for input in &tx.vin {
@@ -426,11 +457,10 @@ impl Indexer {
         }
 
         // one counted envelope is applied; two or more refuse the transaction
-        let found = counted_envelopes(tx);
-        let outcome: Option<Result<Event, Reject>> = match found.as_slice() {
+        let outcome: Option<Result<Event, Reject>> = match found {
             [] => None,
-            [raw] => Some(match Envelope::decode(raw) {
-                Ok(env) => self.apply_envelope(h, tx, &env, raw, &spent_locks),
+            [one] => Some(match Envelope::decode(&one.bytes) {
+                Ok(env) => self.apply_envelope(h, tx, &env, one, &spent_locks),
                 Err(DecodeError::Rejected(reason)) => Err(reason),
                 Err(_) => Err("not an SH-20 v0 envelope"),
             }),
@@ -457,12 +487,13 @@ impl Indexer {
         h: u32,
         tx: &Tx,
         env: &Envelope,
-        raw: &[u8],
+        carried: &Carried,
         spent_locks: &[Bytes32],
     ) -> Result<Event, Reject> {
         let txid = tx.txid;
+        let raw = carried.bytes.as_slice();
         match env {
-            Envelope::Deploy(d) => self.apply_deploy(h, txid, d, raw),
+            Envelope::Deploy(d) => self.apply_deploy(h, tx, carried.carrier, d, raw),
 
             Envelope::Mint { ticker, opening, k } => {
                 let t = self.tokens.get(ticker).ok_or("ticker not deployed")?;
@@ -614,7 +645,17 @@ impl Indexer {
         }
     }
 
-    fn apply_deploy(&mut self, h: u32, txid: Bytes32, d: &Deploy, raw: &[u8]) -> Result<Event, Reject> {
+    fn apply_deploy(&mut self, h: u32, tx: &Tx, carrier: Carrier, d: &Deploy, raw: &[u8]) -> Result<Event, Reject> {
+        let txid = tx.txid;
+        // maturity, against ticker sniping: a reveal, in a witness, of a commit at least N blocks old
+        if carrier != Carrier::Witness {
+            return Err("DEPLOY must use the witness carrier");
+        }
+        let commit_height =
+            tx.vin.first().and_then(|i| i.prev_height).expect("apply_block stops when this height is not known");
+        if commit_height as u64 + self.profile.deploy_maturity as u64 > h as u64 {
+            return Err("DEPLOY commit confirmed less than N blocks before");
+        }
         if self.tokens.contains_key(&d.ticker) {
             return Err("ticker already deployed");
         }
@@ -774,6 +815,13 @@ impl Indexer {
         }
         l.status = status;
     }
+}
+
+/// True when what a transaction carries is one counted envelope, in the witness, that decodes
+/// as a DEPLOY: the case where §5 needs the height of the commit.
+fn is_witness_deploy(found: &[Carried]) -> bool {
+    matches!(found, [one] if one.carrier == Carrier::Witness
+        && matches!(Envelope::decode(&one.bytes), Ok(Envelope::Deploy(_))))
 }
 
 /// BIP340 verification with libsecp256k1 (the `secp256k1` crate).

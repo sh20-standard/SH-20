@@ -28,7 +28,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 87 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 91 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development)
 npm run release          # a verifiable release from the current commit (below)
 ```
@@ -53,7 +53,9 @@ serialised transactions, with the reference profile (D = 1000) and the real PLON
 `vault/prover/sh20_circuit.wasm`). Its mock Esplora serves those transactions and "mines" every
 broadcast one into the next block. The e2e run mints 2,000 SH20, syncs, sends 700 privately to
 another wallet's sh20 address (proved in the page), finds its 1,300 of change by scanning, deploys
-a ticker that burns 1,000 SH20 with a proof, finds the 300 left, burns 100, lists 150 for 5,000
+a ticker that burns 1,000 SH20 with a proof (the commit, a countdown, a reload of the page in the
+middle of the wait, then the reveal once the commit is 6 blocks deep: `POST /esplora/mine?n=` makes
+the mock chain advance), finds the 300 left, burns 100, lists 150 for 5,000
 sats, copies the offer, checks it and buys it back (the listing is SOLD and a public note of 150
 appears), lists 50 and cancels it, then erases the vault, restores it from the 12 words alone and
 requires the same address, the same notes and the same listings. Measured in headless Chrome on a
@@ -199,13 +201,36 @@ the reference indexer and requires the same verdict). It then shows what the DEP
   the envelope size in the witness carrier (56 bytes + `psLen`, + 32 with a team allocation, + 824
   for the spend: wire v0.3, a 32-byte X25519 `pk_eph` per output and no `proofLen`). The size comes
   from serialising a placeholder spend with the indexer's codec; nothing is sealed or sent.
-- **`D = 0`**: no proof, one OP_RETURN transaction (56 bytes + `psLen`, + 32 with a team).
+- **`D = 0`**: no spend and no proof, but still a commit and a reveal (56 bytes + `psLen`, + 32 with a team).
 
-With `D > 0` the button proves the burn and sends it the way a transfer is sent (below): the spend
-takes the SH20 notes, the change and two unused outputs are sealed to the vault itself, and the
-envelope is the DEPLOY. With `D = 0` it signs one OP_RETURN transaction. A team allocation gets one
-of the vault's public note keys, found by the sync when its block comes. Before signing, the vault
-asks the indexers again for `D`, the tickers taken and the tip.
+**DEPLOY maturity** (SPEC-WIRE §5, against ticker sniping). A DEPLOY is never in an OP_RETURN, where
+its ticker would show before anything is confirmed: it is always the reveal of a commit, and the
+indexers accept it only if the commit was confirmed at least `N` blocks before the reveal's block
+(`N = 6`, `deployMaturity` in `/status`, which every configured indexer must report alike). Someone
+who copies the ticker from the mempool needs a commit of their own, too young by the time the
+original goes in. So the vault:
+
+1. proves the burn (`D > 0`) the way a transfer is proved (below): the spend takes the SH20 notes,
+   the change and two unused outputs are sealed to the vault itself, and the envelope is the DEPLOY;
+2. has the wallet sign the commit and broadcasts it, and keeps the signed reveal, with the
+   one-time key and the terms, in the encrypted state: a reload, or closing the tab, loses nothing;
+3. reserves the SH20 notes the burn spends while it waits (status `spending`): no other spend takes
+   them;
+4. on every refresh, sync and minute while the vault is open (`processDeploys`), reads the commit's
+   height from Esplora and shows a countdown ("reveal in 5 blocks"); once the reveal can land at a
+   height `≥ commit + N` (`revealSchedule`) it checks with every indexer that the ticker is still
+   free, then broadcasts the reveal. A ticker taken meanwhile gives the reserved notes back;
+5. if the proof's anchor would be out of the window `W = 100` by then (a commit that stayed
+   unconfirmed for long), marks the DEPLOY "Prove again": the vault proves it on today's tree and
+   makes a new commit, which spends the old commit output by its key path (the one-time key, tweaked
+   with the leaf), so its sats come back; the new commit matures in its turn.
+
+A team allocation gets one of the vault's public note keys, found by the sync when its block comes.
+Before signing, the vault asks the indexers again for `D`, `N`, the tickers taken and the tip.
+`test/deploy-maturity.test.js` checks the schedule (the countdown, the anchor window), a DEPLOY
+without a burn refused one block early and accepted at `N`, one in an OP_RETURN refused, the key-path
+sweep of an old commit, and the reserved notes kept across a reload; `test/spend.test.js` runs a
+DEPLOY that burns 1,000 SH20 with a real proof through the same wait.
 
 ## Private transfers
 
@@ -311,9 +336,9 @@ Asking an indexer `/path/:pos` or `/nullifier/:hex` for your own notes tells it 
 yours. The vault never does (`test/page.test.js` fails if any source calls them, and the e2e run
 checks every request the page sends). Instead `src/sync.js`:
 
-- downloads **every leaf** (`/notes`, paged) and rebuilds the tree locally (`src/tree.js`: same tree
-  as `indexer/src/tree.js`, keeping every level, so appending k leaves costs about 2k + 32 Poseidon
-  hashes and a Merkle path costs none). The local root must equal the indexer's `root` at the same
+- downloads **every leaf** (`/notes`, paged) and rebuilds the tree locally with the indexer's own
+  `NoteTree` (`indexer/src/tree.js`, in the bundle: an append hashes only the subtrees it completes,
+  about one Poseidon hash per leaf, a Merkle path is 32 lookups, a reorg a truncation). The local root must equal the indexer's `root` at the same
   height, or the sync fails: an indexer whose leaves do not hash to its own root is refused;
 - downloads **every spent nullifier** (`/nullifiers?from=H`, docs/API.md) and checks the vault's
   notes against that set on the device. An indexer without the route shows spends as "unknown";
@@ -399,7 +424,13 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | Path | What |
 | --- | --- |
 | `index.html`, `style.css` | the page |
-| `src/app.js` | UI: vault, wallet, tickers, mint, deploy, notes, send, market, settings |
+| `src/app.js` | the page's checks (frame, isolation, WebCrypto), then the boot of the panels |
+| `src/ui/context.js` | what the panels share: the servers, the state, the DOM helpers, the warnings |
+| `src/ui/vault-panel.js`, `tokens-panel.js` | the vault and wallet; the tickers and the mint |
+| `src/ui/deploy-panel.js` | the deploy screen and the DEPLOYs waiting for their commit to mature |
+| `src/ui/send-panel.js`, `spends.js` | TRANSFER, BURN, LIST, the spends sent; proving, the commit and the reveal |
+| `src/ui/notes-panel.js`, `market-panel.js` | the notes and the private sync; listings and buying from an offer |
+| `src/ui/settings-panel.js`, `render.js` | the servers; `renderAll` |
 | `src/keys.js` | master secret, recovery words, encrypted storage, backup, the vault's notes, spends under way |
 | `src/bip39.js`, `src/bip39-english.js` | the 12 recovery words |
 | `src/send.js` | a TRANSFER or a DEPLOY with a burn, end to end: plan, prove, commit and reveal |
@@ -410,7 +441,7 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | `src/taproot.js` | the witness carrier: commit output, reveal, BIP341 signature message |
 | `prover/`, `tools/prover.sh`, `tools/rustc-host.sh` | the two prover modules, built from `circuit/` with remapped paths and one host line, so that every machine gives the same bytes |
 | `src/notekeys.js` | note keys, address, scanning, nullifiers: `circuit/js`, nothing of its own |
-| `src/sync.js`, `src/tree.js`, `src/cache.js` | private sync: local tree, paths, spends, IndexedDB cache |
+| `src/sync.js`, `src/cache.js` | private sync: the local tree (the indexer's `NoteTree`), paths, spends, IndexedDB cache |
 | `src/mint.js` | MINT pre-flight checks, coin selection, transaction and PSBT |
 | `src/deploy.js` | checks the indexer's mint terms against the DEPLOY transaction, or SH20's against the profile |
 | `src/profile.js` | profile constants the vault knows itself: the genesis token, the activation height |

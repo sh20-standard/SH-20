@@ -119,16 +119,17 @@ export function sigMsg(tx, index, prevouts, leaf = null, hashType = SIGHASH_DEFA
 }
 
 /**
- * A key-path-only taproot output for the secret `d` (BIP86: the internal key tweaked with no script
- * tree): { script, key (x-only output key), secret (the tweaked secret that signs for it) }.
+ * A taproot output of the internal secret `d`, signed by its key path: BIP86 (no script tree) when
+ * `merkleRoot` is null, else tweaked with that root (a commit output, whose one-time key can take it
+ * back without the reveal). { script, key (x-only output key), secret (the tweaked secret that signs) }.
  */
-export function keyPathOutput(d) {
+export function keyPathOutput(d, merkleRoot = null) {
   const x = big(d);
   if (x <= 0n || x >= N) throw new Error('bad secret key');
   const p = mul(G, x);
   const internal = be32(p[0]);
   const even = p[1] & 1n ? N - x : x; // BIP340: the key with an even y
-  const q = tweakKey(internal, null);
+  const q = tweakKey(internal, merkleRoot);
   return { script: concat(Uint8Array.of(0x51, 0x20), q.key), key: q.key, internal, secret: be32((even + q.tweak) % N) };
 }
 

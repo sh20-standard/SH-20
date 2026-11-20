@@ -16,15 +16,15 @@ recheck still found, all settled in the spec since, and what the vectors still d
 
 ```sh
 cd indexer-rs
-cargo test --release      # 62 tests
-cargo run --release -- replay <folder of `bitcoin-cli getblock <hash> 2` JSON files> [options]
+cargo test --release      # 64 tests
+cargo run --release -- replay <folder of `bitcoin-cli getblock <hash> 3` JSON files> [options]
 ```
 
 ## replay
 
 ```
 sh20-indexer-rs replay <folder> [--activation <A>] [--deploy-burn <D>] [--window <W>] [--min-depth <K_min>]
-                                [--verifier reject|test] [--json]
+                                [--maturity <N>] [--verifier reject|test] [--json]
 ```
 
 Reads every `.json` file of the folder (one block each, bare or inside a JSON-RPC `result`), orders them by the
@@ -36,8 +36,15 @@ height they contain, and prints one line per block from the activation block on:
 
 `--json` prints one object per block instead, with the field names of the vectors (`height`, `root`, `events`,
 `eventsH`, `digest`) and the refused envelopes (`rejected`). The profile used goes to standard error. Defaults:
-`A` = the lowest height in the folder, `D = 0`, `W = 100`, `K_min = 1`. Heights must be consecutive from `A`; blocks
-below `A` are not read.
+`A` = the lowest height in the folder, `D = 0`, `W = 100`, `K_min = 1`, `N = 6`. Heights must be consecutive from
+`A`; blocks below `A` are not read.
+
+**Use `getblock <hash> 3`.** A DEPLOY must reveal a commit confirmed at least `N` blocks earlier (SPEC-WIRE §5), so
+the indexer needs the height of the block that confirmed the output spent by input 0 of the reveal. Verbosity 3
+gives it as `vin[].prevout.height`; verbosity 2 does not. Files of verbosity 2 replay until the first DEPLOY
+revealed in a witness: there the replay stops with an error that names the block and the transaction, and prints
+no digest for that block. It never guesses, and never refuses the DEPLOY for lack of a height. Esplora gives the
+same height as the spent transaction's `status.block_height`; this command reads `getblock` files only.
 
 `--verifier reject` (default) refuses every spend. `--verifier test` accepts the one proof the vectors use
 (`"valid-proof"` padded with zeros to 480 bytes). The PLONK verifier of `circuit/` is not wired in: it implements
@@ -57,7 +64,7 @@ the digests. The first block where they differ holds the event to look at; `--js
 | `src/verifier.rs` | `SpendVerifier`: the nine public inputs and a proof; `RejectAll`, `TestVerifier` |
 | `src/state.rs` | acceptance rules, turnstile, listings, block processing, digest, undo log (§5, §6) |
 | `src/events.rs` | byte encoding of the events inside the digest (§6) |
-| `src/json.rs` | blocks from `getblock <hash> 2` and from the vectors |
+| `src/json.rs` | blocks from `getblock <hash> 3` (or 2) and from the vectors |
 | `src/main.rs` | the `replay` command |
 
 ## Tests

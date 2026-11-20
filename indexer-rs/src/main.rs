@@ -9,14 +9,17 @@ use std::process::ExitCode;
 const USAGE: &str = "\
 usage: sh20-indexer-rs replay <folder> [options]
 
-  <folder>   JSON files, one block each, as printed by `bitcoin-cli getblock <hash> 2`.
+  <folder>   JSON files, one block each, as printed by `bitcoin-cli getblock <hash> 3`.
              Files are ordered by the height they contain; heights must be consecutive.
+             Verbosity 2 reads too, but a DEPLOY needs the height of the output its input 0
+             spends (prevout.height, verbosity 3 only): without it the replay stops there.
 
 options:
   --activation <height>   activation height A (default: the lowest height in the folder)
   --deploy-burn <D>       SH20 burned by every DEPLOY (default: 0)
   --window <W>            anchor window (default: 100)
   --min-depth <K_min>     anchor minimum depth (default: 1)
+  --maturity <N>          blocks a DEPLOY commit must have behind it (default: 6)
   --verifier <name>       reject (default: every spend is refused) or
                           test (accepts the proof \"valid-proof\" padded with zeros to 480 bytes)
   --json                  one JSON object per block: height, root, events, eventsH, digest, rejected
@@ -30,6 +33,7 @@ struct Options {
     deploy_burn: u64,
     window: u32,
     min_depth: u32,
+    maturity: u32,
     verifier: String,
     json: bool,
 }
@@ -44,6 +48,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         deploy_burn: 0,
         window: 100,
         min_depth: 1,
+        maturity: sh20_indexer::state::DEPLOY_MATURITY,
         verifier: "reject".into(),
         json: false,
     };
@@ -57,6 +62,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
             "--deploy-burn" => o.deploy_burn = number(a, value(a)?)?,
             "--window" => o.window = small(a, value(a)?)?,
             "--min-depth" => o.min_depth = small(a, value(a)?)?,
+            "--maturity" => o.maturity = small(a, value(a)?)?,
             "--verifier" => o.verifier = value(a)?,
             "--json" => o.json = true,
             _ if a.starts_with("--") => return Err(format!("unknown option {a}")),
@@ -89,8 +95,7 @@ fn json_string(s: &str) -> String {
     serde_json::Value::String(s.to_string()).to_string()
 }
 
-fn run(args: &[String]) -> Result<(), String> {
-    let o = parse_args(args)?;
+fn run(o: &Options) -> Result<(), String> {
     let blocks = load_blocks(Path::new(&o.folder))?;
     let first = blocks.first().ok_or("no .json file in the folder")?.height;
     let activation = o.activation.unwrap_or(first);
@@ -107,10 +112,11 @@ fn run(args: &[String]) -> Result<(), String> {
         deploy_burn: o.deploy_burn,
         anchor_window: o.window,
         anchor_min_depth: o.min_depth,
+        deploy_maturity: o.maturity,
     };
     eprintln!(
-        "profile: A = {activation}, D = {}, W = {}, K_min = {}, verifier = {}",
-        o.deploy_burn, o.window, o.min_depth, o.verifier
+        "profile: A = {activation}, D = {}, W = {}, K_min = {}, N = {}, verifier = {}",
+        o.deploy_burn, o.window, o.min_depth, o.maturity, o.verifier
     );
 
     let mut indexer = Indexer::new(profile, verifier);
@@ -148,10 +154,17 @@ fn main() -> ExitCode {
         println!("{USAGE}");
         return ExitCode::SUCCESS;
     }
-    match run(&args) {
-        Ok(()) => ExitCode::SUCCESS,
+    let options = match parse_args(&args) {
+        Ok(o) => o,
         Err(e) => {
             eprintln!("error: {e}\n\n{USAGE}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match run(&options) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
             ExitCode::FAILURE
         }
     }

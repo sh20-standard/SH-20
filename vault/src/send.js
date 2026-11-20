@@ -9,9 +9,9 @@
 // refuses to build one on a tree older than ANCHOR_MAX_AGE blocks.
 
 import { buildSpend, withProof, pickInputs } from './spend.js';
-import { commitment, commitValue, signReveal, oneTimeSecret } from './taproot.js';
+import { commitment, commitValue, signReveal, oneTimeSecret, keyPathOutput, signKeyPath, sigMsg } from './taproot.js';
 import { buildFunded } from './mint.js';
-import { addressToScript, opReturnScript } from './btc.js';
+import { addressToScript } from './btc.js';
 import { serializeEnvelope, decodeAddress, tickerT } from './sh20.js';
 import { NETWORK_HRP } from './notekeys.js';
 import { GENESIS } from './profile.js';
@@ -92,12 +92,51 @@ export async function proveSpend(prover, built) {
  * `utxos` (a PSBT for the wallet), and what the reveal needs once the commit's txid is known.
  * The one-time secret must be saved before the commit is signed (Vault.addPending).
  */
-export function planCarrier({ envelope, payer, utxos, feeRate, tipHeight, secret = oneTimeSecret(), outputs }) {
+export function planCarrier({ envelope, payer, utxos, feeRate, tipHeight, secret = oneTimeSecret(), outputs, sweep }) {
   const c = commitment(secret, envelope);
   const returnScript = addressToScript(payer.address);
   const value = commitValue(c, returnScript, feeRate, outputs);
-  const commit = buildFunded({ fixed: [{ value, script: c.scriptPubKey }], payer, utxos, feeRate, tipHeight });
+  // `sweep`: an older commit output of this vault (pendingRecord), spent here by its key path, so a
+  // DEPLOY proved again gets the sats of the commit it replaces back
+  const pre = sweep ? [sweepInput(sweep)] : [];
+  const commit = buildFunded({
+    fixed: [{ value, script: c.scriptPubKey }], payer, utxos, feeRate, tipHeight, pre,
+    sign: (tx, k, prevouts) => [signKeyPath(pre[k].secret, sigMsg(tx, k, prevouts))],
+  });
   return { commit, c, secret, value, returnScript, feeRate, outputs };
+}
+
+/** The commit output of a pending record as an input its one-time key signs by the key path. */
+function sweepInput(p) {
+  const plan = planFromPending(p);
+  return { txid: p.commitTxid, vout: 0, sequence: 0xfffffffd, value: plan.value, script: plan.c.scriptPubKey, secret: keyPathOutput(plan.secret, plan.c.leaf).secret };
+}
+
+/**
+ * Whether a DEPLOY's ticker is still free before its reveal goes out, from every configured
+ * indexer's /tokens (Promise.allSettled results): 'taken' if any lists it, 'free' if at least one
+ * answered and none lists it, 'unknown' if none answered. An unknown answer holds the reveal back:
+ * nobody said the ticker is free, and a reveal for a taken ticker is rejected and loses its fees.
+ */
+export function tickerState(settled, ticker) {
+  const answers = settled.filter((r) => r.status === 'fulfilled' && Array.isArray(r.value)).map((r) => r.value);
+  if (answers.some((list) => list.some((t) => t.ticker === ticker))) return 'taken';
+  return answers.length ? 'free' : 'unknown';
+}
+
+/**
+ * When a DEPLOY's reveal may go out (SPEC-WIRE §5, DEPLOY maturity): its commit must be confirmed
+ * at a height ≤ H − N, H being the reveal's block, and a DEPLOY that burns D SH20 carries a proof
+ * anchored at `anchorHeight`, valid while H − W ≤ anchorHeight. The reveal lands at tip + 1 at the
+ * earliest. Returns { state, blocks }: 'unconfirmed' (the commit is not in a block), 'waiting'
+ * (`blocks` more to go), 'ready', or 'expired' (the proof's anchor will be out of the window: prove again).
+ */
+export function revealSchedule({ commitHeight, tip, N, anchorHeight = null, W = 100 }) {
+  if (!Number.isInteger(commitHeight)) return { state: 'unconfirmed', blocks: null };
+  const earliest = Math.max(tip + 1, commitHeight + N);
+  if (anchorHeight !== null && earliest - anchorHeight > W) return { state: 'expired', blocks: null };
+  const blocks = commitHeight + N - (tip + 1);
+  return blocks > 0 ? { state: 'waiting', blocks } : { state: 'ready', blocks: 0 };
 }
 
 /** The signed reveal for a commit that pays output 0. */
@@ -105,10 +144,14 @@ export function revealFor(plan, commitTxid) {
   return signReveal({ secret: plan.secret, c: plan.c, commitTxid, value: plan.value, returnScript: plan.returnScript, outputs: plan.outputs, feeRate: plan.feeRate });
 }
 
-/** A DEPLOY without a burn (D = 0): one OP_RETURN transaction, like a MINT. */
-export function buildPlainDeploy({ d, team, payer, utxos, feeRate, tipHeight }) {
-  const envelope = serializeEnvelope(deployEnvelope(d, team));
-  return { ...buildFunded({ fixed: [{ value: 0n, script: opReturnScript(envelope) }], payer, utxos, feeRate, tipHeight }), envelope };
+/**
+ * A DEPLOY without a burn (D = 0): no spend and no proof, but still a commit and a reveal in the
+ * witness (SPEC-WIRE §5: a DEPLOY in an OP_RETURN is refused, its ticker would show before anything
+ * is confirmed). Returns what carry needs: { env, envelope, inputs: [] }.
+ */
+export function planPlainDeploy({ d, team }) {
+  const env = deployEnvelope(d, team);
+  return { env, envelope: serializeEnvelope(env), inputs: [], anchorHeight: null };
 }
 
 /** What Vault.addPending keeps of a carrier plan: enough to sign and send the reveal again later. */

@@ -25,7 +25,7 @@ function scenario() {
   return blocks.map((txs, i) => ({ height: i + 1, hash: `b${i + 1}`, txs }));
 }
 
-const make = () => new Indexer({ profile: { activationHeight: 1, deployBurn: 1000n }, verifier: mockVerifier() });
+const make = () => new Indexer({ profile: { deployMaturity: 0, activationHeight: 1, deployBurn: 1000n }, verifier: mockVerifier() });
 
 test('two independent indexers reach the same digest at every height', () => {
   const blocks = scenario();

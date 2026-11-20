@@ -18,9 +18,9 @@ Node 20 or newer, no dependencies.
 
 ```sh
 (cd ../circuit && ./build-wasm.sh)   # optional: the spend verifier; the 4 tests that need it are skipped without it
-npm test                  # 58 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, API, real proofs
+npm test                  # 59 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, API, real proofs
 npm run vectors           # regenerates vectors/v0.3.json (deterministic)
-node bin/replay.js <dir>  # replays a folder of `bitcoin-cli getblock <hash> 2` JSON files
+node bin/replay.js <dir>  # replays a folder of `bitcoin-cli getblock <hash> 3` JSON files
 node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser U --rpcpass P --activation H   # live, own node
 node bin/follow.js --esplora https://mempool.space/signet/api --activation H             # live, Esplora
 ```

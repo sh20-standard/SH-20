@@ -21,8 +21,8 @@ test('event records: byte order and layout pinned by hand', () => {
   );
   // Block events carry 32 zero bytes where a txid would be; GENESIS commits to the profile's rules.
   assert.equal(
-    encodeEvent({ type: 'GENESIS', ticker: 'SH20', max: 21000000n, lim: 1000n, deployBurn: 1000n, anchorWindow: 100, anchorMinDepth: 1 }).toString('hex'),
-    '80' + '00'.repeat(32) + '53483230' + '406f400100000000' + 'e803000000000000' + 'e803000000000000' + '64000000' + '01000000',
+    encodeEvent({ type: 'GENESIS', ticker: 'SH20', max: 21000000n, lim: 1000n, deployBurn: 1000n, anchorWindow: 100, anchorMinDepth: 1, deployMaturity: 6 }).toString('hex'),
+    '80' + '00'.repeat(32) + '53483230' + '406f400100000000' + 'e803000000000000' + 'e803000000000000' + '64000000' + '01000000' + '06000000',
   );
   // Nullifiers are field elements, 32 bytes little-endian as on the wire.
   assert.equal(
@@ -37,7 +37,7 @@ test('event records: byte order and layout pinned by hand', () => {
 
 test('event records: one fixed size per type', () => {
   const sizes = {
-    GENESIS: [{ ticker: 'SH20', max: 1n, lim: 1n, deployBurn: 0n, anchorWindow: 1, anchorMinDepth: 1 }, 69],
+    GENESIS: [{ ticker: 'SH20', max: 1n, lim: 1n, deployBurn: 0n, anchorWindow: 1, anchorMinDepth: 1, deployMaturity: 6 }, 73],
     TEAM_UNLOCK: [{ ticker: 'GENE', v: 1n, pos: 0 }, 49],
     DEPLOY: [{ txid: TX, ticker: 'GENE' }, 38],
     MINT: [{ txid: TX, ticker: 'GENE', v: 1n, pos: 0 }, 49],
@@ -57,7 +57,7 @@ test('event records: one fixed size per type', () => {
 });
 
 test('digest: SHA256(prev ‖ u32le(H) ‖ root ‖ SHA256(events_H)), from SHA256("sh20-v0")', () => {
-  const ix = new Indexer({ profile: { activationHeight: 2 } });
+  const ix = new Indexer({ profile: { deployMaturity: 0, activationHeight: 2 } });
   const start = sha256(Buffer.from(DOMAIN.DIGEST, 'utf8'));
   const h = (n) => Buffer.from([n, 0, 0, 0]);
   const root = frToBytes(ix.tree.root);
@@ -70,13 +70,13 @@ test('digest: SHA256(prev ‖ u32le(H) ‖ root ‖ SHA256(events_H)), from SHA2
   const b2 = ix.applyBlock({ height: 2, txs: [] }); // activation: the GENESIS record alone
   assert.deepEqual(b2.events.map((e) => e.type), ['GENESIS']);
   assert.equal(b2.digest, sha256(start, h(2), root, sha256(encodeEvents(b2.events))).toString('hex'));
-  const fresh = new Indexer({ profile: { activationHeight: 2 } }); // started at A: the same digest
+  const fresh = new Indexer({ profile: { deployMaturity: 0, activationHeight: 2 } }); // started at A: the same digest
   assert.equal(fresh.applyBlock({ height: 2, txs: [] }).digest, b2.digest);
   const b3 = ix.applyBlock({ height: 3, txs: [] }); // an empty block after A
   assert.equal(b3.digest, sha256(Buffer.from(b2.digest, 'hex'), h(3), root, sha256(Buffer.alloc(0))).toString('hex'));
 
   // Two indexers with different rules part at the activation block.
-  const other = new Indexer({ profile: { activationHeight: 2, anchorWindow: 99 } });
+  const other = new Indexer({ profile: { deployMaturity: 0, activationHeight: 2, anchorWindow: 99 } });
   other.applyBlock({ height: 1, txs: [] });
   assert.notEqual(other.applyBlock({ height: 2, txs: [] }).digest, b2.digest);
 });

@@ -56,7 +56,7 @@ test('no other path hands the prover a seed: the worker and the Node prover go t
   const worker = src('prover-worker.js');
   assert.match(worker, /proof: proveWithFreshSeed\(api, data\.prove\)/);
   assert.equal((worker.match(/\.prove\(/g) ?? []).length, 1, 'the one call is inside proveWithFreshSeed');
-  for (const f of readdirSync(new URL('../src/', import.meta.url)).filter((x) => x.endsWith('.js') && x !== 'prover-worker.js')) {
+  for (const f of readdirSync(new URL('../src/', import.meta.url), { recursive: true }).filter((x) => x.endsWith('.js') && x !== 'prover-worker.js')) {
     assert.ok(!/sh20_prove|\.prove\([^)]*,/.test(src(f)), `${f} calls the prover with a seed of its own`);
   }
   assert.match(readFileSync(new URL('./prover-node.js', import.meta.url), 'utf8'), /proveWithFreshSeed\(api, witness\)/);

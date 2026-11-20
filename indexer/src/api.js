@@ -48,6 +48,7 @@ export function apiHandler(indexer, { network } = {}) {
       tokens: ix.tokens.size,
       genesis: ix.genesis ?? null,
       deployBurn: ix.profile.deployBurn,
+      deployMaturity: ix.profile.deployMaturity,
       anchorWindow: ix.profile.anchorWindow,
       verifier: ix.verifier.name ?? 'custom',
     })],

@@ -28,9 +28,10 @@ function fakeSign(psbt, type) {
 }
 
 function setup(over) {
-  const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n } });
+  // N = 0 here: the DEPLOY is only setup (test/deploy-maturity.test.js tests N = 6); its commit is one block old
+  const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n, deployMaturity: 0 } });
   const c = chain(idx);
-  const r = c.block(helperTx({ env: deployEnv(over) }));
+  const r = c.block(helperTx({ env: deployEnv(over), prevHeight: c.next - 1 }));
   assert.equal(r.events.at(-1)?.type, 'DEPLOY', JSON.stringify(r.rejected));
   return { idx, c };
 }

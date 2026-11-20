@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Replays a folder of Bitcoin Core `getblock <hash> 2` JSON files (one block per
+// Replays a folder of Bitcoin Core `getblock <hash> 3` JSON files (one block per
 // file, any names) and prints the SH-20 root and digest after each block.
 //
 //   node bin/replay.js <folder> [--activation <height>] [--verifier sh20_circuit.wasm [--vk spend.vk]]
@@ -17,7 +17,7 @@ import { plonkVerifier } from '../src/adapters/plonk.js';
 const args = process.argv.slice(2);
 const dir = args[0];
 if (!dir) {
-  console.error('usage: node bin/replay.js <folder of getblock-2 JSON files> [--activation <height>] [--deploy-burn <D>] [--verifier sh20_circuit.wasm [--vk spend.vk] | --verifier test]');
+  console.error('usage: node bin/replay.js <folder of getblock-3 JSON files> [--activation <height>] [--deploy-burn <D>] [--verifier sh20_circuit.wasm [--vk spend.vk] | --verifier test]');
   process.exit(1);
 }
 const blocks = readdirSync(dir)

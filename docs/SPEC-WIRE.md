@@ -17,6 +17,8 @@ Every point a clean-room second indexer found open (`SPEC-GAPS.md`) is now settl
 envelopes count (§3), which fields are field elements and where `body` starts (§4), blocks below `A` (§6), and the edge
 cases of §5 ("Details"). The vectors give `bodyHash` for every spend, the nine verifier inputs of every spend in the
 scenario, carrier cases, a CLAIM with its signature, and a listing CLOSED then claimed and one CANCELLED.
+A DEPLOY must reveal a commit confirmed at least `N = 6` blocks earlier, in the witness carrier (§5): a ticker seen in the
+mempool can no longer be copied and confirmed first. The GENESIS record commits to `N` too.
 
 Changes from v0.1: tokens are named by their ticker everywhere. MINT, BURN and LIST carry `ticker(4)`
 instead of an indexer-assigned `tokenNum(4)` (same size), and the asset id inside notes and proofs is
@@ -71,7 +73,7 @@ A script is read as opcodes from its first byte; a script with a push that runs 
 Anything that does not match a carrier exactly carries no envelope. Every envelope found counts, except one whose fifth
 byte (the version) exists and is not `0x00`: it belongs to another version, is not counted and has no effect.
 A transaction with **one** counted envelope applies it (§5). With **two or more**, none is applied: the transaction is
-refused (the listings whose locks it spends still close, §6). Any type may use either carrier; a proof-carrying envelope
+refused (the listings whose locks it spends still close, §6). Any type but DEPLOY (witness only, §5) may use either carrier; a proof-carrying envelope
 (830 bytes for a TRANSFER) costs four times more in an OP_RETURN than in a witness. A coinbase transaction is read like
 any other for its OP_RETURN outputs; the witness of its input is not looked at.
 
@@ -157,8 +159,8 @@ BN254 with KZG commitments, on a domain of 2^17 rows. The reference circuit and 
 
 ## 5. Acceptance rules
 
-Block `H`, profile constants `W = 100`, `K_min = 1`, `D` (deploy burn), activation height `A`. No envelope below `A` is
-read, and blocks below `A` have no root and no digest (§6).
+Block `H`, profile constants `W = 100`, `K_min = 1`, `D` (deploy burn), `N = 6` (DEPLOY commit maturity), activation
+height `A`. No envelope below `A` is read, and blocks below `A` have no root and no digest (§6).
 
 **Genesis token** (part of the profile, not a DEPLOY, so nobody can race for it): ticker `SH20`, `max = 21,000,000`,
 `lim = 1,000`, `pre = 0` (no team allocation), payMode 0 and `price = 0` (free mint, network fees only),
@@ -181,7 +183,7 @@ of a ticker can ever come back into the open than was issued. At every block, fo
 
 | Type | Accepted when | Effect |
 | --- | --- | --- |
-| DEPLOY | ticker never deployed; `max > 0`, `lim > 0`, `pre < max`, `(max − pre) mod lim = 0`; `start > H`; `end = 0` or `end ≥ start`; `unlock ≥ start`; payMode 0 ⇔ `price = 0`. If `D > 0`: `D ≤ pool[SH20]` and a spend with `vPub = D`, `tPub = t("SH20")`; if `D = 0`: no spend | token recorded under its ticker, `pool = 0`; `burned[SH20] += D`, `pool[SH20] −= D`; team note scheduled for block `unlock` |
+| DEPLOY | in the witness carrier, and the output spent by input 0 was confirmed at a height `≤ H − N`; ticker never deployed; `max > 0`, `lim > 0`, `pre < max`, `(max − pre) mod lim = 0`; `start > H`; `end = 0` or `end ≥ start`; `unlock ≥ start`; payMode 0 ⇔ `price = 0`. If `D > 0`: `D ≤ pool[SH20]` and a spend with `vPub = D`, `tPub = t("SH20")`; if `D = 0`: no spend | token recorded under its ticker, `pool = 0`; `burned[SH20] += D`, `pool[SH20] −= D`; team note scheduled for block `unlock` |
 | MINT | `ticker` deployed; `start ≤ H`; `end = 0` or `H ≤ end`; `left = (max − pre) / lim − mints > 0`; with `m = min(k, left)` (`k = 1` without the byte), paid in the same tx: payMode 1 = OP_RETURN outputs carry ≥ `m × price` sats, payMode 2 = outputs to `payScript` total ≥ `m × price` | one leaf `(t, m × lim, npk, 0)`; mints + `m`; `pool += m × lim` |
 | TRANSFER | spend with `vPub = tPub = 0` | — |
 | BURN | `ticker` deployed; `0 < vPub ≤ pool[ticker]`; spend with `tPub = t(ticker)` | `burned[ticker] += vPub`, `pool −= vPub` |
@@ -192,6 +194,19 @@ of a ticker can ever come back into the open than was issued. At every block, fo
 A rejected envelope changes nothing; sats it paid are not returned.
 
 **Details.**
+
+- **DEPLOY maturity (against ticker sniping).** A DEPLOY is a reveal: its input 0 spends the commit output whose tapscript
+  holds the envelope, and the ticker stays hidden until that spend. The commit must have been confirmed at least `N`
+  blocks before the reveal's block. Someone who copies the DEPLOY from the mempool (to deploy the ticker with their own
+  parameters, or the same ones) needs a commit of their own, which is too young: by the time it is `N` blocks old, the
+  original is confirmed. A DEPLOY in an OP_RETURN, where the ticker shows before anything is confirmed, is refused.
+  Indexers therefore need, for input 0 of a transaction that carries a DEPLOY in its witness, the height of the block
+  that confirmed the output it spends: `getblock <hash> 3` gives it (`prevout.height`), and Esplora gives it as the
+  spent transaction's `status.block_height`. An indexer that lacks it must stop, not guess: the others would diverge.
+  It stops at the first transaction whose one counted envelope is a DEPLOY in the witness, before any other condition of
+  that DEPLOY is checked; a DEPLOY in an OP_RETURN, a transaction with two envelopes and an envelope that does not decode
+  need no height. A block an indexer stops in is not applied at all, none of its transactions count, and the same block
+  can be given again once the height is known. `H − N` is a signed integer: below block `N` no commit is old enough.
 
 - **Payment.** payMode 1 counts the value of every output whose script starts with `OP_RETURN` (`0x6a`), the envelope's
   own included; payMode 2 and TAKE count every output whose script equals `payScript`. Products and sums are exact
@@ -240,7 +255,7 @@ concatenation parses one way only.
 | LIST | 0x05 | `ticker` ‖ `amount`(u64) ‖ `price`(u64) ‖ `spent` | 129 |
 | TAKE | 0x06 | `listTxid`(32) ‖ outcome(1: SOLD = 1, CANCELLED = 2) ‖ `pos` | 70 |
 | CLAIM | 0x07 | `listTxid`(32) ‖ `pos` | 69 |
-| GENESIS | 0x80 | `ticker` ‖ `max`(u64) ‖ `lim`(u64) ‖ `D`(u64) ‖ `W`(u32) ‖ `K_min`(u32) | 69 |
+| GENESIS | 0x80 | `ticker` ‖ `max`(u64) ‖ `lim`(u64) ‖ `D`(u64) ‖ `W`(u32) ‖ `K_min`(u32) ‖ `N`(u32) | 73 |
 | TEAM_UNLOCK | 0x81 | `ticker` ‖ `pre`(u64) ‖ `pos` | 49 |
 | CLOSED | 0x82 | `listTxid`(32); `txid` is the transaction that spent the lock | 65 |
 

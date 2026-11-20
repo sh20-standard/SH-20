@@ -9,8 +9,8 @@ fn vectors() -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
 }
 
-/// A scenario block as `getblock <hash> 2` prints it: amounts in BTC, `txinwitness`,
-/// `scriptPubKey.hex`, and a coinbase first.
+/// A scenario block as `getblock <hash> 3` prints it: amounts in BTC, `txinwitness`,
+/// `scriptPubKey.hex`, `prevout.height` where the vectors give a height, and a coinbase first.
 fn getblock_json(b: &Value) -> String {
     let height = b["height"].as_u64().unwrap();
     let mut txs = vec![format!(
@@ -26,7 +26,14 @@ fn getblock_json(b: &Value) -> String {
             .as_array()
             .unwrap()
             .iter()
-            .map(|i| json!({"txid": i["txid"], "vout": i["vout"], "scriptSig": {"hex": ""}, "txinwitness": i["witness"], "sequence": 4294967293u32}).to_string())
+            .map(|i| {
+                let mut vin = json!({"txid": i["txid"], "vout": i["vout"], "scriptSig": {"hex": ""}, "txinwitness": i["witness"], "sequence": 4294967293u32});
+                // verbosity 3: the spent output, with the height of its block
+                if let Some(h) = i.get("prevHeight") {
+                    vin["prevout"] = json!({"generated": false, "height": h, "value": 0.00001000, "scriptPubKey": {"hex": "5120"}});
+                }
+                vin.to_string()
+            })
             .collect();
         let vout: Vec<String> = t["vout"]
             .as_array()
@@ -87,13 +94,17 @@ fn replay_prints_the_vectors_digests() {
         .iter()
         .map(|a| format!("{} {}", a["height"], a["digest"].as_str().unwrap()))
         .collect();
-    let (ok, stdout, stderr) = replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--verifier", "test"]);
+    let (ok, stdout, stderr) =
+        replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--maturity", "3", "--verifier", "test"]);
     assert!(ok, "{stderr}");
     assert_eq!(stdout.lines().collect::<Vec<_>>(), want);
-    assert!(stderr.contains("A = 1, D = 1000, W = 100, K_min = 1"));
+    assert!(stderr.contains("A = 1, D = 1000, W = 100, K_min = 1, N = 3"));
 
     // --json gives what the vectors give for each block
-    let (ok, stdout, _) = replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--verifier", "test", "--json"]);
+    let (ok, stdout, _) = replay(
+        &dir,
+        &["--activation", "1", "--deploy-burn", "1000", "--maturity", "3", "--verifier", "test", "--json"],
+    );
     assert!(ok);
     let lines: Vec<Value> = stdout.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
     assert_eq!(lines.len(), 13);
@@ -110,15 +121,41 @@ fn replay_prints_the_vectors_digests() {
     }
 
     // without a verifier every spend is refused: the digests leave the vectors' at block 2
-    let (ok, stdout, _) = replay(&dir, &["--activation", "1", "--deploy-burn", "1000"]);
+    let (ok, stdout, _) = replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--maturity", "3"]);
     assert!(ok);
     let got: Vec<&str> = stdout.lines().collect();
     assert_eq!(got[0], want[0]);
     assert_ne!(got[1], want[1]);
 
+    // another N: the GENESIS record differs, and so does every digest
+    let (ok, stdout, _) = replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--verifier", "test"]);
+    assert!(ok);
+    assert_ne!(stdout.lines().next().unwrap(), want[0]);
+
+    // blocks without prevout.height (verbosity 2): the replay stops at the first DEPLOY
+    // revealed in a witness, here in block 4, and says what it needs
+    let no_heights = dir.with_file_name("replay-vectors-verbosity-2");
+    let _ = std::fs::remove_dir_all(&no_heights);
+    std::fs::create_dir_all(&no_heights).unwrap();
+    for b in sc["blocks"].as_array().unwrap() {
+        let mut b = b.clone();
+        for tx in b["txs"].as_array_mut().unwrap() {
+            for vin in tx["vin"].as_array_mut().unwrap() {
+                vin.as_object_mut().unwrap().remove("prevHeight");
+            }
+        }
+        std::fs::write(no_heights.join(format!("{}.json", b["height"])), getblock_json(&b)).unwrap();
+    }
+    let (ok, stdout, stderr) =
+        replay(&no_heights, &["--activation", "1", "--deploy-burn", "1000", "--maturity", "3", "--verifier", "test"]);
+    assert!(!ok);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), want[..3]);
+    assert!(stderr.contains("block 4") && stderr.contains("getblock <hash> 3"), "{stderr}");
+
     // a missing block stops the replay
     std::fs::remove_file(dir.join("block-95.json")).unwrap();
-    let (ok, stdout, stderr) = replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--verifier", "test"]);
+    let (ok, stdout, stderr) =
+        replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--maturity", "3", "--verifier", "test"]);
     assert!(!ok);
     assert_eq!(stdout.lines().count(), 3);
     assert!(stderr.contains("expected block 4, got block 5"), "{stderr}");

@@ -12,7 +12,7 @@
 export const TERMS = ['ticker', 't', 'max', 'lim', 'pre', 'start', 'end', 'unlock', 'price', 'payMode', 'payScript', 'deployTxid', 'deployHeight', 'genesis'];
 // Profile constants from /status: the genesis token's start is the activation height,
 // and every DEPLOY burns deployBurn SH20. Indexers on the same profile report the same.
-export const PROFILE = ['activationHeight', 'deployBurn', 'genesis'];
+export const PROFILE = ['activationHeight', 'deployBurn', 'deployMaturity', 'genesis'];
 
 /** The profile an indexer reports, with deployBurn as a bigint (null when absent). */
 export function profileOf(status) {
@@ -22,6 +22,8 @@ export function profileOf(status) {
     // anything but a whole number is unknown (never thrown: an indexer must not break the page)
     deployBurn: /^[0-9]{1,20}$/.test(String(n(status?.deployBurn))) ? BigInt(status.deployBurn) : null,
     genesis: n(status?.genesis),
+    // N: a DEPLOY reveals a commit confirmed at least N blocks earlier (SPEC-WIRE §5); null if not reported
+    deployMaturity: Number.isInteger(status?.deployMaturity) && status.deployMaturity >= 0 ? status.deployMaturity : null,
   };
 }
 

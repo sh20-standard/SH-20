@@ -14,7 +14,7 @@ node bin/follow.js --esplora https://mempool.space/signet/api --activation H
 
 | Route | Returns |
 | --- | --- |
-| `GET /status` | `{ network, activationHeight, height, digest, root, leaves, nullifiers, tokens, genesis, deployBurn, anchorWindow, verifier }` |
+| `GET /status` | `{ network, activationHeight, height, digest, root, leaves, nullifiers, tokens, genesis, deployBurn, deployMaturity, anchorWindow, verifier }` |
 | `GET /tokens` | every token, genesis `SH20` first (`genesis: true`, `deployTxid: null`), then in DEPLOY order: `{ ticker, t, max, lim, pre, start, end, unlock, price, payMode, payScript, mints, burned, pool, deployTxid, deployHeight }` (`pool`: the turnstile of SPEC-WIRE §5, what the shielded pool holds of the ticker) |
 | `GET /token/:ticker` | one token (`[A-Z0-9]{4}`), or 404 |
 | `GET /notes?from=0&limit=1000` | `{ from, total, notes }`, one entry per tree leaf in tree order; `limit` ≤ 5000 |

@@ -47,15 +47,21 @@ const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: DEPLOY_BUR
 const api = apiHandler(idx, { network: 'signet' });
 const chainTxs = new Map(); // txid -> { hex, height }
 
-// Applies real, serialised transactions, so Esplora can serve them back.
-function mine(txs) {
+// Applies real, serialised transactions, so Esplora can serve them back. Each input spending a
+// transaction of this chain gets its height as prevHeight, which a DEPLOY's input 0 needs (SPEC-WIRE §5,
+// DEPLOY maturity; a real indexer reads it from getblock verbosity 3 or Esplora). `prevHeights` sets it
+// for inputs the demo chain did not mine (the fixtures).
+function mine(txs, prevHeights = []) {
   const height = (idx.height ?? 0) + 1;
-  const itxs = txs.map((t) => {
+  const itxs = txs.map((t, k) => {
     const id = txidOf(t);
     chainTxs.set(id, { hex: toHex(serializeTx(t)), height });
     return {
       txid: id,
-      vin: t.vin.map((i) => ({ txid: i.txid, vout: i.vout, witness: i.witness.map((w) => Buffer.from(w)) })),
+      vin: t.vin.map((i, j) => {
+        const prev = chainTxs.get(i.txid)?.height ?? (j === 0 ? prevHeights[k] : undefined);
+        return { txid: i.txid, vout: i.vout, witness: i.witness.map((w) => Buffer.from(w)), ...(prev !== undefined ? { prevHeight: prev } : {}) };
+      }),
       vout: t.vout.map((o) => ({ value: o.value, script: Buffer.from(o.script) })),
     };
   });
@@ -63,6 +69,19 @@ function mine(txs) {
 }
 
 let n = 0;
+/** The DEPLOY of the demo: a reveal in the witness (never an OP_RETURN, SPEC-WIRE §5), of a fixture commit. */
+const deployTx = (env) => {
+  const bytes = serializeEnvelope(env);
+  const script = Buffer.concat([Buffer.from([0x20]), Buffer.alloc(32, 7), Buffer.from([0xac, 0x00, 0x63, 0x04]), bytes.subarray(0, 4),
+    ...chunks(bytes.subarray(4)).map((c) => Buffer.concat([pushOf(c), c])), Buffer.from([0x68])]);
+  return {
+    version: 2, locktime: 0,
+    vin: [{ txid: (++n).toString(16).padStart(64, '0'), vout: 0, sequence: 0xfffffffd, scriptSig: new Uint8Array(0), witness: [new Uint8Array(64), script, Buffer.concat([Buffer.from([0xc0]), Buffer.alloc(32, 9)])] }],
+    vout: [{ value: 330n, script: Buffer.concat([Buffer.from([0x51, 0x20]), Buffer.alloc(32, 3)]) }],
+  };
+};
+const chunks = (b) => Array.from({ length: Math.ceil(b.length / 520) }, (_, i) => b.subarray(520 * i, 520 * (i + 1)));
+const pushOf = (c) => (c.length <= 75 ? Buffer.from([c.length]) : c.length <= 255 ? Buffer.from([0x4c, c.length]) : Buffer.from([0x4d, c.length & 0xff, c.length >> 8]));
 const envTx = (env, value = 0n) => ({
   version: 2, locktime: 0,
   vin: [{ txid: (++n).toString(16).padStart(64, '0'), vout: 0, sequence: 0xfffffffd, scriptSig: new Uint8Array(0), witness: [new Uint8Array(64)] }],
@@ -72,7 +91,8 @@ const envTx = (env, value = 0n) => ({
 // Demo chain: SH20 from block 1 (free mint), two mints of it; with D = 0, GENE too
 // (burn 1000 sats per mint, open from block 2) and two mints of it.
 const D0 = DEPLOY_BURN === 0n;
-mine(D0 ? [envTx(deployEnv({ ticker: 'GENE', start: 2, unlock: 2, price: 1000n, payMode: 1 }))] : []);
+// the GENE fixture's commit counts as confirmed N blocks before block 1 (the demo chain starts there)
+mine(D0 ? [deployTx(deployEnv({ ticker: 'GENE', start: 2, unlock: 2, price: 1000n, payMode: 1 }))] : [], [1 - idx.profile.deployMaturity]);
 mine([
   ...[0, 1].map(() => envTx({ type: 'MINT', ticker: 'SH20', ...opening() })),
   ...(D0 ? [0, 1].map(() => envTx({ type: 'MINT', ticker: 'GENE', ...opening() }, 1000n)) : []),
@@ -89,6 +109,12 @@ async function esplora(req, path, res) {
   if (m) return chainTxs.has(m[1]) ? text(200, chainTxs.get(m[1]).hex) : text(404, 'not found');
   m = path.match(/^\/tx\/([0-9a-f]{64})\/status$/);
   if (m) return text(200, json(chainTxs.has(m[1]) ? { confirmed: true, block_height: chainTxs.get(m[1]).height } : { confirmed: false }));
+  // development only: time passes. POST /esplora/mine?n=6 mines n empty blocks (a DEPLOY's commit matures)
+  if (path === '/mine' && req.method === 'POST') {
+    const count = Math.min(100, Number(new URL(req.url, 'http://x').searchParams.get('n')) || 1);
+    for (let i = 0; i < count; i++) mine([]);
+    return text(200, idx.height);
+  }
   if (path === '/tx' && req.method === 'POST') {
     let body = '';
     for await (const c of req) body += c;

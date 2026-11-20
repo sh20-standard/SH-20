@@ -89,6 +89,18 @@ export class Indexer {
     }
     this._ops = [];
     const frame = { height: block.height, ops: this._ops, tree: this.tree.snapshot(), digest: this.digest };
+    try {
+      return this._applyBlock(block, frame);
+    } catch (e) {
+      // All or nothing (SPEC-WIRE §5): a block the indexer cannot finish leaves no trace, and can be given again.
+      this._undo(frame);
+      throw e;
+    } finally {
+      this._ops = null;
+    }
+  }
+
+  _applyBlock(block, frame) {
     const events = [];
     const rejected = [];
 
@@ -124,7 +136,6 @@ export class Indexer {
     }
 
     this.frames.push(frame);
-    this._ops = null;
     this.height = block.height;
     return { height: block.height, root: active ? this.tree.root : null, digest: active ? this.digest.toString('hex') : null, events, rejected };
   }
@@ -147,20 +158,25 @@ export class Indexer {
     }
     while (this.frames.length && this.frames[this.frames.length - 1].height > height) {
       const f = this.frames.pop();
-      for (let i = f.ops.length - 1; i >= 0; i--) {
-        const op = f.ops[i];
-        if (op.kind === 'map') {
-          if (op.had) op.map.set(op.key, op.prev);
-          else op.map.delete(op.key);
-        } else {
-          op.set.delete(op.key);
-        }
-      }
-      this.tree.restore(f.tree);
-      this.notes.length = this.tree.size;
-      this.digest = f.digest;
+      this._undo(f);
       this.height = f.height - 1;
     }
+  }
+
+  /** Reverts what one block (whole or cut short) changed, from its undo log. */
+  _undo(f) {
+    for (let i = f.ops.length - 1; i >= 0; i--) {
+      const op = f.ops[i];
+      if (op.kind === 'map') {
+        if (op.had) op.map.set(op.key, op.prev);
+        else op.map.delete(op.key);
+      } else {
+        op.set.delete(op.key);
+      }
+    }
+    this.tree.restore(f.tree);
+    this.notes.length = this.tree.size;
+    this.digest = f.digest;
   }
 
   // ---- transactions -------------------------------------------------------
@@ -179,7 +195,7 @@ export class Indexer {
     if (found.bytes) {
       try {
         const { env, body } = parseEnvelope(found.bytes);
-        const event = this._apply(env, body, tx, H, spentLocks);
+        const event = this._apply(env, body, tx, H, spentLocks, found.carrier);
         events.push({ txid: tx.txid, ...event });
       } catch (e) {
         if (!(e instanceof Reject) && !(e instanceof CodecError)) throw e;
@@ -196,10 +212,10 @@ export class Indexer {
     }
   }
 
-  _apply(env, body, tx, H, spentLocks) {
+  _apply(env, body, tx, H, spentLocks, carrier) {
     switch (env.type) {
       case 'DEPLOY':
-        return this._deploy(env, body, tx, H);
+        return this._deploy(env, body, tx, H, carrier);
       case 'MINT':
         return this._mint(env, tx, H);
       case 'TRANSFER': {
@@ -282,8 +298,8 @@ export class Indexer {
     });
     // The record commits to the profile's rules, so indexers run with different
     // profiles part at the activation block, not at the first spend it touches.
-    const { deployBurn, anchorWindow, anchorMinDepth } = this.profile;
-    return { type: 'GENESIS', ticker: g.ticker, max: g.max, lim: g.lim, deployBurn, anchorWindow, anchorMinDepth };
+    const { deployBurn, anchorWindow, anchorMinDepth, deployMaturity } = this.profile;
+    return { type: 'GENESIS', ticker: g.ticker, max: g.max, lim: g.lim, deployBurn, anchorWindow, anchorMinDepth, deployMaturity };
   }
 
   // ---- the turnstile ------------------------------------------------------
@@ -303,7 +319,16 @@ export class Indexer {
     if (apply) this._set(this.tokens, ticker, { ...t, pool: t.pool - v });
   }
 
-  _deploy(env, body, tx, H) {
+  _deploy(env, body, tx, H, carrier) {
+    // Against ticker sniping (SPEC-WIRE §5): the reveal must spend a commit confirmed at least N blocks earlier.
+    if (carrier !== 'witness') throw new Reject('DEPLOY must use the witness carrier');
+    const N = this.profile.deployMaturity;
+    const committed = tx.vin[0].prevHeight;
+    if (!Number.isInteger(committed)) {
+      // Not a refusal: an indexer without this height would diverge from the others. Stop instead.
+      throw new Error(`block ${H}: the height of the output spent by DEPLOY ${tx.txid} is missing (getblock verbosity 3, or the spent transaction's status)`);
+    }
+    if (committed > H - N) throw new Reject(`DEPLOY commit confirmed less than ${N} blocks before`);
     if (this.tokens.has(env.ticker)) throw new Reject('ticker already deployed');
     const { max, lim, pre, start, end, unlock, price, payMode } = env;
     if (max <= 0n || lim <= 0n) throw new Reject('max and lim must be positive');

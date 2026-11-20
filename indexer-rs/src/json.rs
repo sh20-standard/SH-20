@@ -49,7 +49,8 @@ pub fn btc_to_sats(text: &str) -> Res<u64> {
     whole.checked_mul(100_000_000).and_then(|w| w.checked_add(frac)).ok_or_else(bad)
 }
 
-/// One `getblock <hash> 2` answer (bare, or wrapped in a JSON-RPC `{"result": …}`).
+/// One `getblock <hash> 3` answer (bare, or wrapped in a JSON-RPC `{"result": …}`). Verbosity 2
+/// reads too, without the height of the spent outputs: enough until a DEPLOY is revealed.
 pub fn block_from_getblock(text: &str) -> Res<Block> {
     let root: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
     let b = match root.get("result") {
@@ -67,7 +68,13 @@ pub fn block_from_getblock(text: &str) -> Res<Block> {
         for i in array_of(t, "vin")? {
             let coinbase = i.get("coinbase").is_some();
             let prevout = if coinbase { None } else { Some((txid_of(str_of(i, "txid")?)?, u32_of(i, "vout")?)) };
-            vin.push(TxIn { prevout, coinbase, witness: witness_of(i.get("txinwitness"))? });
+            // `getblock <hash> 3` gives the spent output, and the height of its block
+            let prev_height = i
+                .get("prevout")
+                .and_then(|p| p.get("height"))
+                .and_then(Value::as_u64)
+                .and_then(|h| u32::try_from(h).ok());
+            vin.push(TxIn { prevout, coinbase, prev_height, witness: witness_of(i.get("txinwitness"))? });
         }
         let mut vout = Vec::new();
         for o in array_of(t, "vout")? {
@@ -95,7 +102,8 @@ pub fn block_from_vector(b: &Value) -> Res<Block> {
 
 /// A transaction as the vectors write it, in the scenario or in a carrier case. A carrier case
 /// has no txid (32 zero bytes here) and its inputs give their witness only: they spend
-/// nothing. `{"coinbase": true}` is the input of a coinbase.
+/// nothing. `{"coinbase": true}` is the input of a coinbase. `prevHeight` is the height of the
+/// block that confirmed the output an input spends, given where a DEPLOY needs it.
 pub fn tx_from_vector(t: &Value) -> Res<Tx> {
     let txid = match t.get("txid") {
         Some(_) => txid_of(str_of(t, "txid")?)?,
@@ -108,7 +116,11 @@ pub fn tx_from_vector(t: &Value) -> Res<Tx> {
             Some(_) if !coinbase => Some((txid_of(str_of(i, "txid")?)?, u32_of(i, "vout")?)),
             _ => None,
         };
-        vin.push(TxIn { prevout, coinbase, witness: witness_of(i.get("witness"))? });
+        let prev_height = match i.get("prevHeight") {
+            Some(_) => Some(u32_of(i, "prevHeight")?),
+            None => None,
+        };
+        vin.push(TxIn { prevout, coinbase, prev_height, witness: witness_of(i.get("witness"))? });
     }
     let mut vout = Vec::new();
     for o in array_of(t, "vout")? {
@@ -141,13 +153,15 @@ mod tests {
            "vin":[{"coinbase":"0101","txinwitness":["00"],"sequence":1}],
            "vout":[{"value":50.00000000,"n":0,"scriptPubKey":{"hex":"51"}}]},
           {"txid":"2222222222222222222222222222222222222222222222222222222222222222",
-           "vin":[{"txid":"1111111111111111111111111111111111111111111111111111111111111111","vout":3,"txinwitness":["aa","bb"]}],
+           "vin":[{"txid":"1111111111111111111111111111111111111111111111111111111111111111","vout":3,"txinwitness":["aa","bb"],
+                   "prevout":{"generated":false,"height":5,"value":0.00001000,"scriptPubKey":{"hex":"51"}}}],
            "vout":[{"value":0.00000330,"n":0,"scriptPubKey":{"hex":"6a0453483230"}}]}]}"#;
         let b = block_from_getblock(text).unwrap();
         assert_eq!(b.height, 7);
         assert_eq!(b.txs.len(), 2);
         assert_eq!(b.txs[0].vin[0].prevout, None);
         assert!(b.txs[0].vin[0].coinbase && !b.txs[1].vin[0].coinbase);
+        assert_eq!((b.txs[0].vin[0].prev_height, b.txs[1].vin[0].prev_height), (None, Some(5)));
         assert_eq!(b.txs[0].vout[0].value, 5_000_000_000);
         assert_eq!(b.txs[1].vin[0].prevout, Some(([0x11; 32], 3)));
         assert_eq!(b.txs[1].vin[0].witness, vec![vec![0xaa], vec![0xbb]]);

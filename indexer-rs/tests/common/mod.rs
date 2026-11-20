@@ -69,11 +69,11 @@ pub fn control_block() -> Vec<u8> {
 }
 
 pub fn input(n: u64) -> TxIn {
-    TxIn { prevout: Some((txid(1_000_000 + n), 0)), coinbase: false, witness: Vec::new() }
+    TxIn { prevout: Some((txid(1_000_000 + n), 0)), coinbase: false, prev_height: None, witness: Vec::new() }
 }
 
 pub fn spending(prev: [u8; 32], vout: u32) -> TxIn {
-    TxIn { prevout: Some((prev, vout)), coinbase: false, witness: Vec::new() }
+    TxIn { prevout: Some((prev, vout)), coinbase: false, prev_height: None, witness: Vec::new() }
 }
 
 /// A transaction with the envelope in an OP_RETURN output carrying `value` sats.
@@ -139,8 +139,20 @@ pub fn deploy(ticker: &str, start: u32) -> Deploy {
     }
 }
 
+/// An indexer with the vectors' test verifier and `N = 0`: a DEPLOY may reveal a commit of any
+/// block up to its own, so that the other rules can be tested from block 1. The maturity rule
+/// has its own test, with the profile's `N = 6`.
 pub fn indexer(activation: u32, deploy_burn: u64) -> Indexer {
-    Indexer::new(Profile::new(activation, deploy_burn), Box::new(TestVerifier))
+    let profile = Profile { deploy_maturity: 0, ..Profile::new(activation, deploy_burn) };
+    Indexer::new(profile, Box::new(TestVerifier))
+}
+
+/// A DEPLOY as §5 wants it: revealed in the witness of input 0, which spends a commit
+/// confirmed at `commit_height`.
+pub fn reveal_tx(n: u64, envelope: &[u8], commit_height: u32) -> Tx {
+    let mut tx = witness_tx(n, envelope);
+    tx.vin[0].prev_height = Some(commit_height);
+    tx
 }
 
 /// Applies a block and returns the names of its events and the reasons of its refusals.

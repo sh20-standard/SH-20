@@ -63,7 +63,8 @@ const sellerKey = publicKey(seller);
 const blocks = new Map(); // height -> txs
 const at = (height, ...txs) => blocks.set(height, [...(blocks.get(height) || []), ...txs]);
 
-const deploy = (seed, env) => ({ txid: txid(seed), env, carrier: env.spend ? 'witness' : 'opreturn' });
+// A DEPLOY reveals a commit confirmed at least N = 6 blocks before (SPEC-WIRE §5): here, a commit long confirmed.
+const deploy = (seed, env) => ({ txid: txid(seed), env, carrier: 'witness', committedAt: A - 10 });
 const mintTx = (seed, ticker, payOut, k = 1) => ({ txid: txid(seed), env: { type: 'MINT', ticker, ...op(seed), k }, ...payOut });
 const spendTx = (seed, env) => ({ txid: txid(seed), env, carrier: 'witness' });
 
@@ -111,7 +112,7 @@ function toTx(t) {
   if (t.spendsLock) vin.push({ txid: t.spendsLock, vout: 0, witness: [Buffer.alloc(64, 3)] });
   if (t.env) {
     const env = serializeEnvelope(t.env);
-    if (t.carrier === 'witness') vin.unshift({ txid: txid('reveal/' + t.txid), vout: 0, witness: witness(env) });
+    if (t.carrier === 'witness') vin.unshift({ txid: txid('reveal/' + t.txid), vout: 0, witness: witness(env), ...(t.committedAt !== undefined ? { prevHeight: t.committedAt } : {}) });
     else vout.push({ value: t.burnSats ?? 0n, script: opReturn(env) });
   }
   vin.push(fee(t.txid));
