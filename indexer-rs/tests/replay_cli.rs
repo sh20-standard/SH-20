@@ -94,20 +94,34 @@ fn replay_prints_the_vectors_digests() {
         .iter()
         .map(|a| format!("{} {}", a["height"], a["digest"].as_str().unwrap()))
         .collect();
-    let (ok, stdout, stderr) =
-        replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--maturity", "3", "--verifier", "test"]);
+    let (ok, stdout, stderr) = replay(
+        &dir,
+        &["--activation", "1", "--deploy-burn", "1000", "--window", "12", "--maturity", "3", "--verifier", "test"],
+    );
     assert!(ok, "{stderr}");
     assert_eq!(stdout.lines().collect::<Vec<_>>(), want);
-    assert!(stderr.contains("A = 1, D = 1000, W = 100, K_min = 1, N = 3"));
+    assert!(stderr.contains("A = 1, D = 1000, W = 12, K_min = 1, N = 3"));
 
     // --json gives what the vectors give for each block
     let (ok, stdout, _) = replay(
         &dir,
-        &["--activation", "1", "--deploy-burn", "1000", "--maturity", "3", "--verifier", "test", "--json"],
+        &[
+            "--activation",
+            "1",
+            "--deploy-burn",
+            "1000",
+            "--window",
+            "12",
+            "--maturity",
+            "3",
+            "--verifier",
+            "test",
+            "--json",
+        ],
     );
     assert!(ok);
     let lines: Vec<Value> = stdout.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
-    assert_eq!(lines.len(), 13);
+    assert_eq!(lines.len(), 17);
     for (got, a) in lines.iter().zip(sc["after"].as_array().unwrap()) {
         for key in ["height", "root", "events", "eventsH", "digest"] {
             assert_eq!(got[key], a[key], "{key} of block {}", a["height"]);
@@ -118,17 +132,22 @@ fn replay_prints_the_vectors_digests() {
     assert_eq!(refused.len(), want_refused.len());
     for (got, want) in refused.iter().zip(want_refused) {
         assert_eq!(got["txid"], want["txid"]);
+        // in a batch, the index of the refused envelope
+        assert_eq!(got.get("envelope"), want.get("envelope"));
     }
+    assert_eq!(refused.iter().filter(|r| r.get("envelope").is_some()).count(), 1);
 
     // without a verifier every spend is refused: the digests leave the vectors' at block 2
-    let (ok, stdout, _) = replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--maturity", "3"]);
+    let (ok, stdout, _) =
+        replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--window", "12", "--maturity", "3"]);
     assert!(ok);
     let got: Vec<&str> = stdout.lines().collect();
     assert_eq!(got[0], want[0]);
     assert_ne!(got[1], want[1]);
 
     // another N: the GENESIS record differs, and so does every digest
-    let (ok, stdout, _) = replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--verifier", "test"]);
+    let (ok, stdout, _) =
+        replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--window", "12", "--verifier", "test"]);
     assert!(ok);
     assert_ne!(stdout.lines().next().unwrap(), want[0]);
 
@@ -146,16 +165,20 @@ fn replay_prints_the_vectors_digests() {
         }
         std::fs::write(no_heights.join(format!("{}.json", b["height"])), getblock_json(&b)).unwrap();
     }
-    let (ok, stdout, stderr) =
-        replay(&no_heights, &["--activation", "1", "--deploy-burn", "1000", "--maturity", "3", "--verifier", "test"]);
+    let (ok, stdout, stderr) = replay(
+        &no_heights,
+        &["--activation", "1", "--deploy-burn", "1000", "--window", "12", "--maturity", "3", "--verifier", "test"],
+    );
     assert!(!ok);
     assert_eq!(stdout.lines().collect::<Vec<_>>(), want[..3]);
     assert!(stderr.contains("block 4") && stderr.contains("getblock <hash> 3"), "{stderr}");
 
     // a missing block stops the replay
     std::fs::remove_file(dir.join("block-95.json")).unwrap();
-    let (ok, stdout, stderr) =
-        replay(&dir, &["--activation", "1", "--deploy-burn", "1000", "--maturity", "3", "--verifier", "test"]);
+    let (ok, stdout, stderr) = replay(
+        &dir,
+        &["--activation", "1", "--deploy-burn", "1000", "--window", "12", "--maturity", "3", "--verifier", "test"],
+    );
     assert!(!ok);
     assert_eq!(stdout.lines().count(), 3);
     assert!(stderr.contains("expected block 4, got block 5"), "{stderr}");

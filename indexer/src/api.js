@@ -107,15 +107,19 @@ export function apiHandler(indexer, { network } = {}) {
       }
       return out;
     }],
-    // One SH-20 transaction: its accepted event (or rejection reason) and the notes it created.
+    // One SH-20 transaction: its accepted event (or rejection reason) and the notes it created. A batch of TRANSFERs
+    // has several of each: `events` and `rejections` list them all, `event` and `rejected` keep the first.
     [/^\/tx\/([0-9a-f]{64})$/, (_, [txid]) => {
       const height = ix.txIndex.get(txid);
       if (height === undefined) return 404;
       const b = ix.history.get(height);
+      const events = b.events.filter((e) => e.txid === txid);
+      const rejections = b.rejected.filter((e) => e.txid === txid);
       return {
         txid, height,
-        event: b.events.find((e) => e.txid === txid) ?? null,
-        rejected: b.rejected.find((e) => e.txid === txid)?.reason ?? null,
+        event: events[0] ?? null,
+        rejected: rejections[0]?.reason ?? null,
+        events, rejections,
         notes: ix.notes.filter((n) => n.txid === txid),
       };
     }],

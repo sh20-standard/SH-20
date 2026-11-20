@@ -100,13 +100,14 @@ test('vectors: the nine public inputs of every verifier call match the envelope 
   const v = JSON.parse(readFileSync(new URL('../vectors/v0.3.json', import.meta.url), 'utf8'));
   const hex = (x) => x.toString(16).padStart(64, '0');
   const roots = new Map(v.scenario.after.map((b) => [b.height, b.root]));
-  assert.equal(v.scenario.verifierCalls.length, 16);
+  assert.equal(v.scenario.verifierCalls.length, 18);
   assert.equal(v.reorg.verifierCalls.length, 1);
   const calls = [...v.scenario.verifierCalls.map((c) => [c, v.scenario.blocks]), ...v.reorg.verifierCalls.map((c) => [c, v.reorg.blocks])];
   for (const [call, blocks] of calls) {
     const raw = blocks.find((b) => b.height === call.height).txs.find((x) => x.txid === call.txid);
     const tx = { txid: raw.txid, vin: raw.vin.map((i) => ({ ...i, witness: i.witness.map((w) => Buffer.from(w, 'hex')) })), vout: raw.vout.map((o) => ({ value: BigInt(o.value), script: Buffer.from(o.script, 'hex') })) };
-    const { env, body } = parseEnvelope(extractEnvelope(tx).bytes);
+    const found = extractEnvelope(tx);
+    const { env, body } = parseEnvelope((call.envelope === undefined ? found : found.batch[call.envelope]).bytes);
     const s = env.spend;
     const bodyHash = BigInt('0x' + sha256(Buffer.from(D.BODY), body).toString('hex')) % FR;
     const [root, nf0, nf1, l0, l1, l2, bh, vPub, tPub] = call.publicInputs;

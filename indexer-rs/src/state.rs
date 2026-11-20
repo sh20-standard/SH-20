@@ -1,7 +1,7 @@
 //! The state machine: acceptance rules (SPEC-WIRE §5), block processing and digest (§6),
 //! and the per-block undo log for reorgs.
 
-use crate::chain::{burned_sats, counted, is_p2tr_to, paid_to, Block, Carried, Carrier, Tx};
+use crate::chain::{burned_sats, counted, is_batch, is_p2tr_to, paid_to, Block, Carried, Carrier, Tx};
 use crate::envelope::{body_hash_of, DecodeError, Deploy, Envelope, Spend, Ticker};
 use crate::events::{encode_all, Event, Outcome, Spent};
 use crate::field::{fr_from_le, fr_to_le, hex, public_leaf, sha256, Bytes32};
@@ -106,6 +106,9 @@ pub struct Listing {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rejection {
     pub txid: Bytes32,
+    /// In a batch, the index of the refused envelope among the transaction's counted
+    /// envelopes, in the order of the tapscript; `None` outside a batch.
+    pub envelope: Option<u32>,
     pub reason: &'static str,
 }
 
@@ -456,20 +459,24 @@ impl Indexer {
             }
         }
 
-        // one counted envelope is applied; two or more refuse the transaction
-        let outcome: Option<Result<Event, Reject>> = match found {
-            [] => None,
-            [one] => Some(match Envelope::decode(&one.bytes) {
-                Ok(env) => self.apply_envelope(h, tx, &env, one, &spent_locks),
-                Err(DecodeError::Rejected(reason)) => Err(reason),
-                Err(_) => Err("not an SH-20 v0 envelope"),
-            }),
-            _ => Some(Err("more than one envelope")),
-        };
-        match outcome {
-            Some(Ok(event)) => events.push(event),
-            Some(Err(reason)) => rejected.push(Rejection { txid: tx.txid, reason }),
-            None => {}
+        // one counted envelope is applied; a batch applies each of its envelopes alone, in
+        // order; any other transaction with two or more is refused
+        let txid = tx.txid;
+        match found {
+            [] => {}
+            [one] => match self.decode_and_apply(h, tx, one, &spent_locks) {
+                Ok(event) => events.push(event),
+                Err(reason) => rejected.push(Rejection { txid, envelope: None, reason }),
+            },
+            batch if is_batch(batch) => {
+                for (index, one) in batch.iter().enumerate() {
+                    match self.decode_and_apply(h, tx, one, &spent_locks) {
+                        Ok(event) => events.push(event),
+                        Err(reason) => rejected.push(Rejection { txid, envelope: Some(index as u32), reason }),
+                    }
+                }
+            }
+            _ => rejected.push(Rejection { txid, envelope: None, reason: "more than one envelope" }),
         }
 
         // a lock spent with no TAKE closes its listing
@@ -478,6 +485,14 @@ impl Indexer {
                 self.set_status(list_txid, ListingStatus::Closed);
                 events.push(Event::Closed { txid: tx.txid, list_txid });
             }
+        }
+    }
+
+    fn decode_and_apply(&mut self, h: u32, tx: &Tx, one: &Carried, spent_locks: &[Bytes32]) -> Result<Event, Reject> {
+        match Envelope::decode(&one.bytes) {
+            Ok(env) => self.apply_envelope(h, tx, &env, one, spent_locks),
+            Err(DecodeError::Rejected(reason)) => Err(reason),
+            Err(_) => Err("not an SH-20 v0 envelope"),
         }
     }
 

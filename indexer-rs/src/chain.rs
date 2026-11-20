@@ -1,6 +1,6 @@
 //! What the indexer reads from Bitcoin: blocks, transactions, and the two carriers (SPEC-WIRE §3).
 
-use crate::envelope::{MAGIC, VERSION};
+use crate::envelope::{MAGIC, TYPE_TRANSFER, VERSION};
 use crate::field::Bytes32;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -220,10 +220,20 @@ pub fn carried(tx: &Tx) -> Vec<Carried> {
 }
 
 /// The envelopes of a transaction that count (§3): every envelope found, except one whose
-/// fifth byte (the version) exists and is not `0x00`. One is applied; two or more refuse the
-/// transaction.
+/// fifth byte (the version) exists and is not `0x00`. One is applied; two or more are a batch
+/// (`is_batch`) or refuse the transaction.
 pub fn counted(tx: &Tx) -> Vec<Carried> {
     carried(tx).into_iter().filter(|c| c.bytes.len() < 5 || c.bytes[4] == VERSION).collect()
+}
+
+/// True when counted envelopes form a **batch** (§3): two or more, all in the witness, all
+/// with the type byte `0x03` (TRANSFER). A batch applies each of its envelopes alone, in the
+/// order of the tapscript. The type byte decides, not the decoding: an envelope of type `0x03`
+/// that does not decode is in the batch and is refused alone, while one too short to have a
+/// type byte keeps the transaction from being a batch.
+pub fn is_batch(counted: &[Carried]) -> bool {
+    counted.len() >= 2
+        && counted.iter().all(|c| c.carrier == Carrier::Witness && c.bytes.get(5) == Some(&TYPE_TRANSFER))
 }
 
 /// The bytes of `carried`.

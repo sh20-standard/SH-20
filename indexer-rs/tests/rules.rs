@@ -9,7 +9,7 @@ mod common;
 
 use common::*;
 use secp256k1::{Keypair, Secp256k1, SecretKey};
-use sh20_indexer::chain::{envelopes, tapscript as tapscript_of, witness_envelopes, Tx, TxIn};
+use sh20_indexer::chain::{counted, envelopes, is_batch, tapscript as tapscript_of, witness_envelopes, Tx, TxIn};
 use sh20_indexer::envelope::{body_hash_of, Deploy, Envelope, Ticker};
 use sh20_indexer::events::{Event, Outcome};
 use sh20_indexer::field::{fr_to_le, sha256, unhex, unhex32};
@@ -283,6 +283,131 @@ fn any_transaction_can_carry_an_envelope() {
         apply(&mut ix, 2, vec![witness_tx(2, &mint("SH20", 2, None)), op_return_tx(3, &transfer(1, 1), 0)]);
     assert_eq!(events, ["MINT", "TRANSFER"]);
     assert!(rejected.is_empty());
+}
+
+// ---------------------------------------------------------------- batches
+
+/// A batch (§3): two or more counted envelopes, all in the witness, all of type 0x03. Each
+/// applies alone, in the order of the tapscript, and is accepted or refused by itself.
+#[test]
+fn batch_of_transfers() {
+    let mut ix = indexer(1, 0);
+    let mut bad_proof = spend(0, 4);
+    bad_proof.proof[0] ^= 1;
+    let mut cut_short = transfer(0, 5);
+    cut_short.pop(); // type byte 0x03, and it does not decode
+    let batch = batch_tx(
+        1,
+        &[
+            transfer(0, 1),
+            transfer(0, 2),
+            transfer(0, 1), // the first one again
+            Envelope::Transfer { spend: bad_proof }.encode(),
+            cut_short,
+            transfer(1, 6), // anchored at this very block
+            transfer(0, 7),
+        ],
+    );
+    assert!(is_batch(&counted(&batch)));
+    let r = ix.apply_block(&block(1, vec![batch.clone()])).unwrap();
+    // the accepted ones, in order, each with the batch's txid and the next free leaves
+    let transfers: Vec<([u8; 32], [u32; 3])> = r.events[1..]
+        .iter()
+        .map(|e| match e {
+            Event::Transfer { txid, spent } => (*txid, spent.pos),
+            other => panic!("{}", other.name()),
+        })
+        .collect();
+    assert_eq!(transfers, [(batch.txid, [0, 1, 2]), (batch.txid, [3, 4, 5]), (batch.txid, [6, 7, 8])]);
+    // the refused ones, each alone, by its index in the transaction
+    let refused: Vec<(Option<u32>, &str)> = r.rejected.iter().map(|x| (x.envelope, x.reason)).collect();
+    assert_eq!(
+        refused,
+        [
+            (Some(2), "nullifier already seen"),
+            (Some(3), "invalid proof"),
+            (Some(4), "truncated spend section"),
+            (Some(5), "anchor too recent")
+        ]
+    );
+    assert!(r.rejected.iter().all(|x| x.txid == batch.txid));
+    assert_eq!(ix.tree_size(), 9);
+    // a refused envelope recorded nothing: its nullifiers are still free
+    assert!(!ix.nullifier_seen(&spend(0, 4).nf[0]));
+    assert_eq!(apply(&mut ix, 2, vec![witness_tx(2, &transfer(0, 4))]).0, ["TRANSFER"]);
+}
+
+#[test]
+fn what_is_a_batch_and_what_is_not() {
+    let (a, b) = (transfer(0, 1), transfer(0, 2));
+    let mint_env = mint("SH20", 3, None);
+    let outcome = |tx: Tx| {
+        let mut ix = indexer(1, 0);
+        let r = ix.apply_block(&block(1, vec![tx])).unwrap();
+        let events: Vec<&str> = r.events[1..].iter().map(|e| e.name()).collect();
+        let refused: Vec<Option<u32>> = r.rejected.iter().map(|x| x.envelope).collect();
+        (events, refused)
+    };
+    let whole = (vec![], vec![None]); // the transaction refused as one
+
+    // two TRANSFERs in the witness: a batch
+    assert_eq!(outcome(batch_tx(1, &[a.clone(), b.clone()])), (vec!["TRANSFER", "TRANSFER"], vec![]));
+    // one TRANSFER is not a batch: its refusal carries no index
+    assert_eq!(outcome(witness_tx(1, &transfer(1, 1))), (vec![], vec![None]));
+    // another type among them
+    assert_eq!(outcome(batch_tx(1, &[a.clone(), mint_env.clone()])), whole);
+    assert_eq!(outcome(batch_tx(1, &[mint_env.clone(), mint("SH20", 4, None)])), whole);
+    let burn = Envelope::Burn { ticker: Ticker::SH20, v_pub: 1, spend: spend(0, 5) }.encode();
+    assert_eq!(outcome(batch_tx(1, &[a.clone(), burn])), whole);
+    // one of them outside the witness
+    let mut with_op_return = witness_tx(1, &a);
+    with_op_return.vout.push(out(0, &op_return_script(&b)));
+    assert_eq!(outcome(with_op_return), whole);
+    let mut both_op_return = op_return_tx(1, &a, 0);
+    both_op_return.vout.push(out(0, &op_return_script(&b)));
+    assert_eq!(outcome(both_op_return), whole);
+    let mut batch_and_mint = batch_tx(1, &[a.clone(), b.clone()]);
+    batch_and_mint.vout.push(out(0, &op_return_script(&mint_env)));
+    assert_eq!(outcome(batch_and_mint), whole);
+
+    // the type byte decides, not the decoding: `SH20 00 03` and nothing else is in the batch,
+    // refused alone; an envelope with no type byte keeps the transaction from being a batch
+    assert_eq!(outcome(batch_tx(1, &[a.clone(), b"SH20\x00\x03".to_vec()])), (vec!["TRANSFER"], vec![Some(1)]));
+    assert_eq!(outcome(batch_tx(1, &[a.clone(), b"SH20\x00".to_vec()])), whole);
+    assert_eq!(outcome(batch_tx(1, &[a.clone(), b"SH20".to_vec()])), whole);
+
+    // an envelope of another version is not counted: it neither breaks a batch nor makes one,
+    // and the index of a refusal counts the counted envelopes only
+    let mut v1 = a.clone();
+    v1[4] = 1;
+    assert_eq!(outcome(batch_tx(1, &[a.clone(), v1.clone(), b.clone()])), (vec!["TRANSFER", "TRANSFER"], vec![]));
+    assert_eq!(outcome(batch_tx(1, &[a.clone(), v1.clone()])), (vec!["TRANSFER"], vec![]));
+    assert_eq!(outcome(batch_tx(1, &[v1.clone(), transfer(1, 6), b.clone()])), (vec!["TRANSFER"], vec![Some(0)]));
+    let mut with_v1_out = batch_tx(1, &[a.clone(), b.clone()]);
+    with_v1_out.vout.push(out(0, &op_return_script(&v1)));
+    assert_eq!(outcome(with_v1_out), (vec!["TRANSFER", "TRANSFER"], vec![]));
+
+    // the witness of a coinbase is not read, batch or not
+    let mut coinbase = batch_tx(1, &[a.clone(), b.clone()]);
+    coinbase.vin[0].coinbase = true;
+    assert_eq!(outcome(coinbase), (vec![], vec![]));
+}
+
+/// A batch that spends a lock: its envelopes first, then the listing it closes.
+#[test]
+fn batch_then_closed() {
+    let mut ix = indexer(1, 0);
+    apply(&mut ix, 1, vec![op_return_tx(1, &mint("SH20", 1, None), 0)]);
+    apply(&mut ix, 2, vec![list_tx(10, 400, 5_000, &p2tr(&[3; 32]), 330)]);
+    let mut batch = batch_tx(20, &[transfer(2, 20), transfer(2, 20), transfer(2, 21)]);
+    batch.vin.push(spending(txid(10), 1));
+    let r = ix.apply_block(&block(3, vec![batch])).unwrap();
+    let names: Vec<&str> = r.events.iter().map(|e| e.name()).collect();
+    assert_eq!(names, ["TRANSFER", "TRANSFER", "CLOSED"]);
+    assert_eq!(r.events[2], Event::Closed { txid: txid(20), list_txid: txid(10) });
+    assert_eq!(r.rejected.iter().map(|x| x.envelope).collect::<Vec<_>>(), [Some(1)]);
+    assert_eq!(ix.listing(&txid(10)).unwrap().status, ListingStatus::Closed);
+    assert!(ix.supply_holds());
 }
 
 // ---------------------------------------------------------------- blocks and digest

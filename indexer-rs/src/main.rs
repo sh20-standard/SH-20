@@ -127,7 +127,11 @@ fn run(o: &Options) -> Result<(), String> {
             let rejected: Vec<String> = r
                 .rejected
                 .iter()
-                .map(|x| format!("{{\"txid\":\"{}\",\"reason\":{}}}", hex(&x.txid), json_string(x.reason)))
+                .map(|x| {
+                    // in a batch, which envelope of the transaction was refused
+                    let envelope = x.envelope.map(|i| format!("\"envelope\":{i},")).unwrap_or_default();
+                    format!("{{\"txid\":\"{}\",{}\"reason\":{}}}", hex(&x.txid), envelope, json_string(x.reason))
+                })
                 .collect();
             println!(
                 "{{\"height\":{},\"root\":\"{}\",\"events\":[{}],\"eventsH\":\"{}\",\"digest\":\"{}\",\"rejected\":[{}]}}",

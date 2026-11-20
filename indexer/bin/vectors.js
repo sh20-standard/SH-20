@@ -30,11 +30,16 @@ const push = (d) => {
   return Buffer.concat([Buffer.from([0x4d]), l, d]);
 };
 const opReturn = (d) => Buffer.concat([Buffer.from([0x6a]), push(d)]);
-const witness = (env) => {
-  const rest = env.subarray(4);
-  const parts = [Buffer.from([0x20]), Buffer.alloc(32, 7), Buffer.from([0xac, 0x00, 0x63]), push(Buffer.from('SH20'))];
-  for (let i = 0; i < rest.length; i += 520) parts.push(push(rest.subarray(i, i + 520)));
-  parts.push(Buffer.from([0x68]));
+// The witness of input 0: <sig> <tapscript> <control block>, the tapscript `<key> OP_CHECKSIG` then one envelope per
+// argument, each `OP_0 OP_IF "SH20" <pushes of ≤ 520 bytes> OP_ENDIF` (several make a batch of TRANSFERs).
+const witness = (...envs) => {
+  const parts = [Buffer.from([0x20]), Buffer.alloc(32, 7), Buffer.from([0xac])];
+  for (const env of envs) {
+    const rest = env.subarray(4);
+    parts.push(Buffer.from([0x00, 0x63]), push(Buffer.from('SH20')));
+    for (let i = 0; i < rest.length; i += 520) parts.push(push(rest.subarray(i, i + 520)));
+    parts.push(Buffer.from([0x68]));
+  }
   return [Buffer.alloc(64, 1), Buffer.concat(parts), Buffer.concat([Buffer.from([0xc0]), Buffer.alloc(32, 9)])];
 };
 const spend = (seed, anchorHeight) => ({
@@ -111,6 +116,10 @@ const envs = {
   // The reorg: blocks 16 and 17 replaced. 16' spends the nullifiers of transferR again, which only a rollback allows.
   transferR2: { type: 'TRANSFER', spend: { ...spend('transfer-r2', 15), nf: spend('transfer-r', 15).nf } },
   mintBeta2: { type: 'MINT', ticker: 'BETA', ...op('mint-beta-2') },
+  // Block 17: a batch, three TRANSFERs in one tapscript; the second spends a nullifier of the first and is refused alone.
+  batchA: { type: 'TRANSFER', spend: spend('batch-a', 16) },
+  batchB: { type: 'TRANSFER', spend: { ...spend('batch-b', 16), nf: [spend('batch-a', 16).nf[0], fr('batch-b/x')] } },
+  batchC: { type: 'TRANSFER', spend: spend('batch-c', 16) },
 };
 const ser = Object.fromEntries(Object.entries(envs).map(([k, v]) => [k, serializeEnvelope(v)]));
 
@@ -184,7 +193,8 @@ const txs = [
     { txid: txid('mint-beta'), vin: [input('fp')], vout: [{ value: 0n, script: opReturn(ser.mintBeta) }] },
     wit('transferR'),
   ],
-  [], // block 17: the team notes of BETA and PAY2, in that order
+  // Block 17: the team notes of BETA and PAY2, in that order, then a batch of three TRANSFERs.
+  [{ txid: txid('batch-tx'), vin: [{ txid: txid('fr'), vout: 0, witness: witness(ser.batchA, ser.batchB, ser.batchC) }], vout: [] }],
 ];
 const blocks = txs.map((t, i) => ({ height: i + 1, hash: `b${i + 1}`, txs: t }));
 
@@ -197,6 +207,7 @@ const verifier = {
     verifierCalls.push({
       height: ix._ctx.height,
       txid: ix._ctx.txid,
+      ...(ix._ctx.envelope !== undefined ? { envelope: ix._ctx.envelope } : {}),
       publicInputs: [a.root, ...a.nullifiers, ...a.outLeaves, a.bodyHash, a.vPub, a.tPub].map((x) => hexFr(x)),
     });
     return Buffer.from(a.proof).equals(PROOF);
@@ -247,8 +258,9 @@ const expected = [
   { height: 14, txid: txid('nfTwice-tx'), reason: 'duplicate nullifier' },
   { height: 16, txid: txid('mint-pay2-opreturn'), reason: 'mint not paid' },
   { height: 16, txid: txid('mint-pay2-short'), reason: 'mint not paid' },
+  { height: 17, txid: txid('batch-tx'), envelope: 1, reason: 'nullifier already spent' },
 ];
-const rejected = results.flatMap((r) => r.rejected.map((x) => ({ height: r.height, txid: x.txid, reason: x.reason })));
+const rejected = results.flatMap((r) => r.rejected.map((x) => ({ height: r.height, txid: x.txid, ...(x.envelope !== undefined ? { envelope: x.envelope } : {}), reason: x.reason })));
 if (JSON.stringify(rejected) !== JSON.stringify(expected)) throw new Error(`unexpected rejections: ${JSON.stringify(rejected)}`);
 
 const txJson = (t) => ({
@@ -277,6 +289,9 @@ const wtx = (script, extra = {}) => ({
 });
 const otx = (...scripts) => ({ vin: [{ witness: [] }], vout: scripts.map((script) => ({ value: 0n, script })) });
 const v1 = Buffer.concat([Buffer.from('SH20'), Buffer.from([0x01, 0x02]), Buffer.alloc(36, 3)]);
+const T1 = ser.batchA;
+const T2 = ser.batchC;
+const T0 = Buffer.concat([Buffer.from('SH20'), Buffer.from([0x00, 0x03]), Buffer.alloc(10)]); // type 0x03, far too short to decode
 const carrierCases = [
   ['opreturn', otx(opReturn(M)), M],
   ['opreturn: a 42-byte push written with OP_PUSHDATA1 is not minimal', otx(Buffer.concat([Buffer.from([0x6a, 0x4c, M.length]), M])), 'none'],
@@ -302,14 +317,22 @@ const carrierCases = [
   ['an envelope of version 1 alone', otx(opReturn(v1)), 'none'],
   ['coinbase: its OP_RETURN outputs are read', { vin: [{ coinbase: true }], vout: [{ value: 0n, script: opReturn(M) }] }, M],
   ['coinbase: the witness of its input is not read', { vin: [{ coinbase: true, witness: [SIG, plain, CONTROL] }], vout: [] }, 'none'],
+  ['witness: two TRANSFERs are a batch', wtx(witness(T1, T2)[1]), [T1, T2]],
+  ['witness: a TRANSFER and a MINT are not a batch', wtx(witness(T1, M)[1]), 'many'],
+  ['a TRANSFER in the witness and one in an OP_RETURN are not a batch', { ...wtx(witness(T1)[1]), vout: [{ value: 0n, script: opReturn(T2) }] }, 'many'],
+  ['witness: a TRANSFER beside an envelope of version 1 is alone, not a batch', wtx(Buffer.concat([witness(T1)[1], env0(push(v1.subarray(4))).subarray(KEY.length)])), T1],
+  // B1 and B2 of SPEC-GAPS: a batch is decided by the type byte alone, and an envelope of another version takes no index.
+  ['witness: an envelope of type 0x03 that does not decode is still in the batch (it will be refused alone)', wtx(witness(T1, T0)[1]), [T1, T0]],
+  ['witness: SH20 with no type byte beside a TRANSFER is not a batch', wtx(witness(T1, Buffer.from('SH20'))[1]), 'many'],
+  ['witness: an envelope of version 1 between two TRANSFERs takes no place in the batch', wtx(Buffer.concat([witness(T1)[1], env0(push(v1.subarray(4))).subarray(KEY.length), witness(T2)[1].subarray(KEY.length)])), [T1, T2]],
   ['opreturn: a push of 65,536 bytes is minimal only with OP_PUSHDATA4, so it counts beside a second envelope', otx(opReturn(M), Buffer.concat([Buffer.from([0x6a, 0x4e, 0x00, 0x00, 0x01, 0x00]), Buffer.from('SH20'), Buffer.alloc(65532)])), 'many'],
 ];
 const carriers = carrierCases.map(([name, tx, expect]) => {
   const t = { txid: txid('carrier/' + name), ...tx };
   const found = extractEnvelope(t);
-  const got = found.none ? 'none' : found.error ? 'many' : found.bytes.toString('hex');
-  const want = Buffer.isBuffer(expect) ? expect.toString('hex') : expect;
-  if (got !== want) throw new Error(`carrier case "${name}": expected ${want}, got ${got}`);
+  const got = found.none ? 'none' : found.error ? 'many' : found.batch ? found.batch.map((x) => x.bytes.toString('hex')) : found.bytes.toString('hex');
+  const want = Buffer.isBuffer(expect) ? expect.toString('hex') : Array.isArray(expect) ? expect.map((x) => x.toString('hex')) : expect;
+  if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error(`carrier case "${name}": expected ${want}, got ${got}`);
   return {
     name,
     tx: {
@@ -327,8 +350,8 @@ const out = {
     envelopes: 'Each envelope of the scenario and of the reorg: its bytes, and for a spend its bodyHash (SPEC-WIRE §4: SHA256("sh20/v0/body" ‖ body) mod r, body from "SH20" up to the proof).',
     claim: 'One CLAIM: the message SHA256("sh20/v0/claim" ‖ listTxid ‖ npk) and its BIP340 signature by lockKey, with 32 zero bytes of auxiliary randomness.',
     preActivation: 'digest_{A-1}: the digest an indexer starts from at block A.',
-    carriers: 'One transaction each, and what SPEC-WIRE §3 finds in it. expect is the hex of the one counted envelope, "none" when no envelope is counted (an envelope of another version alone is "none"), or "many" when two or more are counted (the transaction is refused). Inputs give their witness only; their outpoints play no part. {"coinbase": true} is the input of a coinbase; its witness, when given, is not read.',
-    'scenario.verifierCalls': 'Every call to the verifier, in order, with its nine public inputs in the order of SPEC-WIRE §4: R[anchorHeight], nf0, nf1, leaf0, leaf1, leaf2, bodyHash, vPub, tPub. The proof is checked last (§5), so a spend refused for another reason is not in the list. An anchor below A is checked against the empty root.',
+    carriers: 'One transaction each, and what SPEC-WIRE §3 finds in it. expect is the hex of the one counted envelope, "none" when no envelope is counted (an envelope of another version alone is "none"), a list of hex when they are a batch (two or more TRANSFERs, all in the witness: each applies alone), or "many" when two or more are counted otherwise (the transaction is refused). Inputs give their witness only; their outpoints play no part. {"coinbase": true} is the input of a coinbase; its witness, when given, is not read.',
+    'scenario.verifierCalls': 'Every call to the verifier, in order, with its nine public inputs in the order of SPEC-WIRE §4: R[anchorHeight], nf0, nf1, leaf0, leaf1, leaf2, bodyHash, vPub, tPub. The proof is checked last (§5), so a spend refused for another reason is not in the list. In a batch, envelope is the index of the envelope in the transaction (also in rejected). An anchor below A is checked against the empty root.',
     'scenario.after': 'For each block: root R[H], the event types, eventsH, and digest_H.',
     'scenario.blocks': 'The transactions of each block. vin[].prevHeight is the height of the block that confirmed the output an input spends, given where a DEPLOY needs it (SPEC-WIRE §5: its commit must be N = deployMaturity blocks old; here N = 3). The window is W = 12 here (anchorWindow), so blocks 12 and 14 reach its lower end.',
     reorg: 'After the scenario, blocks 16 and 17 give way to the two blocks given here: roll back to rollbackTo, then apply them. 16\' spends the nullifiers of the TRANSFER of the first 16 again, which only a rollback allows. after is what an indexer that never saw the first 16 and 17 computes.',
