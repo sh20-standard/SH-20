@@ -291,6 +291,7 @@ const otx = (...scripts) => ({ vin: [{ witness: [] }], vout: scripts.map((script
 const v1 = Buffer.concat([Buffer.from('SH20'), Buffer.from([0x01, 0x02]), Buffer.alloc(36, 3)]);
 const T1 = ser.batchA;
 const T2 = ser.batchC;
+const T0 = Buffer.concat([Buffer.from('SH20'), Buffer.from([0x00, 0x03]), Buffer.alloc(10)]); // type 0x03, far too short to decode
 const carrierCases = [
   ['opreturn', otx(opReturn(M)), M],
   ['opreturn: a 42-byte push written with OP_PUSHDATA1 is not minimal', otx(Buffer.concat([Buffer.from([0x6a, 0x4c, M.length]), M])), 'none'],
@@ -320,6 +321,10 @@ const carrierCases = [
   ['witness: a TRANSFER and a MINT are not a batch', wtx(witness(T1, M)[1]), 'many'],
   ['a TRANSFER in the witness and one in an OP_RETURN are not a batch', { ...wtx(witness(T1)[1]), vout: [{ value: 0n, script: opReturn(T2) }] }, 'many'],
   ['witness: a TRANSFER beside an envelope of version 1 is alone, not a batch', wtx(Buffer.concat([witness(T1)[1], env0(push(v1.subarray(4))).subarray(KEY.length)])), T1],
+  // B1 and B2 of SPEC-GAPS: a batch is decided by the type byte alone, and an envelope of another version takes no index.
+  ['witness: an envelope of type 0x03 that does not decode is still in the batch (it will be refused alone)', wtx(witness(T1, T0)[1]), [T1, T0]],
+  ['witness: SH20 with no type byte beside a TRANSFER is not a batch', wtx(witness(T1, Buffer.from('SH20'))[1]), 'many'],
+  ['witness: an envelope of version 1 between two TRANSFERs takes no place in the batch', wtx(Buffer.concat([witness(T1)[1], env0(push(v1.subarray(4))).subarray(KEY.length), witness(T2)[1].subarray(KEY.length)])), [T1, T2]],
   ['opreturn: a push of 65,536 bytes is minimal only with OP_PUSHDATA4, so it counts beside a second envelope', otx(opReturn(M), Buffer.concat([Buffer.from([0x6a, 0x4e, 0x00, 0x00, 0x01, 0x00]), Buffer.from('SH20'), Buffer.alloc(65532)])), 'many'],
 ];
 const carriers = carrierCases.map(([name, tx, expect]) => {

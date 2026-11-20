@@ -75,8 +75,10 @@ byte (the version) exists and is not `0x00`: it belongs to another version, is n
 A transaction with **one** counted envelope applies it (§5). A transaction whose counted envelopes are two or more, all in
 the witness and all with the type byte `0x03` (TRANSFER), is a **batch**: its envelopes apply one after the other in the
 order of the tapscript, each accepted or refused alone, as if it were the only one (§5), so that a relayer can publish
-several people's transfers in one transaction. No count limit is set beyond Bitcoin's own (a standard transaction holds
-about 470). Any other transaction with **two or more** counted envelopes applies none: it is refused (the listings whose
+several people's transfers in one transaction. Membership is decided by that byte alone: an envelope of type `0x03` that
+does not decode is still in the batch and is refused alone, while one too short to have a type byte is not of type `0x03`.
+Envelopes of another version take no place in a batch; its envelopes are numbered from 0 among the counted ones. No count
+limit is set beyond Bitcoin's own (a standard transaction holds about 470). Any other transaction with **two or more** counted envelopes applies none: it is refused (the listings whose
 locks it spends still close, §6). Any type but DEPLOY (witness only, §5) may use either carrier; a proof-carrying envelope
 (830 bytes for a TRANSFER) costs four times more in an OP_RETURN than in a witness. A coinbase transaction is read like
 any other for its OP_RETURN outputs; the witness of its input is not looked at.

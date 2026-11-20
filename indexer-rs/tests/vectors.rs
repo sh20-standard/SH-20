@@ -500,7 +500,7 @@ fn expected(expect: &Value) -> Found {
 fn carriers() {
     let v = vectors();
     let cases = v["carriers"].as_array().unwrap();
-    assert_eq!(cases.len(), 29);
+    assert_eq!(cases.len(), 32);
     let (mut one, mut none, mut batch, mut many) = (0, 0, 0, 0);
     for c in cases {
         let name = s(c, "name");
@@ -514,7 +514,7 @@ fn carriers() {
             Found::Many => many += 1,
         }
     }
-    assert_eq!((one, none, batch, many), (11, 11, 1, 6));
+    assert_eq!((one, none, batch, many), (11, 11, 3, 7));
 }
 
 /// What the state machine does with each carrier case: nothing without a counted envelope, one

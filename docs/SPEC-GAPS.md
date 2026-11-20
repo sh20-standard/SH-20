@@ -159,6 +159,11 @@ What the text leaves open on batches:
 | B2 | **What `envelope` counts.** `sections` calls it "the index of the envelope in the transaction". With an envelope of another version between two TRANSFERs, is the second one index 1 or 2? | The index among the counted envelopes, from 0, in the order of the tapscript: the envelope of another version takes none. | block 17 gives 0, 1, 2 with nothing in between |
 | B3 | **A batch that spends a lock.** §6 puts the listings a transaction closes after "the accepted envelopes of a batch". Clear, but with no vector. | The batch's events in order, then one CLOSED per lock. | silent |
 
+**Settled (2026-11-21):** the reference indexer chose the same on all three, and `SPEC-WIRE.md` §3 now states B1 and
+B2. Three carrier cases pin them: a `0x03` envelope that does not decode stays in its batch, `SH20` with no type byte
+beside a TRANSFER is refused whole, and an envelope of another version between two TRANSFERs takes no index. B3 still
+has no vector.
+
 B1 can change a digest: an indexer that decided by decoding would refuse the whole transaction where this one
 applies the envelopes that decode. B2 cannot: the index is in `rejected` and `verifierCalls`, not in an event.
 
