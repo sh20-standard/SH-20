@@ -108,17 +108,19 @@ export function apiHandler(indexer, { network } = {}) {
       return out;
     }],
     // One SH-20 transaction: its accepted event (or rejection reason) and the notes it created. A batch of TRANSFERs
-    // has several of each: `events` and `rejections` list them all, `event` and `rejected` keep the first.
+    // has a verdict per envelope, none for the whole: `events` and `rejections` list them all (each with its `envelope`),
+    // and `event` and `rejected` are null, so that a reader written before batches does not take one for the other.
     [/^\/tx\/([0-9a-f]{64})$/, (_, [txid]) => {
       const height = ix.txIndex.get(txid);
       if (height === undefined) return 404;
       const b = ix.history.get(height);
       const events = b.events.filter((e) => e.txid === txid);
       const rejections = b.rejected.filter((e) => e.txid === txid);
+      const batch = [...events, ...rejections].some((e) => e.envelope !== undefined);
       return {
         txid, height,
-        event: events[0] ?? null,
-        rejected: rejections[0]?.reason ?? null,
+        event: batch ? null : events[0] ?? null,
+        rejected: batch ? null : rejections[0]?.reason ?? null,
         events, rejections,
         notes: ix.notes.filter((n) => n.txid === txid),
       };

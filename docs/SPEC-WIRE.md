@@ -74,11 +74,16 @@ Anything that does not match a carrier exactly carries no envelope. Every envelo
 byte (the version) exists and is not `0x00`: it belongs to another version, is not counted and has no effect.
 A transaction with **one** counted envelope applies it (§5). A transaction whose counted envelopes are two or more, all in
 the witness and all with the type byte `0x03` (TRANSFER), is a **batch**: its envelopes apply one after the other in the
-order of the tapscript, each accepted or refused alone, as if it were the only one (§5), so that a relayer can publish
-several people's transfers in one transaction. Membership is decided by that byte alone: an envelope of type `0x03` that
+order of the tapscript, each accepted or refused alone (§5), against the state the envelopes before it left, so that a
+relayer can publish several people's transfers in one transaction. Membership is decided by that byte alone: an envelope of type `0x03` that
 does not decode is still in the batch and is refused alone, while one too short to have a type byte is not of type `0x03`.
 Envelopes of another version take no place in a batch; its envelopes are numbered from 0 among the counted ones. No count
-limit is set beyond Bitcoin's own (a standard transaction holds about 470). Any other transaction with **two or more** counted envelopes applies none: it is refused (the listings whose
+limit is set beyond Bitcoin's own (a standard transaction holds about 470).
+
+For wallet and relayer authors, two consequences of the rule: a batch is not atomic (two TRANSFERs in one batch are not a
+swap: either can be dropped, published alone or beaten by another spend of its notes), and a TRANSFER is not bound to its
+transaction (whoever holds its bytes can publish it, alone or in any batch, until block `anchorHeight + W` or until one of
+its nullifiers is spent). Follow a transfer by its nullifiers, never by a txid. Any other transaction with **two or more** counted envelopes applies none: it is refused (the listings whose
 locks it spends still close, §6). Any type but DEPLOY (witness only, §5) may use either carrier; a proof-carrying envelope
 (830 bytes for a TRANSFER) costs four times more in an OP_RETURN than in a witness. A coinbase transaction is read like
 any other for its OP_RETURN outputs; the witness of its input is not looked at.
@@ -104,7 +109,9 @@ After parsing, re-serialising must give the same bytes; trailing bytes are rejec
 - `ticker`: 4 ASCII characters `[A-Z0-9]`, in every type that carries one; anything else is rejected. `payMode`: 0 none, 1 burn,
   2 pay to `payScript`; any other value is rejected.
 - `payScript`: 1 to 34 bytes, required with payMode 2 and in a LIST; with payMode 0 or 1, `psLen` is 0. An empty
-  `payScript` with payMode 2 or in a LIST, and a longer one, are rejected. `listTxid`: txid in display (RPC) byte order.
+  `payScript` with payMode 2 or in a LIST, and a longer one, are rejected, and so is one whose first byte is `OP_RETURN`
+  (`0x6a`): what pays it would be burned, and `OP_RETURN <"SH20">` would even be read as a second envelope (§3) and refuse
+  every MINT or TAKE that pays it. payMode 1 is the way to ask for a burn. `listTxid`: txid in display (RPC) byte order.
 - **Field elements** (32 bytes, little-endian, `< r`, else rejected): every opening (`npk` of MINT, TAKE, CLAIM and the
   DEPLOY team opening), `nf0`, `nf1` and the three output leaves. Opaque bytes: `pk_eph`, `ct`, `lockKey`, `listTxid`,
   `sig`, `proof`.

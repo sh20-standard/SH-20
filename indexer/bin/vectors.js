@@ -9,7 +9,7 @@ import { poseidon2 } from '../src/poseidon.js';
 import { FR, DOMAIN } from '../src/constants.js';
 import { NoteTree } from '../src/tree.js';
 import { noteLeaf, tickerT } from '../src/notes.js';
-import { parseEnvelope, serializeEnvelope } from '../src/codec.js';
+import { CodecError, parseEnvelope, serializeEnvelope } from '../src/codec.js';
 import { extractEnvelope } from '../src/carrier.js';
 import { Indexer } from '../src/indexer.js';
 import { encodeEvents } from '../src/events.js';
@@ -120,6 +120,22 @@ const envs = {
   batchA: { type: 'TRANSFER', spend: spend('batch-a', 16) },
   batchB: { type: 'TRANSFER', spend: { ...spend('batch-b', 16), nf: [spend('batch-a', 16).nf[0], fr('batch-b/x')] } },
   batchC: { type: 'TRANSFER', spend: spend('batch-c', 16) },
+  // An OP_RETURN payScript is refused (SPEC-WIRE §4): `OP_RETURN <"SH20">` would refuse every MINT or TAKE that pays it.
+  deployOpReturnPay: {
+    type: 'DEPLOY', ticker: 'BADP', max: 1000n, lim: 100n, pre: 0n, start: 16, end: 0, unlock: 16,
+    price: 100n, payMode: 2, payScript: Buffer.from('6a0453483230', 'hex'), spend: spend('deploy-badp', 14),
+  },
+  listOpReturnPay: { type: 'LIST', ticker: 'PAY2', amount: 100n, price: 1000n, lockVout: 0, lockKey: lockKeyN(9), payScript: Buffer.from('6a0453483230', 'hex'), spend: spend('list9', 15) },
+  list8: { type: 'LIST', ticker: 'PAY2', amount: 1000n, price: 1000n, lockVout: 0, lockKey: lockKeyN(8), payScript: pay, spend: spend('list8', 15) },
+  // Block 17, more batches: a member refused for its proof, then one that reuses its nullifier (accepted: a refused
+  // envelope spends nothing); a TRANSFER published alone, then again in a batch (refused there); a batch whose
+  // transaction also spends the lock of list8 (its TRANSFERs, then CLOSED).
+  soloT: { type: 'TRANSFER', spend: spend('solo-t', 16) },
+  b2m0: { type: 'TRANSFER', spend: { ...spend('b2-m0', 16), nf: [fr('b2-shared'), fr('b2-m0/x')], proof: Buffer.alloc(480, 0xee) } },
+  b2m1: { type: 'TRANSFER', spend: { ...spend('b2-m1', 16), nf: [fr('b2-shared'), fr('b2-m1/x')] } },
+  b3: { type: 'TRANSFER', spend: spend('b3', 16) },
+  b4a: { type: 'TRANSFER', spend: spend('b4-a', 16) },
+  b4b: { type: 'TRANSFER', spend: spend('b4-b', 16) },
 };
 const ser = Object.fromEntries(Object.entries(envs).map(([k, v]) => [k, serializeEnvelope(v)]));
 
@@ -182,6 +198,7 @@ const txs = [
     // PAY2 first, its commit exactly N = 3 blocks old; BETA second: their team notes still unlock in ticker order.
     { txid: txid('deploy-pay2-tx'), vin: [{ txid: txid('fj'), vout: 0, witness: witness(ser.deployPay2), prevHeight: 12 }], vout: [] },
     { txid: txid('deploy-beta-tx'), vin: [{ txid: txid('fk'), vout: 0, witness: witness(ser.deployBeta), prevHeight: 5 }], vout: [] },
+    { txid: txid('deploy-badp-tx'), vin: [{ txid: txid('fk2'), vout: 0, witness: witness(ser.deployOpReturnPay), prevHeight: 5 }], vout: [] },
   ],
   [
     // payMode 2 counts the outputs to payScript only: paid, paid in an OP_RETURN (refused), one sat short (refused),
@@ -192,9 +209,17 @@ const txs = [
     { txid: txid('mint-pay2-split'), vin: [input('fo')], vout: [{ value: 0n, script: opReturn(ser.mintPay2Split) }, { value: 2000n, script: pay }, { value: 2000n, script: pay }] },
     { txid: txid('mint-beta'), vin: [input('fp')], vout: [{ value: 0n, script: opReturn(ser.mintBeta) }] },
     wit('transferR'),
+    { txid: txid('list8-tx'), vin: [{ txid: txid('fh8'), vout: 0, witness: witness(ser.list8) }], vout: [{ value: 330n, script: p2tr(lockKeyN(8)) }] },
+    { txid: txid('list9-tx'), vin: [{ txid: txid('fh9'), vout: 0, witness: witness(ser.listOpReturnPay) }], vout: [{ value: 330n, script: p2tr(lockKeyN(9)) }] },
   ],
   // Block 17: the team notes of BETA and PAY2, in that order, then a batch of three TRANSFERs.
-  [{ txid: txid('batch-tx'), vin: [{ txid: txid('fr'), vout: 0, witness: witness(ser.batchA, ser.batchB, ser.batchC) }], vout: [] }],
+  [
+    { txid: txid('batch-tx'), vin: [{ txid: txid('fr'), vout: 0, witness: witness(ser.batchA, ser.batchB, ser.batchC) }], vout: [] },
+    { txid: txid('batch2-tx'), vin: [{ txid: txid('fs'), vout: 0, witness: witness(ser.b2m0, ser.b2m1) }], vout: [] },
+    wit('soloT'),
+    { txid: txid('batch3-tx'), vin: [{ txid: txid('ft'), vout: 0, witness: witness(ser.soloT, ser.b3) }], vout: [] },
+    { txid: txid('batch4-tx'), vin: [{ txid: txid('fu'), vout: 0, witness: witness(ser.b4a, ser.b4b) }, { txid: txid('list8-tx'), vout: 0, witness: [] }], vout: [] },
+  ],
 ];
 const blocks = txs.map((t, i) => ({ height: i + 1, hash: `b${i + 1}`, txs: t }));
 
@@ -224,7 +249,7 @@ const finalState = {
   gene: tok('GENE'),
   pay2: tok('PAY2'),
   beta: tok('BETA'),
-  listings: Object.fromEntries([listTxid, list2Txid, list3Txid, ...[4, 5, 6, 7].map((n) => txid(`list${n}-tx`))].map((id) => [id, ix.listings.get(id).state])),
+  listings: Object.fromEntries([listTxid, list2Txid, list3Txid, ...[4, 5, 6, 7, 8].map((n) => txid(`list${n}-tx`))].map((id) => [id, ix.listings.get(id).state])),
 };
 
 // The reorg: blocks 16 and 17 give way to 16' and 17'. An indexer rolls back to block 15 and applies them; every root and
@@ -256,9 +281,13 @@ const expected = [
   { height: 14, txid: txid('nfSpentBefore-tx'), reason: 'nullifier already spent' },
   { height: 14, txid: txid('nfSpentInBlock-tx'), reason: 'nullifier already spent' },
   { height: 14, txid: txid('nfTwice-tx'), reason: 'duplicate nullifier' },
+  { height: 15, txid: txid('deploy-badp-tx'), reason: 'payScript must not be an OP_RETURN' },
   { height: 16, txid: txid('mint-pay2-opreturn'), reason: 'mint not paid' },
   { height: 16, txid: txid('mint-pay2-short'), reason: 'mint not paid' },
+  { height: 16, txid: txid('list9-tx'), reason: 'payScript must not be an OP_RETURN' },
   { height: 17, txid: txid('batch-tx'), envelope: 1, reason: 'nullifier already spent' },
+  { height: 17, txid: txid('batch2-tx'), envelope: 0, reason: 'invalid proof' },
+  { height: 17, txid: txid('batch3-tx'), envelope: 0, reason: 'nullifier already spent' },
 ];
 const rejected = results.flatMap((r) => r.rejected.map((x) => ({ height: r.height, txid: x.txid, ...(x.envelope !== undefined ? { envelope: x.envelope } : {}), reason: x.reason })));
 if (JSON.stringify(rejected) !== JSON.stringify(expected)) throw new Error(`unexpected rejections: ${JSON.stringify(rejected)}`);
@@ -272,6 +301,16 @@ const txJson = (t) => ({
 const bodyHash = (bytes) => {
   const { body } = parseEnvelope(bytes);
   return body ? hexFr(BigInt('0x' + createHash('sha256').update(DOMAIN.BODY).update(body).digest('hex')) % FR) : undefined;
+};
+// The envelopes section lists those that decode; the two the codec refuses are only in the blocks.
+const decodes = (bytes) => {
+  try {
+    parseEnvelope(bytes);
+    return true;
+  } catch (e) {
+    if (e instanceof CodecError) return false;
+    throw e;
+  }
 };
 
 // Carrier cases (SPEC-WIRE §3): a transaction, and what an indexer must find in it: no envelope ("none"), more than
@@ -347,7 +386,7 @@ const out = {
   version: 'SH-20 draft v0.3',
   notes: 'Field elements are hex, big-endian here for readability; on the wire they are 32-byte little-endian. The scenario uses a test verifier that accepts exactly one 480-byte proof: \"valid-proof\" padded with zeros. eventsH is the byte string of SPEC-WIRE §6 whose SHA-256 enters the digest. rejected lists the envelopes an indexer must refuse; the reason is informative, only the refusal is normative.',
   sections: {
-    envelopes: 'Each envelope of the scenario and of the reorg: its bytes, and for a spend its bodyHash (SPEC-WIRE §4: SHA256("sh20/v0/body" ‖ body) mod r, body from "SH20" up to the proof).',
+    envelopes: 'Each envelope of the scenario and of the reorg: its bytes, and for a spend its bodyHash (SPEC-WIRE §4: SHA256("sh20/v0/body" ‖ body) mod r, body from "SH20" up to the proof). Only envelopes that decode are listed: the two with an OP_RETURN payScript are only in block 15 and 16.',
     claim: 'One CLAIM: the message SHA256("sh20/v0/claim" ‖ listTxid ‖ npk) and its BIP340 signature by lockKey, with 32 zero bytes of auxiliary randomness.',
     preActivation: 'digest_{A-1}: the digest an indexer starts from at block A.',
     carriers: 'One transaction each, and what SPEC-WIRE §3 finds in it. expect is the hex of the one counted envelope, "none" when no envelope is counted (an envelope of another version alone is "none"), a list of hex when they are a batch (two or more TRANSFERs, all in the witness: each applies alone), or "many" when two or more are counted otherwise (the transaction is refused). Inputs give their witness only; their outpoints play no part. {"coinbase": true} is the input of a coinbase; its witness, when given, is not read.',
@@ -365,7 +404,7 @@ const out = {
   tickerT: { ticker: 'GENE', t: tickerT('GENE').toString() },
   genesis: { ticker: 'SH20', max: '21000000', lim: '1000', pre: '0', price: '0', payMode: 0, mintsFrom: 'activation height' },
   noteLeaf: { ticker: 'SH20', t: tickerT('SH20').toString(), v: '1000', npk: hexFr(envs.mintGenesis.npk), rho: '0', leaf: hexFr(noteLeaf(tickerT('SH20'), 1000n, envs.mintGenesis.npk, 0n)) },
-  envelopes: Object.fromEntries(Object.entries(ser).map(([k, v]) => [k, { bytes: v.length, hex: v.toString('hex'), ...(bodyHash(v) ? { bodyHash: bodyHash(v) } : {}) }])),
+  envelopes: Object.fromEntries(Object.entries(ser).filter(([, v]) => decodes(v)).map(([k, v]) => [k, { bytes: v.length, hex: v.toString('hex'), ...(bodyHash(v) ? { bodyHash: bodyHash(v) } : {}) }])),
   claim: {
     note: 'BIP340 signature with 32 zero bytes of auxiliary randomness, by the key whose secret is SHA256("lock2-secret")',
     listTxid: list2Txid, npk: hexFr(envs.claim2.npk), lockKey: lockKey2.toString('hex'),

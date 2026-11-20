@@ -161,8 +161,10 @@ What the text leaves open on batches:
 
 **Settled (2026-11-21):** the reference indexer chose the same on all three, and `SPEC-WIRE.md` §3 now states B1 and
 B2. Three carrier cases pin them: a `0x03` envelope that does not decode stays in its batch, `SH20` with no type byte
-beside a TRANSFER is refused whole, and an envelope of another version between two TRANSFERs takes no index. B3 still
-has no vector.
+beside a TRANSFER is refused whole, and an envelope of another version between two TRANSFERs takes no index. B3 has a
+vector since (block 17: a batch whose transaction spends the lock of `list8`, then CLOSED), with three more from the
+circuit session's reading of batches: a member refused for its proof, then one that reuses its nullifier (accepted); a
+TRANSFER alone, then again in a batch (refused there).
 
 B1 can change a digest: an indexer that decided by decoding would refuse the whole transaction where this one
 applies the envelopes that decode. B2 cannot: the index is in `rejected` and `verifierCalls`, not in an event.

@@ -124,6 +124,8 @@ function readPayScript(r, payMode) {
   } else if (len === 0) {
     throw new CodecError('empty payScript');
   }
+  // What pays an OP_RETURN is burned, and `OP_RETURN <"SH20">` would even be read as a second envelope (SPEC-WIRE §4).
+  if (len > 0 && script[0] === 0x6a) throw new CodecError('payScript must not be an OP_RETURN');
   return script;
 }
 
