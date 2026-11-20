@@ -28,7 +28,7 @@ const NEW_TICKER = 'T' + Array.from(crypto.getRandomValues(new Uint8Array(3)), (
 const LONG = 3000; // × 100 ms: a proof on one thread in a browser takes about half a minute
 const INDEXERS = ['http://127.0.0.1:8020', 'http://127.0.0.1:8030', ...(LIAR ? ['http://127.0.0.1:8031'] : [])].join(',');
 // E2E_HOST=<cid>.ipfs.localhost: a subdomain gateway (the page isolates itself with its service worker)
-// E2E_PATH=/ipfs/<cid>/vault/: a path gateway (it must not)
+// E2E_PATH=/ipfs/<cid>/vault/: a path gateway (the page refuses to run there: docs/AUDIT.md §8.1)
 const HOST = process.env.E2E_HOST || 'localhost';
 const PAGE = `http://${HOST}:8000${process.env.E2E_PATH || '/vault/'}?indexer=${INDEXERS}&esplora=http://127.0.0.1:8020/esplora`;
 const PATH_GATEWAY = /^\/ip[fn]s\//.test(process.env.E2E_PATH || '');
@@ -144,6 +144,21 @@ async function main() {
   await send('Page.navigate', { url: PAGE });
 
   const step = (s) => console.log('·', s);
+  if (PATH_GATEWAY) {
+    // docs/AUDIT.md §8.1: nothing runs on a path gateway, not even the servers of the link
+    await waitFor(`!!document.querySelector('#path-gateway')`, 'the path gateway refusal');
+    const page = await evaluate(`(async () => ({ text: document.body.innerText, forms: document.querySelectorAll('form, input, textarea').length, links: [...document.querySelectorAll('#path-gateway a')].map((a) => a.href), registrations: navigator.serviceWorker ? (await navigator.serviceWorker.getRegistrations()).length : 0, stored: Object.keys(localStorage) }))()`);
+    if (page.forms) throw new Error('a form on a path gateway');
+    if (page.registrations) throw new Error('a service worker on a path gateway');
+    if (dialogs.length) throw new Error('the page asked about the link servers on a path gateway: ' + dialogs.join(' / '));
+    if (page.stored.length) throw new Error('the page stored something on a path gateway: ' + page.stored.join(', '));
+    const cid = process.env.E2E_PATH.split('/')[2];
+    if (!page.links.some((u) => u.startsWith(`https://${cid}.ipfs.dweb.link/`))) throw new Error('no subdomain gateway named: ' + page.links.join(' '));
+    step('refused: ' + page.links.join(' · '));
+    ws.close();
+    console.log('\nOK: the path gateway page refuses to run and names its subdomain address');
+    return;
+  }
   await waitFor(`document.querySelector('#warnings')?.innerText.includes('servers from the link')`, 'URL servers warning');
   if (!dialogs.some((d) => d.includes('127.0.0.1:8020'))) throw new Error('URL servers applied without confirmation');
   step('URL servers confirmed by a dialog and flagged on the page');
@@ -162,7 +177,6 @@ async function main() {
   if (!/^tsh201[02-9ac-hj-np-z]{162}$/.test(address)) throw new Error('no signet sh20 address shown: ' + address);
   step('sh20 address: ' + address.slice(0, 24) + '…');
   const iso = await evaluate(`(async () => ({ isolated: self.crossOriginIsolated === true, controlled: !!navigator.serviceWorker?.controller, registrations: navigator.serviceWorker ? (await navigator.serviceWorker.getRegistrations()).length : 0, mode: document.querySelector('#prover-mode')?.textContent }))()`);
-  if (PATH_GATEWAY && (iso.registrations || iso.isolated)) throw new Error('a service worker on a path gateway: ' + JSON.stringify(iso));
   if (/\.ipfs\./.test(HOST) && !(iso.isolated && iso.controlled)) throw new Error('the subdomain gateway page did not isolate itself: ' + JSON.stringify(iso));
   step(`isolation: ${iso.mode}${iso.registrations ? ` (${iso.registrations} service worker)` : ''}`);
   const words = await evaluate(`[...document.querySelectorAll('#words li')].map((li) => li.textContent).join(' ')`);
@@ -289,7 +303,10 @@ async function main() {
   await waitFor(`!!document.querySelector('#offer-text')`, 'the offer');
   const offer = await evaluate(`document.querySelector('#offer-text').textContent`);
   if (!/^sh20offer1:[0-9a-f]{64}:[0-9a-f]{130}$/.test(offer)) throw new Error('offer: ' + offer);
-  step('offer: ' + offer.slice(0, 40) + '…');
+  const signedFor = await evaluate(`document.querySelector('#listing-out').innerText`);
+  if (!new RegExp(`Offer signed for: 150 ${TICKER} for 5,000 sats, paid to tb1`).test(signedFor) || !/vouched for by the listing this vault sent/.test(signedFor)) throw new Error('the signed terms are not shown: ' + signedFor);
+  if (dialogs.some((d) => d.includes('cannot vouch'))) throw new Error('asked about a listing this vault sent');
+  step('offer: ' + offer.slice(0, 40) + '… (' + signedFor.split('\n')[0] + ')');
   await evaluate(`(() => { const t = document.querySelector('#market-body textarea[name=offer]'); t.value = ${JSON.stringify(offer)}; t.dispatchEvent(new Event('input')); })()`);
   await evaluate(`document.querySelector('#market-body button[name=check]').click()`);
   await waitFor(`!!document.querySelector('#market-body button[name=buy]')`, 'the offer checked');
@@ -315,6 +332,9 @@ async function main() {
   await waitFor(`!document.querySelector('#scan').disabled`, 'the sync to finish', 600);
   const before = await notesText();
   step('notes: ' + before);
+  const agreement = await evaluate(`document.querySelector('#agreement')?.textContent ?? ''`);
+  if (!/^2 of 2 indexers agree on the state at block \d+\.$/.test(agreement)) throw new Error('the indexers\' agreement is not shown next to the balance: ' + agreement);
+  step('balance: ' + (await evaluate(`document.querySelector('#balance').innerText`)));
   await click('#vault-body button', 'Lock');
   await evaluate(`localStorage.removeItem('sh20.vault.v0')`);
   await send('Page.reload');
@@ -332,6 +352,22 @@ async function main() {
   const listingsAfter = await evaluate(`[...document.querySelectorAll('#market-body tbody tr')].map((r) => r.children[1].textContent + ' ' + r.children[3].textContent).sort().join(', ')`);
   if (listingsAfter !== listingsBefore) throw new Error(`listings after the restore: ${listingsAfter}, before: ${listingsBefore}`);
   step('listings found again from the words: ' + listingsAfter);
+
+  // docs/AUDIT.md §8.4: restored without a passphrase, no backup in clear; a passphrase added here, then the words behind it
+  if (!(await evaluate(`document.querySelector('#vault-body button[name=backup]').disabled`))) throw new Error('a backup offered in clear');
+  await click('#vault-body button', 'Set a passphrase');
+  await evaluate(`(() => { for (const n of ['new-pass', 'new-pass-again']) document.querySelector('#vault-body input[name=' + n + ']').value = 'e2e second'; })()`);
+  await click('#vault-body button', 'Set passphrase');
+  await waitFor(`document.querySelector('#vault-body').innerText.includes('encrypted with your passphrase')`, 'the passphrase set');
+  if (/plain|seed/.test(await evaluate(`localStorage.getItem('sh20.vault.v0')`))) throw new Error('still stored in clear after setting a passphrase');
+  if (await evaluate(`document.querySelector('#vault-body button[name=backup]').disabled`)) throw new Error('no backup once encrypted');
+  await click('#vault-body button', 'Show recovery words');
+  await waitFor(`!!document.querySelector('#vault-body input[name=words-pass]')`, 'the passphrase asked for the words');
+  if (await evaluate(`!!document.querySelector('#words')`)) throw new Error('the words shown before the passphrase');
+  await evaluate(`document.querySelector('#vault-body input[name=words-pass]').value = 'e2e second'`);
+  await click('#vault-body button', 'Show the words');
+  await waitFor(`document.querySelectorAll('#words li').length === 12`, 'the words after the passphrase');
+  step('passphrase added after the restore: stored encrypted, backup enabled, words shown after the passphrase');
 
   ws.close();
   // a 404 on /nullifiers is expected from an indexer without the route (before PR #5): spends shown as unknown

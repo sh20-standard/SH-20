@@ -90,3 +90,81 @@ export async function crossCheck(apis, ticker, { retries = 2, delayMs = 1500, sl
     return { token: ref.token, profile, agreed: problems.length ? 0 : ok.length, problems, warnings };
   }
 }
+
+// ---- listings, before a TAKE ---------------------------------------------------------------------
+
+/**
+ * A TAKE pays the seller's price, and only the indexers decide whether it buys anything: an
+ * envelope they rejected (a bad proof, spent nullifiers, the turnstile) still looks like a LIST on
+ * chain, with a lock and a valid offer. So a TAKE needs this many indexers reporting the listing
+ * the same way (docs/AUDIT.md §8.3).
+ */
+export const TAKE_QUORUM = 2;
+
+const listingKey = (l) => JSON.stringify(l, (_, x) => (typeof x === 'bigint' ? String(x) : x));
+
+/**
+ * Asks every indexer about `listTxid`. One that answers and does not know the listing counts
+ * against it, like one that reports other terms or another state: either refuses. An unreachable
+ * one is not counted. Returns { listing, agreed, down, enough }: `enough` when at least
+ * TAKE_QUORUM indexers agree.
+ */
+export async function listingCheck(apis, listTxid) {
+  const settled = await Promise.allSettled(apis.map((a) => a.listing(listTxid)));
+  const known = [];
+  const unknown = [];
+  const down = [];
+  settled.forEach((s, i) => {
+    const base = apis[i].base;
+    if (s.status === 'rejected') down.push(base);
+    else if (s.value) known.push({ base, listing: s.value });
+    else unknown.push(base);
+  });
+  if (!known.length) throw new Error(unknown.length ? `no indexer knows this listing (${unknown.join(', ')})` : `no indexer reachable (${down.join(', ')})`);
+  if (unknown.length) {
+    throw new Error(`${unknown.join(', ')} ${unknown.length > 1 ? 'do' : 'does'} not know this listing, which ${known.map((k) => k.base).join(', ')} ${known.length > 1 ? 'report' : 'reports'}: it may be an envelope the indexers rejected, and a TAKE of it would pay for nothing`);
+  }
+  const ref = known[0];
+  for (const k of known.slice(1)) {
+    if (listingKey(k.listing) === listingKey(ref.listing)) continue;
+    const diff = Object.keys({ ...ref.listing, ...k.listing }).filter((f) => listingKey(k.listing[f]) !== listingKey(ref.listing[f]));
+    throw new Error(`${k.base} and ${ref.base} disagree on this listing: ${diff.map((f) => `${f} ${listingKey(k.listing[f])} ≠ ${listingKey(ref.listing[f])}`).join(', ')}`);
+  }
+  return { listing: ref.listing, agreed: known.length, down, enough: known.length >= TAKE_QUORUM };
+}
+
+// ---- the synced state, at every sync -----------------------------------------------------------------
+
+/**
+ * What the vault shows as received comes from the primary indexer's leaves, checked against that
+ * indexer's own root: consistent with itself, not with the chain (docs/AUDIT.md §8.5). At every sync
+ * the other indexers are asked for the note tree's root after the synced block, compared with the
+ * root the vault rebuilt from those leaves (`root`), and for their digest there, compared with the
+ * primary's (`digest`): the root binds what is shown to the leaves the vault checked, which a digest
+ * alone would not (a lying primary could copy an honest digest). Returns { height, agreed, total,
+ * disagree, behind, down }: `agreed` counts the primary; `behind` have not reached that block.
+ */
+export async function digestAgreement(apis, height, digest, root) {
+  const want = String(digest ?? '').toLowerCase();
+  const local = String(root ?? '').toLowerCase();
+  const [, ...others] = apis;
+  const settled = await Promise.allSettled(others.map(async (a) => [await a.digest(height), await a.rootAt(height)]));
+  const out = { height, agreed: want && local ? 1 : 0, total: apis.length, disagree: [], behind: [], down: [] };
+  settled.forEach((s, i) => {
+    const base = others[i].base;
+    if (s.status === 'rejected') return out.down.push(base);
+    const [d, r] = s.value;
+    if (d === null || r === null) out.behind.push(base);
+    else if (want && local && d === want && r === local) out.agreed++;
+    else out.disagree.push(base);
+  });
+  return out;
+}
+
+/** One line for the page: how many indexers agree on the state the balance comes from. */
+export function agreementText(a) {
+  if (a.disagree.length) return `${a.disagree.join(', ')} ${a.disagree.length > 1 ? 'disagree' : 'disagrees'} with the primary indexer on the state at block ${a.height}: notes shown here may not exist on chain.`;
+  const extra = [a.behind.length ? `${a.behind.length} not there yet` : null, a.down.length ? `${a.down.length} unreachable` : null].filter(Boolean).join(', ');
+  if (a.total === 1) return `One indexer only: the notes shown rest on its word. Add independent indexers in Settings.`;
+  return `${a.agreed} of ${a.total} indexers agree on the state at block ${a.height}${extra ? ` (${extra})` : ''}.`;
+}

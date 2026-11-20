@@ -9,12 +9,13 @@ import { broadcastDeployReveal, processDeploys, reproveDeploy } from './deploy-p
 import { renderMarket } from './market-panel.js';
 import { getSyncer } from './notes-panel.js';
 import { carry } from './spends.js';
+import { agreementText } from '../consensus.js';
 
 // ---- send ------------------------------------------------------------------------
 
 export const sendForm = { action: 'transfer', ticker: '', amount: '', to: '', fee: '2', price: '', payTo: '' };
 
-function balances() {
+export function balances() {
   const out = new Map();
   for (const n of st.vault?.state.notes ?? []) {
     if (n.status !== 'in tree' || n.spent !== 'no' || BigInt(n.v) === 0n) continue;
@@ -59,6 +60,7 @@ export function renderSend() {
   const b = h('button', { type: 'button', disabled: need.length > 0, name: 'send' }, label);
   b.addEventListener('click', busy(b, () => ({ transfer: sendTransfer, burn: sendBurn, list: sendList })[f.action]('send-out')));
   fill('send-body',
+    st.sync?.agreement?.disagree.length ? h('p', { class: 'warn err' }, agreementText(st.sync.agreement), ' A spend built on that state would be rejected after paying its fee.') : null,
     h('p', { class: 'muted' }, {
       transfer: 'A private TRANSFER, proved on this device: the amount, the ticker, the sender and the recipient stay hidden. Your Bitcoin wallet pays the network fees.',
       burn: 'A BURN takes tokens out of the supply for good, in public: the amount and the ticker are shown, not which notes paid it.',
@@ -125,7 +127,7 @@ async function sendList(out) {
     plan: () => planList({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount, price, payScript, lockKey: lock.key }),
     outputs: listOutputs(lock.script),
     label: `LIST of ${units(amount)} ${f.ticker} for ${sats(price)}`,
-    onRevealed: (reveal) => st.vault.addListing({ lockIndex, ticker: f.ticker, amount: amount.toString(), price: price.toString(), payScript: toHex(payScript), listTxid: reveal.txid, state: 'broadcast' }),
+    onRevealed: (reveal) => st.vault.addListing({ lockIndex, ticker: f.ticker, amount: amount.toString(), price: price.toString(), payScript: toHex(payScript), listTxid: reveal.txid, state: 'broadcast', source: 'sent' }),
   });
 }
 

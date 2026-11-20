@@ -19,11 +19,31 @@ export function gatewayKind(loc = globalThis.location) {
 }
 
 /**
- * 'headers' (isolated already), 'reloading' (the worker is in place: the page reloads through it),
- * or why the page stays on one thread: 'not-a-subdomain-gateway', 'unavailable', 'refused'.
- * The same steps as circuit/web/app.js `ensureIsolation`, limited to subdomain gateways.
+ * Where to open the page instead of a path gateway (docs/AUDIT.md §8.1), or null when `loc` is not
+ * one: the same CID (or IPNS name) on a subdomain gateway, where it has an origin of its own, and
+ * on a local IPFS node. The query string is left out: servers come from the settings, or from a
+ * link the user confirms there.
  */
-export async function ensureIsolation() {
+export function ownOrigins(loc = globalThis.location) {
+  const m = /^\/(ip[fn]s)\/([^/]+)(\/.*)?$/.exec(loc.pathname);
+  if (!m) return null;
+  const [, ns, id, rest = '/'] = m;
+  // a DNSLink name fits in one DNS label as the gateways inline it: '-' becomes '--', '.' becomes '-'
+  const label = ns === 'ipns' && id.includes('.') ? id.replace(/-/g, '--').replace(/\./g, '-') : id;
+  // a CIDv0 (Qm…) or another case-sensitive name is no DNS label: the gateway's path form redirects
+  // to its subdomain form (base32), with an origin of its own
+  if (/^[a-z0-9-]{1,63}$/.test(label)) return [`https://${label}.${ns}.dweb.link${rest}`, `http://${label}.${ns}.localhost:8080${rest}`];
+  return [`https://dweb.link/${ns}/${id}${rest}`, `http://localhost:8080/${ns}/${id}${rest}`];
+}
+
+/**
+ * 'headers' (isolated already), or why the page stays on one thread: 'not-a-subdomain-gateway',
+ * 'unavailable', 'refused'. When the worker is put in place the page reloads through it and this
+ * never returns, unless the browser drops the reload: after `reloadWaitMs` the page goes on with
+ * one thread ('refused') rather than stay blank. The same steps as circuit/web/app.js
+ * `ensureIsolation`, limited to subdomain gateways.
+ */
+export async function ensureIsolation({ reloadWaitMs = 5000 } = {}) {
   if (canShare()) return 'headers';
   if (gatewayKind() !== 'subdomain') return 'not-a-subdomain-gateway';
   if (!globalThis.isSecureContext || !('serviceWorker' in navigator)) return 'unavailable';
@@ -38,7 +58,9 @@ export async function ensureIsolation() {
       else worker.addEventListener('statechange', () => worker.state === 'activated' && done());
     });
     location.reload(); // the reloaded page is served through the service worker, with the headers
-    return 'reloading';
+    // the browser can drop this reload (headless Chrome, when the page reloads with requests in flight through the worker)
+    await new Promise((done) => setTimeout(done, reloadWaitMs));
+    return 'refused';
   } catch {
     return 'unavailable';
   }

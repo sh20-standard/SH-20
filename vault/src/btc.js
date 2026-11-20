@@ -100,6 +100,33 @@ export function addressToScript(addr, net = NETWORKS.signet) {
   throw new Error(`not a ${net.name} address: ${addr}`);
 }
 
+/**
+ * scriptPubKey → address for `net`, to show a payee: segwit (bech32, bech32m) and the base58 forms;
+ * null for anything else (the page then shows the script's hex).
+ */
+export function scriptToAddress(s, net = NETWORKS.signet) {
+  const type = scriptType(s);
+  if (type === 'p2wpkh' || type === 'p2wsh' || type === 'p2tr') {
+    const version = type === 'p2tr' ? 1 : 0;
+    const data = [version, ...convertBits(s.subarray(2), 8, 5, true)];
+    const values = [...hrpExpand(net.hrp), ...data, 0, 0, 0, 0, 0, 0];
+    const mod = polymod(values) ^ (version === 0 ? BECH32 : BECH32M);
+    const check = Array.from({ length: 6 }, (_, i) => (mod >>> (5 * (5 - i))) & 31);
+    return net.hrp + '1' + [...data, ...check].map((v) => BECH[v]).join('');
+  }
+  const base58 = (prefix, h) => {
+    const body = concat(new Uint8Array([prefix]), h);
+    const b = concat(body, sha256d(body).subarray(0, 4));
+    let x = BigInt('0x' + toHex(b));
+    let out = '';
+    while (x > 0n) { out = B58[Number(x % 58n)] + out; x /= 58n; }
+    return '1'.repeat(b.findIndex((v) => v !== 0)) + out;
+  };
+  if (type === 'p2pkh') return base58(net.p2pkh, s.subarray(3, 23));
+  if (type === 'p2sh') return base58(net.p2sh, s.subarray(2, 22));
+  return null;
+}
+
 export function scriptType(s) {
   if (s.length === 22 && s[0] === 0x00 && s[1] === 0x14) return 'p2wpkh';
   if (s.length === 34 && s[0] === 0x00 && s[1] === 0x20) return 'p2wsh';

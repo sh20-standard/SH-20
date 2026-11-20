@@ -524,6 +524,8 @@ DOM, and the release process (`vault/RELEASES.md`).
 
 ### Findings, from the most serious down
 
+8.1 to 8.6 are fixed in #33 (each finding names its commits); 8.7 to 8.10 are open.
+
 **8.1 On a path gateway the vault warns and goes on.** High.
 [`app.js`](../vault/src/app.js) l. 137. On `…/ipfs/<cid>/` every site of the gateway has the same
 origin as the vault. Any of them can read the stored record from `localStorage` (the master secret
@@ -533,6 +535,10 @@ or open the vault in a window of its own and script it once the user unlocks. Th
 warning and still creates, restores and unlocks vaults. `isolation.js` already refuses to register
 its service worker there, for the same reason. Closing it: refuse to create, restore or unlock on a
 path gateway, and say where to go instead.
+
+Fixed in #33 (commit `4db704c`): the page stops on a path gateway before it reads its settings,
+names the same CID on a subdomain gateway and on a local node, and the vault refuses to be created,
+restored or opened there.
 
 **8.2 After a restore, an offer signs the terms the servers give, not the vault's own.** High.
 `copyOffer` (`app.js` l. 1070) signs the listing returned by `ownListing` (l. 1012). When the vault
@@ -556,6 +562,13 @@ after a restore, the envelope can be authenticated without trusting a server: it
 must be those of notes of this vault, and its proof must verify for its body, which only the owner
 of those notes could have signed. Failing that, show the price and payee and ask before signing.
 
+Fixed in #33 (commits `85ccd6f`, `9f6a058`): `offerTerms` signs the terms of the vault's own record
+for a listing it sent and refuses any difference. After a restore it requires a nullifier of this
+vault's notes and a proof that verifies for the envelope's body against the local root at its
+anchor; with that note and that root, a proof that fails is refused too. It asks, showing price and
+payee, only when it cannot check: no nullifier of its notes, a local tree that does not reach the
+anchor, or a verifier that cannot run.
+
 **8.3 A buyer is protected by the indexers that know the listing; one is enough, and an indexer
 that does not know it is ignored.** High.
 `checkedListing` (`app.js` l. 997) asks every configured indexer for the listing and keeps the
@@ -573,6 +586,9 @@ Closing it: treat "unknown" from a reachable indexer as a disagreement, and requ
 independent indexers to agree before a TAKE, as `sendClaim` already requires every one to say
 CLOSED.
 
+Fixed in #33 (commit `ecfcbb4`): `listingCheck`: an indexer that answers "unknown" refuses the
+listing, and a TAKE needs two indexers that agree (`TAKE_QUORUM`).
+
 **8.4 Without a passphrase, the master secret and the 12 words are stored and backed up in
 clear.** Medium.
 [`keys.js`](../vault/src/keys.js) l. 160: the record is `{ v: 0, plain: { …, seed, words } }`.
@@ -589,6 +605,11 @@ folder. Three things make it worse than a choice made once:
 Closing it: require a passphrase, or at least refuse to export a clear backup; add a way to set or
 change it; refuse a passphrase given for a clear backup, or encrypt with it.
 
+Fixed in #33 (commits `53cf58a`, `3278354`): no backup is written in clear; a passphrase can be set
+or changed (`setPassphrase`); a clear backup restored with a passphrase is encrypted with it; the
+words of an encrypted vault are shown after the passphrase; a tab holding an older copy cannot write
+it back.
+
 **8.5 What the vault shows as received rests on one indexer.** Medium.
 `sync.js` rebuilds the tree from the primary indexer's leaves and checks it against that indexer's
 own root (l. 106): consistency with itself, not with the chain. Scanning checks a leaf against the
@@ -598,6 +619,10 @@ other time. A spend built on a wrong root is rejected after paying its fee; noth
 Closing it: compare the digest at the synced height across the configured indexers at every sync,
 and show how many agree next to a balance.
 
+Fixed in #33 (commits `f242de1`, `1d7766f`): after every sync the other indexers are compared on the
+tree's root (against the root rebuilt from the leaves) and on the digest at the synced block, and
+the count is shown next to the balance.
+
 **8.6 `scanOutput` turns every failure into "not ours".** Low.
 [`notekeys.js`](../vault/src/notekeys.js) l. 34 catches whatever `scan` throws. `scan` returns
 `null` for a note that is not the vault's and throws only when it could not try (WebCrypto failed,
@@ -605,6 +630,10 @@ an input was malformed). The page refuses to start without X25519 (`app.js` l. 3
 the main case; a failure during one sync still drops that note silently. A sync reads a leaf again
 only while it is in the last six blocks; after that, only a full rescan finds the note. Closing it:
 let anything but a malformed output propagate.
+
+Fixed in #33 (commits `c674e73`, `950f9d0`): `scanOutput` lets a failure propagate (malformed
+outputs are still null); a note whose scan fails does not stop the others, and the sync reads again
+from the first that failed until the vault has scanned it.
 
 **8.7 Signatures by secp256k1 keys use the indexer's verification code.** Low.
 Lock keys sign offers, cancels and claims, and a one-time key signs each reveal, with

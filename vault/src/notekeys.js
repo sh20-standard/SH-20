@@ -27,13 +27,14 @@ export async function publicNote(w, i) {
   return o;
 }
 
-/** A sealed output, if it is this wallet's and hashes to its leaf: { ticker, v, secrets, npk }, else null. */
+/**
+ * A sealed output, if it is this wallet's and hashes to its leaf: { ticker, v, secrets, npk }, else
+ * null. A malformed output (wrong sizes, a leaf out of the field, a small-order pkEph) is null from
+ * circuit/js itself; anything that throws means the scan could not be made (WebCrypto failed) and
+ * propagates: the sync reads that leaf again rather than taking it for someone else's (AUDIT §8.6).
+ */
 export async function scanOutput(w, out) {
-  try {
-    return await scan(w.ivk, w.address, out);
-  } catch {
-    return null; // a malformed output is not ours
-  }
+  return scan(w.ivk, w.address, out);
 }
 
 /**

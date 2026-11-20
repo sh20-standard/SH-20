@@ -1,12 +1,17 @@
 // The market panel: the vault's listings (offers, cancel, claim) and buying from an offer.
 
 import { toHex } from '../bytes.js';
+import { scriptToAddress } from '../btc.js';
+import { frHex } from '../fr.js';
+import { loadProver } from '../prover.js';
 import { LOCK_GAP } from '../keys.js';
-import { buildCancel, buildClaim, buildTake, claimProblem, decodeOffer, encodeOffer, listingFromChain, offerValid, signOffer } from '../market.js';
+import { buildCancel, buildClaim, buildTake, claimProblem, decodeOffer, encodeOffer, listingFromChain, offerTerms, offerValid, signOffer } from '../market.js';
 import { busy, esplora, fill, h, indexer, indexers, result, resultBox, sats, short, st, units } from './context.js';
 import { renderAll } from './render.js';
 import { sendForm } from './send-panel.js';
 import { signFunded, txLink, walletUtxos } from './spends.js';
+import { listingCheck, TAKE_QUORUM } from '../consensus.js';
+import { getSyncer } from './notes-panel.js';
 
 // ---- market: the vault's listings, and buying from an offer --------------------------------------
 
@@ -42,20 +47,19 @@ export async function syncListings() {
       continue;
     }
     if ((v.state.nextLock ?? 0) <= i) v.state.nextLock = i + 1; // before addListing saves: a lock key is never used twice
-    await v.addListing({ lockIndex: i, ticker: chain.ticker, amount: String(chain.amount), price: String(chain.price), payScript: toHex(chain.payScript), listTxid: l.listTxid, state: l.state });
+    await v.addListing({ lockIndex: i, ticker: chain.ticker, amount: String(chain.amount), price: String(chain.price), payScript: toHex(chain.payScript), listTxid: l.listTxid, state: l.state, source: 'chain' });
   }
 }
 
-/** A listing read from the chain and agreed on by every configured indexer (warnings if only one answers). */
+/**
+ * A listing read from the chain and reported the same way by every indexer that answers; one that
+ * answers "unknown" refuses it (consensus.js listingCheck, docs/AUDIT.md §8.3). `enough` says
+ * whether TAKE_QUORUM of them agree, which a TAKE needs.
+ */
 async function checkedListing(listTxid) {
-  const answers = await Promise.allSettled(indexers.map((a) => a.listing(listTxid)));
-  const ok = answers.filter((a) => a.status === 'fulfilled' && a.value).map((a) => a.value);
-  if (!ok.length) throw new Error('no indexer knows this listing');
-  const key = (l) => JSON.stringify(l, (_, x) => (typeof x === 'bigint' ? String(x) : x));
-  if (ok.some((l) => key(l) !== key(ok[0]))) throw new Error('the indexers disagree on this listing');
-  const indexed = ok[0];
+  const { listing: indexed, agreed, down, enough } = await listingCheck(indexers, listTxid);
   const l = listingFromChain(listTxid, await esplora.txHex(listTxid), { ...indexed, amount: String(indexed.amount), price: String(indexed.price) });
-  return { l, state: indexed.state, agreed: ok.length };
+  return { l, state: indexed.state, agreed, down, enough };
 }
 
 /**
@@ -99,7 +103,7 @@ export function renderMarket() {
   const c = marketForm.checked;
   let buy = null;
   if (c) {
-    buy = h('button', { type: 'button', disabled: !st.wallet || c.state !== 'ACTIVE', name: 'buy' }, `Buy ${units(c.l.amount)} ${c.l.ticker} for ${sats(c.l.price)}`);
+    buy = h('button', { type: 'button', disabled: !st.wallet || c.state !== 'ACTIVE' || !c.enough, name: 'buy', title: c.enough ? null : `a TAKE needs ${TAKE_QUORUM} indexers that report this listing` }, `Buy ${units(c.l.amount)} ${c.l.ticker} for ${sats(c.l.price)}`);
     buy.addEventListener('click', busy(buy, () => sendTake(c)));
   }
   fill('market-body',
@@ -113,18 +117,44 @@ export function renderMarket() {
     h('div', { class: 'row' }, check),
     c ? h('dl', {},
       h('dt', {}, 'Tokens'), h('dd', {}, `${units(c.l.amount)} ${c.l.ticker}, as a public note of this vault`),
-      h('dt', {}, 'Price'), h('dd', {}, `${sats(c.l.price)} to ${toHex(c.l.payScript)}`),
+      h('dt', {}, 'Price'), h('dd', {}, `${sats(c.l.price)} to ${payee(c.l.payScript)}`),
       h('dt', {}, 'State'), h('dd', {}, c.state),
-      h('dt', {}, 'Checked'), h('dd', {}, `the LIST on chain, the seller's signature for this price and payee${c.agreed > 1 ? `, ${c.agreed} indexers agree` : ' (one indexer: add others in Settings to cross-check)'}`)) : null,
+      h('dt', {}, 'Checked'), h('dd', {}, `the LIST on chain, the seller's signature for this price and payee, ${c.agreed} indexer${c.agreed > 1 ? 's' : ''} ${c.agreed > 1 ? 'agree' : 'knows it'}${c.down.length ? ` (${c.down.length} unreachable, not counted)` : ''}`)) : null,
+    c && !c.enough ? h('p', { class: 'warn err' }, `Not enough to buy: ${c.agreed} indexer${c.agreed > 1 ? 's' : ''} ${c.agreed > 1 ? 'report' : 'reports'} this listing, and a TAKE needs ${TAKE_QUORUM} that agree. The chain alone cannot show whether the indexers accepted the LIST; one indexer could report a listing the others rejected, and the price would be paid for nothing. Add an independent indexer in Settings.`) : null,
     buy,
     resultBox('buy-out'));
 }
 
+const payee = (script) => scriptToAddress(script) ?? `script ${toHex(script)}`;
+
+/**
+ * Signs an offer for one of the vault's listings, for terms it can vouch for (market.js offerTerms,
+ * docs/AUDIT.md §8.2): its own record, or the LIST's proof over notes of this vault; failing both,
+ * only once the user has read the price and payee and said yes.
+ */
 async function copyOffer(rec) {
+  const v = st.vault;
   const { l } = await ownListing(rec);
-  const offer = encodeOffer(rec.listTxid, signOffer((await st.vault.lockOutput(rec.lockIndex)).secret, l));
+  const lock = await v.lockOutput(rec.lockIndex);
+  const ownNullifiers = new Set();
+  for (const n of v.state.notes) if (n.pos !== null && n.pos !== undefined) ownNullifiers.add(frHex(await v.nullifier(n)));
+  const s = await getSyncer();
+  const t = await offerTerms({
+    rec, l, lockKey: lock.key, ownNullifiers, rootAt: (a) => s.rootAt(a),
+    verify: async (publics, proof) => (await loadProver({ onStatus: (x) => result('listing-out', h('p', { class: 'muted' }, `Checking the LIST's proof: ${x}`)) })).verify(publics, proof),
+  });
+  const terms = `${units(l.amount)} ${l.ticker} for ${sats(l.price)}, paid to ${payee(l.payScript)}`;
+  if (t.vouched === 'ask' && !confirm(`This vault cannot vouch for the terms of this listing: ${t.why}.\n\nSign an offer that sells\n\n${terms}?\n\nWhoever holds the offer can take the tokens by paying that price to that address. Sign only if this is the listing you made.`)) {
+    result('listing-out', h('p', { class: 'muted' }, 'No offer signed.'));
+    return;
+  }
+  const offer = encodeOffer(rec.listTxid, signOffer(lock.secret, l));
   await navigator.clipboard?.writeText(offer).catch(() => {});
-  result('listing-out', h('p', {}, 'Offer (copied): anyone who completes it pays the price to you and gets the tokens. Share it anywhere.'), h('p', { class: 'mono', id: 'offer-text' }, offer));
+  const by = { record: 'the listing this vault sent', proof: 'the LIST\'s proof, which spends notes of this vault', ask: 'your confirmation only' }[t.vouched];
+  result('listing-out',
+    h('p', {}, h('strong', {}, 'Offer signed for: '), terms, '.'),
+    h('p', { class: 'muted' }, `Terms vouched for by ${by}. Anyone who completes the offer pays that price to that address and gets the tokens. Share it anywhere.`),
+    h('p', { class: 'mono', id: 'offer-text' }, offer));
 }
 
 async function checkOffer() {
@@ -147,6 +177,7 @@ async function sendFunded(m, outId, label, note) {
 async function sendTake(c) {
   const fresh = await checkedListing(c.l.listTxid); // still ACTIVE, same terms, now
   if (fresh.state !== 'ACTIVE') throw new Error(`the listing is ${fresh.state} now`);
+  if (!fresh.enough) throw new Error(`not bought: ${fresh.agreed} indexer${fresh.agreed > 1 ? 's' : ''} ${fresh.agreed > 1 ? 'report' : 'reports'} this listing, and a TAKE needs ${TAKE_QUORUM} that agree (add one in Settings)`);
   const tip = await esplora.tipHeight();
   const o = await st.vault.reserveNote(); // the tokens come as this public note
   const m = buildTake({ l: fresh.l, sig: c.sig, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: tip });
