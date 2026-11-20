@@ -9,7 +9,7 @@ import { listen } from '../../indexer/src/api.js';
 import { DEFAULT_PROFILE } from '../../indexer/src/constants.js';
 import { deployEnv, fr, mockVerifier, spend, tx as helperTx } from '../../indexer/test/helpers.js';
 import { PROFILE } from '../src/profile.js';
-import { REPORTED, crossCheck, profileCheck, profileDiff } from '../src/consensus.js';
+import { REPORTED, crossCheck, profileCheck, profileDiff, refusalAgreed } from '../src/consensus.js';
 import { ANCHOR_MAX_AGE, REFUSAL_DEPTH, anchor, deploySchedule, refusedSpend } from '../src/send.js';
 import { IndexerApi } from '../src/api.js';
 import { Vault } from '../src/keys.js';
@@ -189,11 +189,31 @@ test('4. a refused DEPLOY records no nullifier, and the vault gives back the not
   assert.equal(ok.v.state.notes[0].spent, `block ${ok.H}`);
   assert.equal(refusedSpend(ok.v.state.pending[0], ok.v.state.notes, { revealHeight: ok.H, syncHeight: s2.height, nullifiersKnown: true }), false);
 
-  // the page: after every sync, refused spends give their notes back and say so
+  // not on the primary's word alone: every configured indexer must say so, from its full nullifier list
+  const refusedAt = { revealHeight: H, atLeast: H + REFUSAL_DEPTH - 1 };
+  const servers = await Promise.all([idx, idx, ok.idx].map((x) => listen(x, { port: 0 })));
+  try {
+    const [a, b, c] = servers.map((x) => new IndexerApi(`http://127.0.0.1:${x.address().port}`));
+    assert.deepEqual(await refusalAgreed([a, b], [frHex(nf)], refusedAt), { ok: true, why: null });
+    // an indexer that saw the DEPLOY accepted (another chain of events): the notes stay reserved
+    const spent = await refusalAgreed([a, c], [frHex(ok.nf), frHex(nf)], refusedAt);
+    assert.equal(spent.ok, false);
+    assert.match(spent.why, new RegExp(`${c.base} has its nullifier spent at block ${ok.H}`));
+    const down = { base: 'http://down', status: async () => { throw new Error('connection refused'); }, nullifiers: async () => [] };
+    assert.deepEqual(await refusalAgreed([a, down], [frHex(nf)], refusedAt), { ok: false, why: 'http://down did not answer' });
+    const other = { base: 'http://other', status: async () => ({ ...(await a.status()), deployMaturity: 0 }), nullifiers: async () => [] };
+    assert.match((await refusalAgreed([a, other], [frHex(nf)], refusedAt)).why, /^http:\/\/other follows another profile: deployMaturity 0/);
+    assert.match((await refusalAgreed([a], [frHex(nf)], { ...refusedAt, atLeast: H + 50 })).why, /not yet/);
+    assert.deepEqual(await refusalAgreed([], [frHex(nf)], refusedAt), { ok: false, why: 'no indexer configured' });
+  } finally {
+    for (const x of servers) x.close();
+  }
+
+  // the page: after every sync, refused spends give their notes back, once every indexer agrees, and say so
   const pg = page();
   const sn = pg.slice(pg.indexOf('export async function syncNotes('));
   assert.ok(sn.indexOf('await checkOwned(s);') < sn.indexOf('refused = await settleRefused(s);'), 'once the notes\' spends are known');
-  assert.match(pg, /if \(!refusedSpend\(p, v\.state\.notes, [^\n]*\)\) continue;\s*await v\.releaseInputs\(p\.inputs\);/);
+  assert.match(pg, /if \(!refusedSpend\(p, v\.state\.notes, [^\n]*\)\) continue;[\s\S]{0,400}await refusalAgreed\(indexers, nfs, [^\n]*\);\s*if \(!agreed\.ok\) \{[\s\S]{0,200}continue;\s*\}\s*await v\.releaseInputs\(p\.inputs\);/);
 });
 
 test('5. every indexer lying together on N and D: the vault refuses to mint, deploy, burn or spend, names each, and still waits N', async () => {

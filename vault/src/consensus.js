@@ -49,6 +49,31 @@ export async function profileCheck(apis) {
   return { answered: answers.length, problems: profileProblems(answers) };
 }
 
+/**
+ * Before the vault gives back the notes of a spend it believes refused (send.js refusedSpend, from the
+ * primary indexer's sync): every configured indexer must answer, follow the vault's profile, have
+ * passed block `atLeast`, and list none of `nullifiers` (hex) in its full list since `revealHeight`
+ * (never a question about one nullifier). A primary that hid a spend's nullifiers would otherwise have
+ * the vault offer spent notes again. Returns { ok, why }.
+ */
+export async function refusalAgreed(apis, nullifiers, { revealHeight, atLeast }) {
+  if (!apis.length) return { ok: false, why: 'no indexer configured' };
+  const mine = new Set(nullifiers);
+  const settled = await Promise.allSettled(apis.map(async (a) => ({ status: await a.status(), list: await a.nullifiers(revealHeight) })));
+  for (const [i, r] of settled.entries()) {
+    const base = apis[i].base;
+    if (r.status === 'rejected') return { ok: false, why: `${base} did not answer` };
+    const { status, list } = r.value;
+    const diff = profileDiff(status);
+    if (diff.length) return { ok: false, why: `${base} follows another profile: ${diff.join('; ')}` };
+    if (!Number.isInteger(status.height) || status.height < atLeast) return { ok: false, why: `${base} is at block ${status.height}, not yet ${atLeast}` };
+    if (list === null) return { ok: false, why: `${base} has no /nullifiers` };
+    const spent = list.find((n) => mine.has(n.nullifier));
+    if (spent) return { ok: false, why: `${base} has its nullifier spent at block ${spent.height}` };
+  }
+  return { ok: true, why: null };
+}
+
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function ask(api, ticker) {

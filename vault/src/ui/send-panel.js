@@ -195,7 +195,7 @@ export function renderPending() {
         renderPending();
       }));
       return h('tr', {},
-        h('td', {}, p.kind), h('td', {}, p.status),
+        h('td', {}, p.kind), h('td', {}, p.refusal ? `${p.status}; ${p.refusal}` : p.status),
         h('td', { class: 'mono' }, p.commitTxid ? short(p.commitTxid) : '—'),
         h('td', { class: 'mono' }, p.revealTxid ? short(p.revealTxid) : '—'),
         h('td', {}, again));

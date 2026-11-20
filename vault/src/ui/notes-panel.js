@@ -5,9 +5,9 @@ import { defaultCache } from '../cache.js';
 import { frHex } from '../fr.js';
 import { Sync } from '../sync.js';
 import { matchNotes } from '../match.js';
-import { refusedSpend } from '../send.js';
+import { REFUSAL_DEPTH, refusedSpend } from '../send.js';
 import { $, esplora, explorerTx, fill, h, indexer, indexers, report, short, st, staticWarnings, units } from './context.js';
-import { digestAgreement, agreementText } from '../consensus.js';
+import { agreementText, digestAgreement, refusalAgreed } from '../consensus.js';
 import { balances } from './send-panel.js';
 import { processDeploys } from './deploy-panel.js';
 import { syncListings } from './market-panel.js';
@@ -91,7 +91,15 @@ async function settleRefused(s) {
   for (const p of (v.state.pending ?? []).filter((x) => x.status === 'broadcast' && x.inputs?.length && x.revealTxid)) {
     if (!p.inputs.every((id) => v.state.notes.find((n) => n.id === id)?.spent === 'no')) continue;
     const rs = await esplora.txStatus(p.revealTxid).catch(() => null);
-    if (!refusedSpend(p, v.state.notes, { revealHeight: rs?.confirmed ? rs.block_height : null, syncHeight: s.height, nullifiersKnown: s.nullifiersKnown })) continue;
+    const revealHeight = rs?.confirmed ? rs.block_height : null;
+    if (!refusedSpend(p, v.state.notes, { revealHeight, syncHeight: s.height, nullifiersKnown: s.nullifiersKnown })) continue;
+    // every indexer must agree, not only the primary this sync read: else the notes stay reserved, and the next sync asks again
+    const nfs = await Promise.all(v.state.notes.filter((n) => p.inputs.includes(n.id)).map(async (n) => frHex(await v.nullifier(n))));
+    const agreed = await refusalAgreed(indexers, nfs, { revealHeight, atLeast: revealHeight + REFUSAL_DEPTH - 1 });
+    if (!agreed.ok) {
+      await v.updatePending(p.id, { refusal: `looks refused, but ${agreed.why}: its notes stay reserved` });
+      continue;
+    }
     await v.releaseInputs(p.inputs);
     await v.updatePending(p.id, { status: 'refused by the indexers' });
     back.push(p);
