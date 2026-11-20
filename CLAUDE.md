@@ -64,8 +64,10 @@ web/build.sh            # the phone test page, in web/dist/ (see circuit/web/REA
 explorer's demo data regenerate byte for byte, and holds `indexer-rs` and `circuit` to `cargo fmt` and `clippy -D warnings`
 (`circuit/rustfmt.toml`: lines of 160, so that formatting moves no line `docs/AUDIT.md` cites). Both crates pin their Rust in
 `rust-toolchain.toml` (1.95.0, with rustfmt and clippy): the CI and every machine use the same compiler and the same lints.
-The pinned toolchain comes without the WebAssembly targets: `cd circuit && rustup target add wasm32-unknown-unknown
-wasm32-wasip1-threads` once, before `./build-wasm.sh` or `vault/tools/prover.sh`.
+`circuit/rust-toolchain.toml` also names the two WebAssembly targets, and the CI rebuilds the two modules the vault ships
+(`vault/tools/prover.sh --check`): it fails unless they are the committed bytes, so a change to `circuit/` goes with rebuilt
+`vault/prover/*.wasm` in the same pull request. The script builds as from an x86_64 Linux host on every machine
+(`vault/tools/rustc-host.sh` says why the host triple would otherwise change the bytes).
 
 ## Status (draft v0.3)
 

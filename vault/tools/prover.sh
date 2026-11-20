@@ -7,10 +7,14 @@
 #
 # Same cargo commands as circuit/build-wasm.sh, plus --remap-path-prefix: rustc writes the source
 # path of every crate into panic messages, and those paths name this machine (CLAUDE.md, hard
-# requirement 5) and differ from one machine to the next. With the prefixes mapped to /sh20 and
-# /cargo, the same toolchain gives the same bytes anywhere (test/prover.test.js compares them).
+# requirement 5) and differ from one machine to the next: the prefixes are mapped to /sh20 and /cargo.
 # The flags go through `cargo --config`, which adds them to circuit/.cargo/config.toml (its exports
 # for the threaded build); a RUSTFLAGS variable would replace that file's flags.
+#
+# The machine's host triple changes the bytes too, through the symbol hashes; tools/rustc-host.sh
+# says how and builds as from x86_64-unknown-linux-gnu everywhere. With both, the Rust pinned in
+# circuit/rust-toolchain.toml gives the same two files on a macOS arm64 laptop and on a Linux x86_64
+# CI runner (checked on 2026-11-20), and the CI rebuilds them on every push (--check).
 #
 #   tools/prover.sh            build and copy
 #   tools/prover.sh --check    build and fail if the bytes differ from the committed ones
@@ -21,7 +25,9 @@ cargo_home="${CARGO_HOME:-$HOME/.cargo}"
 target="$here/prover/.target"
 remap="[\"--remap-path-prefix=$repo=/sh20\", \"--remap-path-prefix=$cargo_home=/cargo\"]"
 export CARGO_TARGET_DIR="$target"
-unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS
+export RUSTC_WRAPPER="$here/tools/rustc-host.sh"
+# each of these would change the flags or the crate ids, hence the bytes
+unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS RUSTC_WORKSPACE_WRAPPER __CARGO_DEFAULT_LIB_METADATA
 cd "$repo/circuit"
 cargo build -q --lib --release --locked --target wasm32-unknown-unknown --no-default-features --config "target.wasm32-unknown-unknown.rustflags = $remap"
 cargo build -q --lib --release --locked --target wasm32-wasip1-threads --no-default-features --features parallel --config "target.wasm32-wasip1-threads.rustflags = $remap"
@@ -38,7 +44,22 @@ for (const [f, names] of Object.entries(need)) {
   if (missing.length) { console.error(f + " lacks " + missing.join(", ")); process.exit(1); }
 }' "$single" "$threads"
 if [ "${1:-}" = "--check" ]; then
-  cmp "$single" "$here/prover/sh20_circuit.wasm" && cmp "$threads" "$here/prover/sh20_circuit_threads.wasm"
+  # Each comparison counts by itself. Written `cmp a && cmp b`, a difference in the first module did
+  # not stop the script (`set -e` ignores a failure on the left of `&&`) and "OK" was printed anyway.
+  same=yes
+  cmp "$single" "$here/prover/sh20_circuit.wasm" || same=no
+  cmp "$threads" "$here/prover/sh20_circuit_threads.wasm" || same=no
+  if [ "$same" != yes ]; then
+    {
+      echo "FAIL: the committed modules are not what this source builds ($(rustc --version))."
+      echo "built:"
+      shasum -a 256 "$single" "$threads" | sed "s#  $target/#  #"
+      echo "committed:"
+      shasum -a 256 "$here/prover/sh20_circuit.wasm" "$here/prover/sh20_circuit_threads.wasm" | sed "s#  $here/#  #"
+      echo "A change to circuit/ changes the modules: run tools/prover.sh and commit vault/prover/*.wasm with it."
+    } >&2
+    exit 1
+  fi
   echo "OK: the committed modules are what this toolchain builds ($(rustc --version))"
 else
   cp "$single" "$here/prover/sh20_circuit.wasm"
