@@ -408,7 +408,7 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | `src/spend.js` | inputs, dummy inputs, sealed outputs, body, signatures and the prover's witness |
 | `src/prover.js`, `src/prover-worker.js` | the WebAssembly prover, threads or one thread (circuit/web/host.js) |
 | `src/taproot.js` | the witness carrier: commit output, reveal, BIP341 signature message |
-| `prover/`, `tools/prover.sh` | the two prover modules, built from `circuit/` with remapped paths |
+| `prover/`, `tools/prover.sh`, `tools/rustc-host.sh` | the two prover modules, built from `circuit/` with remapped paths and one host line, so that every machine gives the same bytes |
 | `src/notekeys.js` | note keys, address, scanning, nullifiers: `circuit/js`, nothing of its own |
 | `src/sync.js`, `src/tree.js`, `src/cache.js` | private sync: local tree, paths, spends, IndexedDB cache |
 | `src/mint.js` | MINT pre-flight checks, coin selection, transaction and PSBT |
