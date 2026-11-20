@@ -183,6 +183,40 @@ Two remarks on the file, neither a doubt about a rule:
 - §5 writes `W = 100` among the profile constants and the scenario runs with `W = 12` (`scenario.profile`,
   `sections`): an implementation must read `W`, `K_min`, `N`, `D` and `A` from the profile, never fix them.
 
+## The payScript rule, and the batches of block 17 (2026-11-20)
+
+`indexer-rs` follows the new rule of `SPEC-WIRE.md` §4 (a `payScript` whose first byte is `0x6a` is rejected, in a
+DEPLOY as in a LIST), read alone, and replays the vectors that go with it: the 17 blocks, the 19 refusals, the 25
+verifier calls, the 32 carrier cases, the 8 listings of `final`, and the `reorg` part. **No contradiction** between
+the text and the vectors. The rule is one check in the decoder. Nothing changed for batches: the four new batches of
+block 17 and the three carrier cases that pin B1 and B2 replayed with the code written before they existed.
+
+The text leaves nothing open here. Two points are pinned less than the text says:
+
+| # | Point | Chosen in `indexer-rs` | Vectors |
+| --- | --- | --- | --- |
+| P1 | **Which scripts the rule refuses.** The text says the first byte, whatever follows. | Any `payScript` that starts with `0x6a` is refused (`6a` alone, `6a` and 33 more bytes); `0x6a` after the first byte is not (`51 6a` deploys). | both refused envelopes carry the same six bytes, `OP_RETURN <"SH20">`: an indexer that refused that script only, or any `payScript` holding a `0x6a`, would pass |
+| P2 | **The refused DEPLOY and the height of its commit.** §5: an envelope that does not decode needs no height, so an indexer without the height refuses this DEPLOY and goes on. | As the text says: refused, no stop. | the refused DEPLOY of block 15 gives `prevHeight`: silent on an indexer that lacks it |
+
+P1 can change a digest. P2 cannot (an indexer that stops has no digest for the block); it decides whether two
+indexers given the same incomplete data both go on. Both have a test in this crate (`tests/rules.rs`,
+`pay_script_must_not_be_an_op_return`).
+
+Pinned by the vectors since this round, where the batch section above said "silent" or had only this crate's tests:
+
+- a `0x03` envelope that does not decode stays in its batch, `SH20` with no type byte beside a TRANSFER refuses the
+  transaction, an envelope of another version between two TRANSFERs takes no index (three carrier cases: B1, B2);
+- a batch whose transaction spends a lock: its TRANSFERs, then CLOSED (B3);
+- the proof is checked last and a refused proof records nothing: in block 17 a member is refused for its proof, and
+  the next member of the same batch spends one of its nullifiers and is accepted. It is the first verifier call of the
+  vectors that answers no: `verifierCalls` lists it like the others;
+- a TRANSFER applied alone is refused when a later batch of the block carries its bytes again, and the other member
+  of that batch applies.
+
+One remark on the file: the two envelopes with an OP_RETURN `payScript` are in blocks 15 and 16 only, not in
+`envelopes` (`sections.envelopes` says so). The test checks that they are the only unlisted ones, and that each is one
+byte away from an envelope that decodes: with the first byte of its `payScript` changed, the decoder accepts it.
+
 The sections below are the record of the first pass, before the resolution. They are left as written.
 
 ## Result
