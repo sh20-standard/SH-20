@@ -37,11 +37,13 @@ export function ownOrigins(loc = globalThis.location) {
 }
 
 /**
- * 'headers' (isolated already), 'reloading' (the worker is in place: the page reloads through it),
- * or why the page stays on one thread: 'not-a-subdomain-gateway', 'unavailable', 'refused'.
- * The same steps as circuit/web/app.js `ensureIsolation`, limited to subdomain gateways.
+ * 'headers' (isolated already), or why the page stays on one thread: 'not-a-subdomain-gateway',
+ * 'unavailable', 'refused'. When the worker is put in place the page reloads through it and this
+ * never returns, unless the browser drops the reload: after `reloadWaitMs` the page goes on with
+ * one thread ('refused') rather than stay blank. The same steps as circuit/web/app.js
+ * `ensureIsolation`, limited to subdomain gateways.
  */
-export async function ensureIsolation() {
+export async function ensureIsolation({ reloadWaitMs = 5000 } = {}) {
   if (canShare()) return 'headers';
   if (gatewayKind() !== 'subdomain') return 'not-a-subdomain-gateway';
   if (!globalThis.isSecureContext || !('serviceWorker' in navigator)) return 'unavailable';
@@ -56,7 +58,9 @@ export async function ensureIsolation() {
       else worker.addEventListener('statechange', () => worker.state === 'activated' && done());
     });
     location.reload(); // the reloaded page is served through the service worker, with the headers
-    return 'reloading';
+    // the browser can drop this reload (headless Chrome, when the page reloads with requests in flight through the worker)
+    await new Promise((done) => setTimeout(done, reloadWaitMs));
+    return 'refused';
   } catch {
     return 'unavailable';
   }

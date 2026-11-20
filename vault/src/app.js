@@ -40,9 +40,9 @@ if (gatewayKind() === 'path') {
 }
 
 // On a subdomain gateway the page isolates itself with the service worker and reloads once
-// (isolation.js), before anything else runs; never on a path gateway.
+// (isolation.js), before anything else runs; never on a path gateway. If the reload is dropped, the
+// page goes on with one thread.
 const isolation = await ensureIsolation();
-if (isolation === 'reloading') await new Promise(() => {});
 
 // Note keys and sealing go through WebCrypto's X25519 (circuit/js/webcrypto.js): without it, stop here.
 if (!(await available())) {

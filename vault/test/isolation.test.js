@@ -49,6 +49,32 @@ test('the service worker is never registered on a path gateway', async () => {
   }
 });
 
+test('a dropped reload does not leave the page blank: after a while it goes on with one thread', async () => {
+  const saved = Object.fromEntries(['location', 'isSecureContext', 'crossOriginIsolated', 'sessionStorage'].map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  const nav = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const session = new Map();
+  let reloads = 0;
+  Object.defineProperty(globalThis, 'location', { value: { pathname: '/vault/', hostname: 'bafy.ipfs.localhost', reload: () => { reloads++; } }, configurable: true }); // a reload the browser drops
+  Object.defineProperty(globalThis, 'sessionStorage', { value: { getItem: (k) => session.get(k) ?? null, setItem: (k, v) => session.set(k, v) }, configurable: true });
+  Object.assign(globalThis, { isSecureContext: true, crossOriginIsolated: false });
+  Object.defineProperty(globalThis, 'navigator', { value: { serviceWorker: { controller: null, register: async () => ({ active: { state: 'activated' } }) } }, configurable: true });
+  try {
+    const t = Date.now();
+    assert.equal(await ensureIsolation({ reloadWaitMs: 50 }), 'refused');
+    assert.ok(Date.now() - t >= 45, 'it waits for the reload first');
+    assert.equal(reloads, 1);
+    assert.equal(await ensureIsolation({ reloadWaitMs: 50 }), 'refused', 'and asks once per tab');
+    assert.equal(reloads, 1);
+  } finally {
+    for (const [k, d] of Object.entries(saved)) {
+      if (d) Object.defineProperty(globalThis, k, d);
+      else delete globalThis[k];
+    }
+    if (nav) Object.defineProperty(globalThis, 'navigator', nav);
+  }
+  assert.ok(!/await new Promise\(\(\) => \{\}\);\n\n\/\/ Note keys/.test(readFileSync(new URL('../src/app.js', import.meta.url), 'utf8')), 'app.js no longer waits forever after ensureIsolation');
+});
+
 test('the pool size: the cores reported, at least 6 on an iPhone (circuit/web/host.js)', () => {
   assert.equal(defaultThreads({ hardwareConcurrency: 4, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X)' }), 6);
   assert.equal(defaultThreads({ hardwareConcurrency: 10, userAgent: 'Mozilla/5.0 (Macintosh)' }), 10);
