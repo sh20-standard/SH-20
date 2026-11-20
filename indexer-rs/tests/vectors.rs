@@ -106,25 +106,26 @@ fn scenario_profile(sc: &Value) -> Profile {
     }
 }
 
-/// The whole scenario: for every block the root, the events, `eventsH` and the digest; then the
-/// refusals, the inputs of every verifier call, and the final state.
-#[test]
-fn scenario() {
-    let v = vectors();
-    let sc = &v["scenario"];
-    let profile = scenario_profile(sc);
-    let asked = Rc::new(RefCell::new(Vec::new()));
-    let mut indexer = Indexer::new(profile, Box::new(Recording(asked.clone())));
+/// What a replay gave, to compare with the vectors.
+#[derive(Default)]
+struct Replay {
+    /// (height, txid, index in a batch) of every refusal, in order.
+    rejected: Vec<(u64, String, Option<u64>)>,
+    /// (height, the nine inputs) of every call the verifier got, in order.
+    calls: Vec<(u64, Vec<String>)>,
+    accepted_spends: usize,
+}
 
-    let blocks = sc["blocks"].as_array().unwrap();
-    let after = sc["after"].as_array().unwrap();
-    assert_eq!(blocks.len(), 13);
+/// Applies `blocks` and checks each against its entry of `after`: the root, the events,
+/// `eventsH` and the digest.
+fn replay_and_check(
+    indexer: &mut Indexer,
+    asked: &Rc<RefCell<Vec<PublicInputs>>>,
+    blocks: &[Value],
+    after: &[Value],
+) -> Replay {
     assert_eq!(blocks.len(), after.len());
-    let mut rejected: Vec<(u64, String)> = Vec::new();
-    let mut accepted_spends = 0;
-    // (height, the nine inputs) of every call the verifier got, in order
-    let mut calls: Vec<(u64, Vec<String>)> = Vec::new();
-
+    let mut out = Replay::default();
     for (b, want) in blocks.iter().zip(after) {
         let block = block_from_vector(b).unwrap();
         let h = block.height;
@@ -139,9 +140,9 @@ fn scenario() {
         assert_eq!(indexer.digest(), got.digest);
         assert!(indexer.supply_holds(), "supply identity after block {h}");
         for r in &got.rejected {
-            rejected.push((u64::from(h), hex(&r.txid)));
+            out.rejected.push((u64::from(h), hex(&r.txid), r.envelope.map(u64::from)));
         }
-        accepted_spends += got
+        out.accepted_spends += got
             .events
             .iter()
             .filter(|e| {
@@ -150,64 +151,116 @@ fn scenario() {
             })
             .count();
         for inputs in asked.borrow_mut().drain(..) {
-            calls.push((u64::from(h), inputs.as_fields().iter().map(fr_hex).collect()));
+            out.calls.push((u64::from(h), inputs.as_fields().iter().map(fr_hex).collect()));
         }
     }
+    out
+}
 
-    // the refusals: exactly the ones listed
-    let want_rejected: Vec<(u64, String)> = sc["rejected"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|r| (r["height"].as_u64().unwrap(), s(r, "txid").to_string()))
-        .collect();
-    assert_eq!(want_rejected.len(), 7);
-    assert_eq!(rejected, want_rejected);
-
-    // the verifier: the same calls, in the same order, each with the same nine inputs
-    let want_calls = sc["verifierCalls"].as_array().unwrap();
-    assert_eq!(want_calls.len(), 11);
+/// The verifier got the calls the vectors list, in the same order, each with the same nine
+/// inputs; and each call belongs to the envelope the vectors name (`envelope` in a batch).
+fn check_calls(calls: &[(u64, Vec<String>)], want_calls: &[Value], blocks: &[Value]) {
     assert_eq!(calls.len(), want_calls.len(), "number of verifier calls");
-    // the proof is checked last and every proof of the scenario is the valid one: the calls
-    // are the accepted spends, no more
-    assert_eq!(calls.len(), accepted_spends);
     for ((height, inputs), want) in calls.iter().zip(want_calls) {
         let want_inputs: Vec<&str> =
             want["publicInputs"].as_array().unwrap().iter().map(|x| x.as_str().unwrap()).collect();
         assert_eq!(want_inputs.len(), 9);
         assert_eq!(*height, want["height"].as_u64().unwrap(), "height of the call for {}", s(want, "txid"));
         assert_eq!(inputs, &want_inputs, "inputs of the call for {}", s(want, "txid"));
-        // the call belongs to the transaction the vectors name: its spend has this nf0
         let block = blocks.iter().find(|b| b["height"].as_u64() == Some(*height)).unwrap();
         let tx = block_from_vector(block).unwrap().txs.into_iter().find(|t| hex(&t.txid) == s(want, "txid")).unwrap();
-        let env = Envelope::decode(&envelopes(&tx)[0]).unwrap();
+        let found = sh20_indexer::chain::counted(&tx);
+        // `envelope` is given exactly when the transaction is a batch
+        assert_eq!(want.get("envelope").is_some(), sh20_indexer::chain::is_batch(&found), "{}", s(want, "txid"));
+        let index = want.get("envelope").map_or(0, |i| i.as_u64().unwrap() as usize);
+        let env = Envelope::decode(&found[index].bytes).unwrap();
         let mut nf0 = env.spend().unwrap().nf[0];
         nf0.reverse();
         assert_eq!(hex(&nf0), want_inputs[1]);
     }
+}
 
-    // the digest of the last block, as announced with the maturity rule
-    assert!(hex(&indexer.digest()).starts_with("58ee8a6c"));
-    assert_eq!(hex(&indexer.digest()), s(after.last().unwrap(), "digest"));
+/// The refusals of the vectors: (height, txid, index in a batch).
+fn wanted_refusals(list: &Value) -> Vec<(u64, String, Option<u64>)> {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (r["height"].as_u64().unwrap(), s(r, "txid").to_string(), r.get("envelope").map(|i| i.as_u64().unwrap()))
+        })
+        .collect()
+}
+
+/// Checks the state against a `final` object: the tree size, the listings, and for each token
+/// named (by its ticker in lower case) the counters the vectors give.
+fn check_final(indexer: &Indexer, f: &Value) {
+    let mut tokens = 0;
+    for (key, want) in f.as_object().unwrap() {
+        match key.as_str() {
+            "treeSize" => assert_eq!(indexer.tree_size(), want.as_u64().unwrap()),
+            "listings" => {
+                let mut got: Vec<(String, &str)> =
+                    indexer.listings().map(|(id, l)| (hex(id), l.status.name())).collect();
+                got.sort();
+                let mut wanted: Vec<(String, &str)> =
+                    want.as_object().unwrap().iter().map(|(id, st)| (id.clone(), st.as_str().unwrap())).collect();
+                wanted.sort();
+                assert_eq!(got, wanted);
+            }
+            ticker => {
+                let token = indexer.token(&Ticker::parse(&ticker.to_uppercase()).unwrap()).unwrap();
+                for (field, value) in want.as_object().unwrap() {
+                    match field.as_str() {
+                        "mints" => assert_eq!(token.mints, dec(want, "mints"), "{ticker}.mints"),
+                        "burned" => assert_eq!(token.burned, dec(want, "burned"), "{ticker}.burned"),
+                        "pool" => assert_eq!(token.pool, dec(want, "pool"), "{ticker}.pool"),
+                        "teamUnlocked" => {
+                            assert_eq!(Value::Bool(token.team_unlocked), *value, "{ticker}.teamUnlocked")
+                        }
+                        other => panic!("final.{ticker}.{other}: a field this test does not know"),
+                    }
+                }
+                tokens += 1;
+            }
+        }
+    }
+    assert!(tokens >= 2);
+}
+
+/// The whole scenario: for every block the root, the events, `eventsH` and the digest; then the
+/// refusals, the inputs of every verifier call, and the final state.
+#[test]
+fn scenario() {
+    let v = vectors();
+    let sc = &v["scenario"];
+    let profile = scenario_profile(sc);
+    // the window is read from the profile: W = 12 here, not the 100 of SPEC-WIRE §5
+    assert_eq!((profile.anchor_window, profile.deploy_maturity), (12, 3));
+    let asked = Rc::new(RefCell::new(Vec::new()));
+    let mut indexer = Indexer::new(profile, Box::new(Recording(asked.clone())));
+
+    let blocks = sc["blocks"].as_array().unwrap();
+    let after = sc["after"].as_array().unwrap();
+    assert_eq!(blocks.len(), 17);
+    let replay = replay_and_check(&mut indexer, &asked, blocks, after);
+
+    // the refusals: exactly the ones listed, with the index of the envelope in a batch
+    let want_rejected = wanted_refusals(&sc["rejected"]);
+    assert_eq!(want_rejected.len(), 15);
+    assert_eq!(replay.rejected, want_rejected);
+
+    // the verifier: the same calls, in the same order, each with the same nine inputs
+    let want_calls = sc["verifierCalls"].as_array().unwrap();
+    assert_eq!(want_calls.len(), 18);
+    check_calls(&replay.calls, want_calls, blocks);
+    // the proof is checked last and every proof of the scenario is the valid one: the calls
+    // are the accepted spends, no more
+    assert_eq!(replay.calls.len(), replay.accepted_spends);
 
     // the final state
     let f = &sc["final"];
-    assert_eq!(indexer.tree_size(), f["treeSize"].as_u64().unwrap());
-    let sh20 = indexer.token(&Ticker::SH20).unwrap();
-    assert_eq!(sh20.mints, dec(&f["sh20"], "mints"));
-    assert_eq!(sh20.burned, dec(&f["sh20"], "burned"));
-    assert_eq!(sh20.pool, dec(&f["sh20"], "pool"));
-    let gene = indexer.token(&Ticker::parse("GENE").unwrap()).unwrap();
-    assert_eq!(gene.mints, dec(&f["gene"], "mints"));
-    assert_eq!(gene.pool, dec(&f["gene"], "pool"));
-    assert_eq!(gene.team_unlocked, f["gene"]["teamUnlocked"].as_bool().unwrap());
-    let mut listings: Vec<(String, &str)> = indexer.listings().map(|(id, l)| (hex(id), l.status.name())).collect();
-    listings.sort();
-    let mut want_listings: Vec<(String, &str)> =
-        f["listings"].as_object().unwrap().iter().map(|(id, st)| (id.clone(), st.as_str().unwrap())).collect();
-    want_listings.sort();
-    assert_eq!(want_listings.len(), 7);
-    assert_eq!(listings, want_listings);
+    check_final(&indexer, f);
+    assert_eq!(f["listings"].as_object().unwrap().len(), 7);
     for (status, count) in [
         (ListingStatus::Sold, 2),
         (ListingStatus::Claimed, 1),
@@ -219,6 +272,7 @@ fn scenario() {
     }
 
     // the genesis token is the one the vectors describe
+    let sh20 = indexer.token(&Ticker::SH20).unwrap();
     let g = &v["genesis"];
     assert_eq!(sh20.ticker.as_str(), s(g, "ticker"));
     assert_eq!(sh20.max, dec(g, "max"));
@@ -229,45 +283,166 @@ fn scenario() {
     assert_eq!(sh20.start, profile.activation_height);
 }
 
-/// Every envelope of the scenario is in the `envelopes` section, and every envelope of that
-/// section is carried by the scenario. A transaction carries one envelope, none (block 10 has
-/// a lock spent with no envelope) or two (block 13).
+/// The `reorg` part: after the scenario, roll back to `rollbackTo` and apply the blocks given.
+/// `after` and `final` are what an indexer that never saw the first blocks 16 and 17 computes.
+#[test]
+fn reorg() {
+    let v = vectors();
+    let (sc, r) = (&v["scenario"], &v["reorg"]);
+    let profile = scenario_profile(sc);
+    let asked = Rc::new(RefCell::new(Vec::new()));
+    let mut indexer = Indexer::new(profile, Box::new(Recording(asked.clone())));
+    let blocks = sc["blocks"].as_array().unwrap();
+    replay_and_check(&mut indexer, &asked, blocks, sc["after"].as_array().unwrap());
+    let tip_digest = indexer.digest();
+
+    let fork = r["rollbackTo"].as_u64().unwrap() as u32;
+    assert_eq!(fork, 15);
+    indexer.rollback_to(fork).unwrap();
+    assert_eq!(indexer.tip(), Some(fork));
+    assert_eq!(hex(&indexer.digest()), s(&sc["after"][fork as usize - 1], "digest"));
+
+    let new_blocks = r["blocks"].as_array().unwrap();
+    assert_eq!(new_blocks.len(), 2);
+    let replay = replay_and_check(&mut indexer, &asked, new_blocks, r["after"].as_array().unwrap());
+    assert_ne!(indexer.digest(), tip_digest);
+    check_calls(&replay.calls, r["verifierCalls"].as_array().unwrap(), new_blocks);
+    assert_eq!(replay.calls.len(), 1);
+    // `reorg` lists no refusal, and there is none
+    assert!(r.get("rejected").is_none() && replay.rejected.is_empty());
+    check_final(&indexer, &r["final"]);
+
+    // 16' spends again the nullifiers the TRANSFER of the first 16 had spent: accepted only
+    // because the rollback freed them
+    let spends = |block: &Value| -> Vec<[[u8; 32]; 2]> {
+        block_from_vector(block)
+            .unwrap()
+            .txs
+            .iter()
+            .flat_map(counted_envelopes)
+            .filter_map(|e| Envelope::decode(&e).ok().and_then(|env| env.spend().map(|sp| sp.nf)))
+            .collect()
+    };
+    let (first_16, new_16) = (spends(&blocks[15]), spends(&new_blocks[0]));
+    assert_eq!((first_16.len(), new_16.len()), (1, 1));
+    assert_eq!(first_16[0], new_16[0]);
+    assert!(indexer.nullifier_seen(&new_16[0][0]));
+
+    // an indexer that never saw the first 16 and 17 is in the same state
+    let mut never_saw = Indexer::new(profile, Box::new(TestVerifier));
+    for b in blocks[..fork as usize].iter().chain(new_blocks) {
+        never_saw.apply_block(&block_from_vector(b).unwrap()).unwrap();
+    }
+    assert_eq!(never_saw.digest(), indexer.digest());
+    assert_eq!(never_saw.tree_size(), indexer.tree_size());
+    assert_eq!(never_saw.root_at(17), indexer.root_at(17));
+    check_final(&never_saw, &r["final"]);
+    let tokens = |ix: &Indexer| ix.tokens().cloned().collect::<Vec<_>>();
+    assert_eq!(tokens(&never_saw), tokens(&indexer));
+
+    // and rolling back again, then applying the first 16 and 17, gives the scenario's digest back
+    indexer.rollback_to(fork).unwrap();
+    for b in &blocks[fork as usize..] {
+        indexer.apply_block(&block_from_vector(b).unwrap()).unwrap();
+    }
+    assert_eq!(indexer.digest(), tip_digest);
+}
+
+/// Block 17: a batch of three TRANSFERs in one tapscript. Each is judged alone, in order: the
+/// first is accepted, the second spends one of its nullifiers again and is refused, the third
+/// is accepted. The two events share the transaction's txid.
+#[test]
+fn scenario_batch_of_block_17() {
+    use sh20_indexer::Event;
+    let v = vectors();
+    let sc = &v["scenario"];
+    let asked = Rc::new(RefCell::new(Vec::new()));
+    let mut indexer = Indexer::new(scenario_profile(sc), Box::new(Recording(asked.clone())));
+    let blocks: Vec<sh20_indexer::Block> =
+        sc["blocks"].as_array().unwrap().iter().map(|b| block_from_vector(b).unwrap()).collect();
+    for b in &blocks[..16] {
+        indexer.apply_block(b).unwrap();
+    }
+    asked.borrow_mut().clear();
+    let size_before = indexer.tree_size();
+
+    let [batch] = blocks[16].txs.as_slice() else { panic!() };
+    let found = sh20_indexer::chain::counted(batch);
+    assert_eq!(found.len(), 3);
+    assert!(sh20_indexer::chain::is_batch(&found));
+    let names = ["batchA", "batchB", "batchC"];
+    let spends: Vec<sh20_indexer::envelope::Spend> = found
+        .iter()
+        .zip(names)
+        .map(|(c, name)| {
+            assert_eq!(hex(&c.bytes), s(&v["envelopes"][name], "hex"), "{name}: the order of the tapscript");
+            let Envelope::Transfer { spend } = Envelope::decode(&c.bytes).unwrap() else { panic!() };
+            spend
+        })
+        .collect();
+    // the second shares its first nullifier with the first; the third shares none
+    assert_eq!(spends[0].nf[0], spends[1].nf[0]);
+    assert_ne!(spends[0].nf[1], spends[1].nf[1]);
+    assert!(spends[2].nf.iter().all(|nf| !spends[0].nf.contains(nf) && !spends[1].nf.contains(nf)));
+
+    let r = indexer.apply_block(&blocks[16]).unwrap();
+    // two team notes first (by ticker), then the accepted envelopes of the batch, in order
+    let [Event::TeamUnlock { ticker: first, .. }, Event::TeamUnlock { ticker: second, .. }, Event::Transfer { txid: t0, spent: s0 }, Event::Transfer { txid: t2, spent: s2 }] =
+        r.events.as_slice()
+    else {
+        panic!()
+    };
+    assert!(first.0 < second.0);
+    assert_eq!((*t0, *t2), (batch.txid, batch.txid));
+    assert_eq!((s0.nf, s2.nf), (spends[0].nf, spends[2].nf));
+    // the refused envelope appends nothing: the third follows the first in the tree
+    let base = size_before as u32 + 2;
+    assert_eq!((s0.pos, s2.pos), ([base, base + 1, base + 2], [base + 3, base + 4, base + 5]));
+    // one refusal, for the envelope of index 1; the verifier was asked for 0 and 2 only
+    assert_eq!(r.rejected.len(), 1);
+    assert_eq!((r.rejected[0].txid, r.rejected[0].envelope), (batch.txid, Some(1)));
+    let asked_nf: Vec<[u8; 32]> = asked.borrow().iter().map(|i| sh20_indexer::field::fr_to_le(&i.nf[0])).collect();
+    assert_eq!(asked_nf, [spends[0].nf[0], spends[2].nf[0]]);
+}
+
+/// Every envelope of the scenario and of the reorg is in the `envelopes` section, and every
+/// envelope of that section is carried by one of them. A transaction carries one envelope,
+/// none (block 10 has a lock spent with no envelope) or several (block 13: refused; block 17:
+/// a batch).
 #[test]
 fn scenario_carries_the_listed_envelopes() {
     let v = vectors();
     let listed: Vec<Vec<u8>> =
         v["envelopes"].as_object().unwrap().values().map(|e| unhex(s(e, "hex")).unwrap()).collect();
     let mut carried: Vec<Vec<u8>> = Vec::new();
-    let (mut bare, mut several) = (0, 0);
+    let (mut bare, mut batches, mut refused_whole) = (0, 0, 0);
     let mut deploys_in_op_return = 0;
-    for b in v["scenario"]["blocks"].as_array().unwrap() {
+    let all_blocks = v["scenario"]["blocks"].as_array().unwrap().iter().chain(v["reorg"]["blocks"].as_array().unwrap());
+    for b in all_blocks {
         for tx in block_from_vector(b).unwrap().txs {
-            let found = counted_envelopes(&tx);
-            assert_eq!(found, envelopes(&tx), "no envelope of another version in the scenario");
+            let found = sh20_indexer::chain::counted(&tx);
+            assert_eq!(counted_envelopes(&tx), envelopes(&tx), "no envelope of another version in the scenario");
             // a height is given for input 0 of every DEPLOY in a witness, and nowhere else
-            let witness_deploy = matches!(sh20_indexer::chain::counted(&tx).as_slice(), [one]
-                if one.carrier == Carrier::Witness && matches!(Envelope::decode(&one.bytes), Ok(Envelope::Deploy(_))));
+            let is_deploy =
+                |c: &sh20_indexer::chain::Carried| matches!(Envelope::decode(&c.bytes), Ok(Envelope::Deploy(_)));
+            let witness_deploy = matches!(found.as_slice(), [one] if one.carrier == Carrier::Witness && is_deploy(one));
             assert_eq!(tx.vin[0].prev_height.is_some(), witness_deploy);
             assert!(tx.vin[1..].iter().all(|i| i.prev_height.is_none()));
-            deploys_in_op_return += sh20_indexer::chain::counted(&tx)
-                .iter()
-                .filter(|c| {
-                    c.carrier == Carrier::OpReturn && matches!(Envelope::decode(&c.bytes), Ok(Envelope::Deploy(_)))
-                })
-                .count();
+            deploys_in_op_return += found.iter().filter(|c| c.carrier == Carrier::OpReturn && is_deploy(c)).count();
             match found.len() {
                 0 => bare += 1,
                 1 => {}
-                _ => several += 1,
+                _ if sh20_indexer::chain::is_batch(&found) => batches += 1,
+                _ => refused_whole += 1,
             }
-            for env in found {
-                assert!(listed.contains(&env));
-                assert!(Envelope::decode(&env).is_ok());
-                carried.push(env);
+            for c in found {
+                assert!(listed.contains(&c.bytes));
+                assert!(Envelope::decode(&c.bytes).is_ok());
+                carried.push(c.bytes);
             }
         }
     }
-    assert_eq!((bare, several), (1, 1));
+    assert_eq!((bare, batches, refused_whole), (1, 1, 1));
     assert_eq!(deploys_in_op_return, 1);
     assert!(listed.iter().all(|e| carried.contains(e)));
 }
@@ -287,38 +462,64 @@ fn body_hashes() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 12);
+    assert_eq!(checked, 26);
 }
 
-/// The 23 carrier cases: what a transaction carries, as §3 counts it. `expect` is the one
-/// counted envelope, `"none"`, or `"many"`.
+/// What §3 finds in a transaction, in the words of the vectors' `expect`.
+#[derive(Debug, PartialEq)]
+enum Found {
+    None,
+    One(String),
+    Batch(Vec<String>),
+    Many,
+}
+
+fn found_in(tx: &sh20_indexer::Tx) -> Found {
+    let counted = sh20_indexer::chain::counted(tx);
+    match counted.as_slice() {
+        [] => Found::None,
+        [one] => Found::One(hex(&one.bytes)),
+        batch if sh20_indexer::chain::is_batch(batch) => Found::Batch(batch.iter().map(|c| hex(&c.bytes)).collect()),
+        _ => Found::Many,
+    }
+}
+
+fn expected(expect: &Value) -> Found {
+    match expect {
+        Value::Array(list) => Found::Batch(list.iter().map(|e| e.as_str().unwrap().to_string()).collect()),
+        Value::String(text) if text == "none" => Found::None,
+        Value::String(text) if text == "many" => Found::Many,
+        Value::String(text) => Found::One(text.clone()),
+        other => panic!("expect: {other}"),
+    }
+}
+
+/// The carrier cases: what a transaction carries, as §3 counts it. `expect` is the one counted
+/// envelope, `"none"`, a list (a batch) or `"many"`.
 #[test]
 fn carriers() {
     let v = vectors();
     let cases = v["carriers"].as_array().unwrap();
-    assert_eq!(cases.len(), 23);
-    let (mut one, mut none, mut many) = (0, 0, 0);
+    assert_eq!(cases.len(), 29);
+    let (mut one, mut none, mut batch, mut many) = (0, 0, 0, 0);
     for c in cases {
         let name = s(c, "name");
         let tx = tx_from_vector(&c["tx"]).unwrap_or_else(|e| panic!("{name}: {e}"));
-        let found = counted_envelopes(&tx);
-        let got = match found.as_slice() {
-            [] => "none".to_string(),
-            [env] => hex(env),
-            _ => "many".to_string(),
-        };
-        assert_eq!(got, s(c, "expect"), "{name}");
-        match found.len() {
-            0 => none += 1,
-            1 => one += 1,
-            _ => many += 1,
+        let got = found_in(&tx);
+        assert_eq!(got, expected(&c["expect"]), "{name}");
+        match got {
+            Found::None => none += 1,
+            Found::One(_) => one += 1,
+            Found::Batch(_) => batch += 1,
+            Found::Many => many += 1,
         }
     }
-    assert_eq!((one, none, many), (10, 10, 3));
+    assert_eq!((one, none, batch, many), (11, 11, 1, 6));
 }
 
-/// What the state machine does with each carrier case: nothing without a counted envelope, a
-/// refusal with several, and with one, whatever decoding and the rules say.
+/// What the state machine does with each carrier case: nothing without a counted envelope, one
+/// refusal for the transaction with several that are not a batch, one outcome per envelope in a
+/// batch, and with one envelope whatever decoding and the rules say.
 #[test]
 fn carriers_through_the_state_machine() {
     let v = vectors();
@@ -329,12 +530,23 @@ fn carriers_through_the_state_machine() {
         let mut indexer = Indexer::new(Profile::new(1, 0), Box::new(TestVerifier));
         let r = indexer.apply_block(&sh20_indexer::Block { height: 1, txs: vec![tx] }).unwrap();
         let events: Vec<&str> = r.events.iter().map(|e| e.name()).collect();
-        match s(c, "expect") {
-            "none" => assert!(events == ["GENESIS"] && r.rejected.is_empty(), "{name}"),
-            "many" => assert!(events == ["GENESIS"] && r.rejected.len() == 1, "{name}"),
-            // "SH20" alone counts and is refused; every other single envelope here is a free SH20 mint
-            "53483230" => assert!(events == ["GENESIS"] && r.rejected.len() == 1, "{name}"),
-            _ => assert!(events == ["GENESIS", "MINT"] && r.rejected.is_empty(), "{name}"),
+        let indexes: Vec<Option<u32>> = r.rejected.iter().map(|x| x.envelope).collect();
+        match expected(&c["expect"]) {
+            Found::None => assert!(events == ["GENESIS"] && r.rejected.is_empty(), "{name}"),
+            Found::Many => assert!(events == ["GENESIS"] && indexes == [None], "{name}"),
+            Found::Batch(list) => {
+                // in block 1 their anchors are in the future: each is refused alone, by its index
+                assert_eq!(events, ["GENESIS"], "{name}");
+                assert_eq!(indexes, (0..list.len() as u32).map(Some).collect::<Vec<_>>(), "{name}");
+            }
+            Found::One(env) => match Envelope::decode(&unhex(&env).unwrap()) {
+                // every single MINT of the cases is a free SH20 mint
+                Ok(Envelope::Mint { .. }) => {
+                    assert!(events == ["GENESIS", "MINT"] && r.rejected.is_empty(), "{name}")
+                }
+                // "SH20" alone counts and does not decode; a TRANSFER is anchored in the future
+                _ => assert!(events == ["GENESIS"] && indexes == [None], "{name}"),
+            },
         }
     }
 }
@@ -547,6 +759,7 @@ fn sections_describe_the_parts() {
         "scenario.blocks",
         "scenario.verifierCalls",
         "scenario.after",
+        "reorg",
     ] {
         assert!(sections.contains_key(name), "{name} has no description");
     }
@@ -558,8 +771,10 @@ fn sections_describe_the_parts() {
         .flat_map(|c| c["tx"]["vin"].as_array().unwrap())
         .filter(|i| i.get("coinbase").is_some())
         .collect();
-    assert_eq!(coinbase.len(), 1);
-    assert_eq!(coinbase[0]["coinbase"], Value::Bool(true));
+    // twice: once with no witness, once with a witness that is not read
+    assert_eq!(coinbase.len(), 2);
+    assert!(coinbase.iter().all(|i| i["coinbase"] == Value::Bool(true)));
+    assert_eq!(coinbase.iter().filter(|i| i["witness"].as_array().is_some_and(|w| !w.is_empty())).count(), 1);
     assert!(tx_from_vector(&serde_json::json!({"vin": [{"coinbase": true}], "vout": []})).unwrap().vin[0].coinbase);
 }
 
