@@ -10,13 +10,13 @@ with the reference: Poseidon is [`light-poseidon`](https://crates.io/crates/ligh
 `ark-bn254`), BIP340 is the [`secp256k1`](https://crates.io/crates/secp256k1) crate (libsecp256k1), SHA-256 is `sha2`.
 
 **Result.** It reproduces every value of `indexer/vectors/v0.3.json`: the 17 blocks of the scenario and its reorg, the `bodyHash`
-of every spend envelope, the nine inputs of every verifier call, the 23 carrier cases and the CLAIM.
+of every spend envelope, the nine inputs of every verifier call, the 32 carrier cases and the CLAIM.
 [`docs/SPEC-GAPS.md`](../docs/SPEC-GAPS.md) lists the 28 points the first draft of the spec left open and the six a
 recheck still found, all settled in the spec since, and what the vectors still do not pin.
 
 ```sh
 cd indexer-rs
-cargo test --release      # 69 tests
+cargo test --release      # 71 tests
 cargo run --release -- replay <folder of `bitcoin-cli getblock <hash> 3` JSON files> [options]
 ```
 
@@ -74,7 +74,7 @@ the digests. The first block where they differ holds the event to look at; `--js
 | --- | --- |
 | `tests/vectors.rs` | replays `v0.3.json`: primitives; per block the root, the events, `eventsH`, the digest; the refusals (with the index of the envelope in a batch); every verifier call and its nine inputs; the final state; the `reorg` part (roll back, apply, compare); every `bodyHash`; the carrier cases, alone and through the rules; the CLAIM message and signature; `digest_{A−1}` |
 | `tests/codec.rs` | every envelope of the vectors and of the §4 table, byte for byte; the note leaf; what the decoder refuses |
-| `tests/rules.rs` | what the vectors do not cover: carriers at their edges, batches at their edges, mint window and payment, DEPLOY conditions and maturity, anchors, nullifiers, CANCELLED, CLOSED, CLAIM, team unlocks, reorgs |
+| `tests/rules.rs` | what the vectors do not cover: carriers at their edges, batches at their edges, mint window and payment, DEPLOY conditions and maturity, the `payScript` rule, anchors, nullifiers, CANCELLED, CLOSED, CLAIM, team unlocks, reorgs |
 | `tests/replay_cli.rs` | the `replay` command over the scenario written as `getblock` files |
 
 `tests/rules.rs` states this implementation's reading of the spec. It is not evidence of agreement with the

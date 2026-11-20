@@ -62,7 +62,8 @@ export class Indexer {
   /** Appends a leaf to the tree and records its metadata for wallets. */
   _append(leaf, meta) {
     const pos = this.tree.append(leaf);
-    this.notes.push({ pos, height: this._ctx.height, txid: this._ctx.txid, leaf: hexFr(leaf), ...meta });
+    const at = this._ctx.envelope !== undefined ? { envelope: this._ctx.envelope } : {};
+    this.notes.push({ pos, height: this._ctx.height, txid: this._ctx.txid, ...at, leaf: hexFr(leaf), ...meta });
     return pos;
   }
 

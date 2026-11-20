@@ -410,6 +410,50 @@ fn batch_then_closed() {
     assert!(ix.supply_holds());
 }
 
+/// A member of a batch is judged against the state the members before it left (§3). One
+/// refused for its proof spent nothing, so a later member of the same batch may spend its
+/// nullifiers. A TRANSFER already applied alone is refused when a batch carries it again, in
+/// the same block or a later one, and the other members still apply.
+#[test]
+fn batch_members_see_what_the_ones_before_left() {
+    let mut ix = indexer(1, 0);
+    let mut bad_proof = spend(0, 1);
+    bad_proof.proof[0] ^= 1;
+    let mut shares_one = spend(0, 2);
+    shares_one.nf[0] = bad_proof.nf[0];
+    let first = batch_tx(
+        1,
+        &[
+            Envelope::Transfer { spend: bad_proof.clone() }.encode(),
+            Envelope::Transfer { spend: shares_one.clone() }.encode(),
+        ],
+    );
+    let alone = witness_tx(2, &transfer(0, 3));
+    let copy_first = batch_tx(3, &[transfer(0, 3), transfer(0, 4)]);
+    let r = ix.apply_block(&block(1, vec![first, alone, copy_first])).unwrap();
+    let transfers: Vec<([u8; 32], [[u8; 32]; 2])> = r.events[1..]
+        .iter()
+        .map(|e| match e {
+            Event::Transfer { txid, spent } => (*txid, spent.nf),
+            other => panic!("{}", other.name()),
+        })
+        .collect();
+    assert_eq!(transfers, [(txid(1), shares_one.nf), (txid(2), spend(0, 3).nf), (txid(3), spend(0, 4).nf)]);
+    let refused: Vec<([u8; 32], Option<u32>, &str)> =
+        r.rejected.iter().map(|x| (x.txid, x.envelope, x.reason)).collect();
+    assert_eq!(refused, [(txid(1), Some(0), "invalid proof"), (txid(3), Some(0), "nullifier already seen")]);
+    // of the refused proof's nullifiers, only the one the next member spent is spent
+    assert!(ix.nullifier_seen(&bad_proof.nf[0]) && !ix.nullifier_seen(&bad_proof.nf[1]));
+    assert_eq!(ix.tree_size(), 9);
+
+    // a later block: two copies refused, each alone, around a new TRANSFER that applies
+    let again = batch_tx(4, &[transfer(0, 4), transfer(0, 5), transfer(0, 3)]);
+    let r = ix.apply_block(&block(2, vec![again])).unwrap();
+    assert_eq!(r.events.iter().map(|e| e.name()).collect::<Vec<_>>(), ["TRANSFER"]);
+    assert_eq!(r.rejected.iter().map(|x| x.envelope).collect::<Vec<_>>(), [Some(0), Some(2)]);
+    assert_eq!(ix.tree_size(), 12);
+}
+
 // ---------------------------------------------------------------- blocks and digest
 
 #[test]
@@ -706,6 +750,61 @@ fn deploy_maturity() {
     assert_eq!(three.events_bytes[69..], 3u32.to_le_bytes());
     assert_eq!(six.events_bytes[..69], three.events_bytes[..69]);
     assert_ne!(six.digest, three.digest);
+}
+
+/// §4: a `payScript` may not start with OP_RETURN. The decoder refuses the envelope: the DEPLOY
+/// takes no ticker and needs no commit height, the LIST spends nothing.
+#[test]
+fn pay_script_must_not_be_an_op_return() {
+    const REFUSED: &str = "payScript starts with OP_RETURN";
+    let burn_script: &[u8] = b"\x6a\x04SH20";
+    let paid = |script: &[u8]| Deploy { price: 100, pay_mode: 2, pay_script: script.to_vec(), ..deploy("PAYS", 5) };
+    let mut ix = indexer(1, 0);
+    let (events, rejected) = apply(
+        &mut ix,
+        1,
+        vec![
+            deploy_tx(1, paid(burn_script)),
+            deploy_tx(2, paid(&[0x6a])),
+            // without the height of its commit: an envelope that does not decode needs none (§5)
+            witness_tx(3, &Envelope::Deploy(paid(burn_script)).encode()),
+            // OP_RETURN after the first byte is not refused: the ticker was still free
+            deploy_tx(4, paid(&[0x51, 0x6a])),
+            deploy_tx(5, paid(PAY)),
+            op_return_tx(6, &mint("SH20", 6, None), 0),
+        ],
+    );
+    assert_eq!(events, ["GENESIS", "DEPLOY", "MINT"]);
+    assert_eq!(rejected, [REFUSED, REFUSED, REFUSED, "ticker already deployed"]);
+    assert_eq!(ix.token(&tk("PAYS")).unwrap().pay_script, [0x51, 0x6a]);
+
+    // a LIST: refused, and its spend is still free for the same LIST with another payScript
+    let list = |n: u64, script: &[u8]| {
+        let env = Envelope::List {
+            ticker: Ticker::SH20,
+            amount: 400,
+            price: 5_000,
+            lock_vout: 1,
+            lock_key: [3; 32],
+            pay_script: script.to_vec(),
+            spend: spend(1, 10),
+        }
+        .encode();
+        let mut tx = witness_tx(n, &env);
+        tx.vout = vec![out(5_000, &[0x51]), out(330, &p2tr(&[3; 32]))];
+        tx
+    };
+    let (events, rejected) = apply(&mut ix, 2, vec![list(10, burn_script), list(11, PAY)]);
+    assert_eq!((events, rejected), (vec!["LIST"], vec![REFUSED]));
+    assert!(ix.listing(&txid(10)).is_none());
+    assert_eq!(ix.listing(&txid(11)).unwrap().status, ListingStatus::Active);
+
+    // why the rule (§4): whoever pays `OP_RETURN <"SH20">` adds a second envelope to their own
+    // transaction (§3), which is then refused whole
+    let mut mint_tx = op_return_tx(20, &mint("SH20", 20, None), 0);
+    mint_tx.vout.push(out(100, burn_script));
+    assert_eq!(counted(&mint_tx).len(), 2);
+    assert_eq!(apply(&mut ix, 3, vec![mint_tx]).1, ["more than one envelope"]);
 }
 
 #[test]

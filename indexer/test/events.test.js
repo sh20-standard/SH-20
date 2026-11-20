@@ -100,7 +100,7 @@ test('vectors: the nine public inputs of every verifier call match the envelope 
   const v = JSON.parse(readFileSync(new URL('../vectors/v0.3.json', import.meta.url), 'utf8'));
   const hex = (x) => x.toString(16).padStart(64, '0');
   const roots = new Map(v.scenario.after.map((b) => [b.height, b.root]));
-  assert.equal(v.scenario.verifierCalls.length, 18);
+  assert.equal(v.scenario.verifierCalls.length, 25);
   assert.equal(v.reorg.verifierCalls.length, 1);
   const calls = [...v.scenario.verifierCalls.map((c) => [c, v.scenario.blocks]), ...v.reorg.verifierCalls.map((c) => [c, v.reorg.blocks])];
   for (const [call, blocks] of calls) {
