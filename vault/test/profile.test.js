@@ -190,7 +190,7 @@ test('4. a refused DEPLOY records no nullifier, and the vault gives back the not
   assert.equal(refusedSpend(ok.v.state.pending[0], ok.v.state.notes, { revealHeight: ok.H, syncHeight: s2.height, nullifiersKnown: true }), false);
 
   // not on the primary's word alone: every configured indexer must say so, from its full nullifier list
-  const refusedAt = { from: mintHeight, atLeast: H + REFUSAL_DEPTH - 1 }; // from the block that created the note
+  const refusedAt = { atLeast: H + REFUSAL_DEPTH - 1 };
   const servers = await Promise.all([idx, idx, ok.idx].map((x) => listen(x, { port: 0 })));
   try {
     const [a, b, c] = servers.map((x) => new IndexerApi(`http://127.0.0.1:${x.address().port}`));
@@ -205,12 +205,13 @@ test('4. a refused DEPLOY records no nullifier, and the vault gives back the not
     assert.match((await refusalAgreed([a, other], [frHex(nf)], refusedAt)).why, /^http:\/\/other follows another profile: deployMaturity 0/);
     assert.match((await refusalAgreed([a], [frHex(nf)], { ...refusedAt, atLeast: H + 50 })).why, /not yet/);
     assert.deepEqual(await refusalAgreed([], [frHex(nf)], refusedAt), { ok: false, why: 'no indexer configured' });
-    // the note spent by an earlier spend, before this reveal: the list since the note's block shows it
-    const E = H - 1; // a block before the reveal's
-    const earlier = { base: 'http://earlier', status: () => a.status(), nullifiers: async (f) => (f <= E ? [{ nullifier: frHex(nf), height: E }] : []) };
-    assert.deepEqual(await refusalAgreed([a, earlier], [frHex(nf)], refusedAt), { ok: false, why: `http://earlier has its nullifier spent at block ${E}` });
-    assert.equal((await refusalAgreed([a, earlier], [frHex(nf)], { ...refusedAt, from: H })).ok, true, 'what a list since the reveal alone would miss');
-    assert.match((await refusalAgreed([a], [frHex(nf)], { ...refusedAt, from: -1 })).why, /heights are unknown/);
+    // the note spent earlier, by another spend, whatever height is given: every indexer's full list, from block 0
+    const asked = [];
+    const earlier = (height) => ({ base: 'http://earlier', status: () => a.status(), nullifiers: async (f) => (asked.push(f), [{ nullifier: frHex(nf), height }]) });
+    for (const at of [mintHeight, 0, H + 100]) {
+      assert.deepEqual(await refusalAgreed([a, earlier(at)], [frHex(nf)], refusedAt), { ok: false, why: `http://earlier has its nullifier spent at block ${at}` });
+    }
+    assert.deepEqual([...new Set(asked)], [0], 'never from a height the primary reported');
   } finally {
     for (const x of servers) x.close();
   }
@@ -220,9 +221,9 @@ test('4. a refused DEPLOY records no nullifier, and the vault gives back the not
   const sn = pg.slice(pg.indexOf('export async function syncNotes('));
   assert.ok(sn.indexOf('await checkOwned(s);') < sn.indexOf('refused = await settleRefused(s);'), 'once the notes\' spends are known');
   const settle = pg.slice(pg.indexOf('async function settleRefused('), pg.indexOf('export async function syncNotes('));
-  const order = ['if (!refusedSpend(p, v.state.notes,', 'const from = Math.min(...inputs.map((n) => s.leafHeights[n.pos] ?? -1));',
-    'const agreed = await refusalAgreed(indexers, nfs, { from,', 'if (!agreed.ok) {', 'await v.releaseInputs(p.inputs);'].map((x) => settle.indexOf(x));
-  assert.ok(order.every((x, k) => x > 0 && (k === 0 || x > order[k - 1])), `refused, every indexer since the note's block, then released: ${order}`);
+  const order = ['if (!refusedSpend(p, v.state.notes,', 'const agreed = await refusalAgreed(indexers, nfs, { atLeast:',
+    'if (!agreed.ok) {', 'await v.releaseInputs(p.inputs);'].map((x) => settle.indexOf(x));
+  assert.ok(order.every((x, k) => x > 0 && (k === 0 || x > order[k - 1])), `refused, every indexer's full list, then released: ${order}`);
 });
 
 test('5. every indexer lying together on N and D: the vault refuses to mint, deploy, burn or spend, names each, and still waits N', async () => {

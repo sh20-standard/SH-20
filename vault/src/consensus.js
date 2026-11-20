@@ -52,16 +52,16 @@ export async function profileCheck(apis) {
 /**
  * Before the vault gives back the notes of a spend it believes refused (send.js refusedSpend, from the
  * primary indexer's sync): every configured indexer must answer, follow the vault's profile, have
- * passed block `atLeast`, and list none of `nullifiers` (hex) in its full list since `from`, the block
- * that created the oldest of those notes: the first block where one could have been spent, by this
- * spend or an earlier one (never a question about one nullifier). A primary that hid a nullifier
- * would otherwise have the vault offer spent notes again. Returns { ok, why }.
+ * passed block `atLeast`, and list none of `nullifiers` (hex) in its full list of spent nullifiers,
+ * from block 0, whatever height it gives them: a note spent by this spend or by an earlier one shows
+ * there, and no height the primary reported narrows the search (never a question about one
+ * nullifier). A primary that hid a nullifier would otherwise have the vault offer spent notes
+ * again. Asked only when a spend looks refused. Returns { ok, why }.
  */
-export async function refusalAgreed(apis, nullifiers, { from, atLeast }) {
-  if (!Number.isInteger(from) || from < 0) return { ok: false, why: 'the notes\' heights are unknown' };
+export async function refusalAgreed(apis, nullifiers, { atLeast }) {
   if (!apis.length) return { ok: false, why: 'no indexer configured' };
   const mine = new Set(nullifiers);
-  const settled = await Promise.allSettled(apis.map(async (a) => ({ status: await a.status(), list: await a.nullifiers(from) })));
+  const settled = await Promise.allSettled(apis.map(async (a) => ({ status: await a.status(), list: await a.nullifiers(0) })));
   for (const [i, r] of settled.entries()) {
     const base = apis[i].base;
     if (r.status === 'rejected') return { ok: false, why: `${base} did not answer` };
@@ -70,7 +70,7 @@ export async function refusalAgreed(apis, nullifiers, { from, atLeast }) {
     if (diff.length) return { ok: false, why: `${base} follows another profile: ${diff.join('; ')}` };
     if (!Number.isInteger(status.height) || status.height < atLeast) return { ok: false, why: `${base} is at block ${status.height}, not yet ${atLeast}` };
     if (list === null) return { ok: false, why: `${base} has no /nullifiers` };
-    const spent = list.find((n) => mine.has(n.nullifier) && n.height >= from);
+    const spent = list.find((n) => mine.has(n.nullifier));
     if (spent) return { ok: false, why: `${base} has its nullifier spent at block ${spent.height}` };
   }
   return { ok: true, why: null };
