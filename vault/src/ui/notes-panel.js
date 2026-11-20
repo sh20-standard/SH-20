@@ -94,8 +94,11 @@ async function settleRefused(s) {
     const revealHeight = rs?.confirmed ? rs.block_height : null;
     if (!refusedSpend(p, v.state.notes, { revealHeight, syncHeight: s.height, nullifiersKnown: s.nullifiersKnown })) continue;
     // every indexer must agree, not only the primary this sync read: else the notes stay reserved, and the next sync asks again
-    const nfs = await Promise.all(v.state.notes.filter((n) => p.inputs.includes(n.id)).map(async (n) => frHex(await v.nullifier(n))));
-    const agreed = await refusalAgreed(indexers, nfs, { revealHeight, atLeast: revealHeight + REFUSAL_DEPTH - 1 });
+    const inputs = v.state.notes.filter((n) => p.inputs.includes(n.id));
+    const nfs = await Promise.all(inputs.map(async (n) => frHex(await v.nullifier(n))));
+    // from the block of the oldest note: an earlier spend of one would have been refused here too
+    const from = Math.min(...inputs.map((n) => s.leafHeights[n.pos] ?? -1));
+    const agreed = await refusalAgreed(indexers, nfs, { from, atLeast: revealHeight + REFUSAL_DEPTH - 1 });
     if (!agreed.ok) {
       await v.updatePending(p.id, { refusal: `looks refused, but ${agreed.why}: its notes stay reserved` });
       continue;

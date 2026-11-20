@@ -143,7 +143,7 @@ async function deployBurning(age) {
   for (let i = 1; i < REFUSAL_DEPTH; i++) c.block();
   const pid = await v.addPending({ kind: 'DEPLOY', inputs: [note.id], revealTxid });
   await v.updatePending(pid, { status: 'broadcast' });
-  return { idx, v, note, nf, r, H, pid };
+  return { idx, v, note, nf, r, H, pid, mintHeight: mint.height };
 }
 
 /** The vault's sync, and the spent status of its notes as notes-panel.js checkOwned sets it. */
@@ -164,7 +164,7 @@ async function synced(idx, v) {
 
 test('4. a refused DEPLOY records no nullifier, and the vault gives back the notes it had reserved', async () => {
   // refused: its commit is one block old, not N
-  const { idx, v, note, nf, r, H, pid } = await deployBurning(1);
+  const { idx, v, note, nf, r, H, pid, mintHeight } = await deployBurning(1);
   assert.deepEqual(r.rejected.map((x) => x.reason), [`DEPLOY commit confirmed less than ${PROFILE.deployMaturity} blocks before`]);
   assert.equal(idx.nullifiers.has(frHex(nf)), false, 'no nullifier recorded: the SH20 are not burnt');
   assert.equal(idx.token('SH20').burned, 0n);
@@ -190,7 +190,7 @@ test('4. a refused DEPLOY records no nullifier, and the vault gives back the not
   assert.equal(refusedSpend(ok.v.state.pending[0], ok.v.state.notes, { revealHeight: ok.H, syncHeight: s2.height, nullifiersKnown: true }), false);
 
   // not on the primary's word alone: every configured indexer must say so, from its full nullifier list
-  const refusedAt = { revealHeight: H, atLeast: H + REFUSAL_DEPTH - 1 };
+  const refusedAt = { from: mintHeight, atLeast: H + REFUSAL_DEPTH - 1 }; // from the block that created the note
   const servers = await Promise.all([idx, idx, ok.idx].map((x) => listen(x, { port: 0 })));
   try {
     const [a, b, c] = servers.map((x) => new IndexerApi(`http://127.0.0.1:${x.address().port}`));
@@ -205,6 +205,12 @@ test('4. a refused DEPLOY records no nullifier, and the vault gives back the not
     assert.match((await refusalAgreed([a, other], [frHex(nf)], refusedAt)).why, /^http:\/\/other follows another profile: deployMaturity 0/);
     assert.match((await refusalAgreed([a], [frHex(nf)], { ...refusedAt, atLeast: H + 50 })).why, /not yet/);
     assert.deepEqual(await refusalAgreed([], [frHex(nf)], refusedAt), { ok: false, why: 'no indexer configured' });
+    // the note spent by an earlier spend, before this reveal: the list since the note's block shows it
+    const E = H - 1; // a block before the reveal's
+    const earlier = { base: 'http://earlier', status: () => a.status(), nullifiers: async (f) => (f <= E ? [{ nullifier: frHex(nf), height: E }] : []) };
+    assert.deepEqual(await refusalAgreed([a, earlier], [frHex(nf)], refusedAt), { ok: false, why: `http://earlier has its nullifier spent at block ${E}` });
+    assert.equal((await refusalAgreed([a, earlier], [frHex(nf)], { ...refusedAt, from: H })).ok, true, 'what a list since the reveal alone would miss');
+    assert.match((await refusalAgreed([a], [frHex(nf)], { ...refusedAt, from: -1 })).why, /heights are unknown/);
   } finally {
     for (const x of servers) x.close();
   }
@@ -213,7 +219,10 @@ test('4. a refused DEPLOY records no nullifier, and the vault gives back the not
   const pg = page();
   const sn = pg.slice(pg.indexOf('export async function syncNotes('));
   assert.ok(sn.indexOf('await checkOwned(s);') < sn.indexOf('refused = await settleRefused(s);'), 'once the notes\' spends are known');
-  assert.match(pg, /if \(!refusedSpend\(p, v\.state\.notes, [^\n]*\)\) continue;[\s\S]{0,400}await refusalAgreed\(indexers, nfs, [^\n]*\);\s*if \(!agreed\.ok\) \{[\s\S]{0,200}continue;\s*\}\s*await v\.releaseInputs\(p\.inputs\);/);
+  const settle = pg.slice(pg.indexOf('async function settleRefused('), pg.indexOf('export async function syncNotes('));
+  const order = ['if (!refusedSpend(p, v.state.notes,', 'const from = Math.min(...inputs.map((n) => s.leafHeights[n.pos] ?? -1));',
+    'const agreed = await refusalAgreed(indexers, nfs, { from,', 'if (!agreed.ok) {', 'await v.releaseInputs(p.inputs);'].map((x) => settle.indexOf(x));
+  assert.ok(order.every((x, k) => x > 0 && (k === 0 || x > order[k - 1])), `refused, every indexer since the note's block, then released: ${order}`);
 });
 
 test('5. every indexer lying together on N and D: the vault refuses to mint, deploy, burn or spend, names each, and still waits N', async () => {
