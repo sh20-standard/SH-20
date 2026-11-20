@@ -117,21 +117,35 @@ function paramsFor(t) {
   return p;
 }
 
+// The permutation, written for speed: no array is allocated per round, x^5 is three products, and a value is
+// reduced only where it must be (after an S-box and after the MDS sum; an added round constant leaves it below 2p).
 function permute(inputs, { t, rF, rP, C, M }) {
-  let state = [0n, ...inputs.map(mod)];
-  const rounds = rF + rP;
-  for (let r = 0; r < rounds; r++) {
-    state = state.map((a, i) => (a + C[r * t + i]) % P);
-    const full = r < rF / 2 || r >= rF / 2 + rP;
-    if (full) state = state.map((a) => powMod(a, 5n));
-    else state[0] = powMod(state[0], 5n);
-    state = state.map((_, i) => {
+  const s = new Array(t);
+  const next = new Array(t);
+  s[0] = 0n;
+  for (let i = 1; i < t; i++) s[i] = mod(inputs[i - 1]);
+  const half = rF / 2;
+  let c = 0;
+  for (let r = 0; r < rF + rP; r++) {
+    const full = r < half || r >= half + rP;
+    for (let i = 0; i < t; i++) {
+      const a = s[i] + C[c++];
+      if (full || i === 0) {
+        const a2 = (a * a) % P;
+        s[i] = (((a2 * a2) % P) * a) % P;
+      } else {
+        s[i] = a;
+      }
+    }
+    for (let i = 0; i < t; i++) {
+      const row = M[i];
       let acc = 0n;
-      for (let j = 0; j < t; j++) acc += M[i][j] * state[j];
-      return acc % P;
-    });
+      for (let j = 0; j < t; j++) acc += row[j] * s[j];
+      next[i] = acc % P;
+    }
+    for (let i = 0; i < t; i++) s[i] = next[i];
   }
-  return state[0];
+  return s[0];
 }
 
 /** Poseidon hash of 2 to 5 field elements (circomlib's `poseidon(inputs)`). */

@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { Indexer } from '../../indexer/src/indexer.js';
 import { deployEnv } from '../../indexer/test/helpers.js';
 import { serializeEnvelope } from '../src/sh20.js';
-import { serializeTx, txid, opReturnScript } from '../src/btc.js';
+import { serializeTx, txid, addressToScript } from '../src/btc.js';
+import { commitment, commitValue, signReveal, oneTimeSecret } from '../src/taproot.js';
 import { toHex } from '../src/bytes.js';
 import { normToken, Esplora } from '../src/api.js';
 import { deployMismatches, verifyDeploy } from '../src/deploy.js';
@@ -12,16 +13,17 @@ import { deployMismatches, verifyDeploy } from '../src/deploy.js';
 const DEPLOYER = '0014' + '66'.repeat(20);
 const ATTACKER = '0014' + 'ee'.repeat(20);
 
-// A real DEPLOY transaction (payMode 2, pays DEPLOYER), indexed by the reference indexer.
+// A real DEPLOY (payMode 2, pays DEPLOYER): the reveal of a commit, in the witness as SPEC-WIRE §5
+// requires, indexed by the reference indexer. N = 0: the terms are tested here (maturity in
+// deploy-maturity.test.js), so the commit may be the block before.
 function honest() {
   const env = deployEnv({ payMode: 2, price: 5000n, payScript: Buffer.from(DEPLOYER, 'hex') });
-  const tx = {
-    version: 2, locktime: 0,
-    vin: [{ txid: '77'.repeat(32), vout: 0, sequence: 0xfffffffd, scriptSig: new Uint8Array(0), witness: [new Uint8Array(64)] }],
-    vout: [{ value: 0n, script: opReturnScript(serializeEnvelope(env)) }],
-  };
-  const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n } });
-  const itx = { txid: txid(tx), vin: [{ txid: '77'.repeat(32), vout: 0, witness: [Buffer.alloc(64)] }], vout: tx.vout.map((o) => ({ value: o.value, script: Buffer.from(o.script) })) };
+  const secret = oneTimeSecret();
+  const c = commitment(secret, new Uint8Array(serializeEnvelope(env)));
+  const back = addressToScript('tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx');
+  const { tx } = signReveal({ secret, c, commitTxid: '77'.repeat(32), value: commitValue(c, back, 1), returnScript: back, feeRate: 1 });
+  const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n, deployMaturity: 0 } });
+  const itx = { txid: txid(tx), vin: [{ txid: '77'.repeat(32), vout: 0, witness: tx.vin[0].witness.map((w) => Buffer.from(w)), prevHeight: 0 }], vout: tx.vout.map((o) => ({ value: o.value, script: Buffer.from(o.script) })) };
   const r = idx.applyBlock({ height: 1, hash: 'h1', txs: [itx] });
   assert.equal(r.events.at(-1)?.type, 'DEPLOY', JSON.stringify(r.rejected));
   return { token: normToken(JSON.parse(JSON.stringify(idx.token('GENE'), (_, v) => (typeof v === 'bigint' ? v.toString() : v)))), hex: toHex(serializeTx(tx)) };

@@ -30,6 +30,8 @@ export function noteLeaf(t, v, npk, rho) {
   return poseidon2(head, poseidon2(npk, rho));
 }
 
-export function frToBytes(x) {
-  return Buffer.from(x.toString(16).padStart(64, '0'), 'hex').reverse();
-}
+/** A field element as 64 hex digits, big-endian (how the API and the vectors print it). */
+export const hexFr = (x) => x.toString(16).padStart(64, '0');
+
+/** A field element as its 32 wire bytes, little-endian. */
+export const frToBytes = (x) => Buffer.from(hexFr(x), 'hex').reverse();

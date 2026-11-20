@@ -10,7 +10,7 @@ import { chain, deployEnv, tx as helperTx, mockVerifier, testProof } from '../..
 import { nodeProver, WASM } from './prover-node.js';
 import { Vault, STORAGE_KEY } from '../src/keys.js';
 import { NOTE_SCHEME } from '../src/notekeys.js';
-import { LocalTree } from '../src/tree.js';
+import { NoteTree } from '../src/sh20.js';
 import { proveSpend, planCarrier, revealFor } from '../src/send.js';
 import { withProof } from '../src/spend.js';
 import {
@@ -42,15 +42,16 @@ const ixTx = (t, id) => ({
 });
 /** The tree as a sync rebuilds it, with the indexer's height (send.js needs height, tree, witness). */
 function localSync(ix) {
-  const tree = new LocalTree();
-  tree.append(ix.tree.leaves);
-  return { height: ix.height, tree, witness: (pos, leaf) => { assert.equal(tree.leaf(pos), leaf); return { siblings: tree.path(pos) }; } };
+  const tree = new NoteTree();
+  for (const leaf of ix.tree.leaves) tree.append(leaf);
+  return { height: ix.height, tree, witness: (pos, leaf) => { assert.equal(tree.leaves[pos], leaf); return { siblings: tree.path(pos) }; } };
 }
 /** A chain with GENE and two public notes of 1,000 of the vault. */
 async function setup(verifier) {
-  const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n }, verifier });
+  // N = 0 here: the DEPLOY is only setup (test/deploy-maturity.test.js tests N = 6); its commit is one block old
+  const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n, deployMaturity: 0 }, verifier });
   const c = chain(ix);
-  c.block(helperTx({ env: deployEnv({ start: 2, unlock: 2 }) }));
+  c.block(helperTx({ env: deployEnv({ start: 2, unlock: 2 }), prevHeight: c.next - 1 }));
   const seller = await vaultOf(cv.wallets[0].m);
   const npks = [(await seller.opening(0)).npk, (await seller.opening(1)).npk];
   const b = c.block(...npks.map((npk) => helperTx({ env: { type: 'MINT', ticker: 'GENE', npk }, burnSats: 1000n })));
