@@ -562,10 +562,12 @@ after a restore, the envelope can be authenticated without trusting a server: it
 must be those of notes of this vault, and its proof must verify for its body, which only the owner
 of those notes could have signed. Failing that, show the price and payee and ask before signing.
 
-Fixed in #33 (commit `85ccd6f`): `offerTerms` signs the terms of the vault's own record for a
-listing it sent and refuses any difference; after a restore it requires a nullifier of this vault's
-notes and a proof that verifies for the envelope's body against the local root at its anchor;
-otherwise the page shows price and payee and asks.
+Fixed in #33 (commits `85ccd6f`, `9f6a058`): `offerTerms` signs the terms of the vault's own record
+for a listing it sent and refuses any difference. After a restore it requires a nullifier of this
+vault's notes and a proof that verifies for the envelope's body against the local root at its
+anchor; with that note and that root, a proof that fails is refused too. It asks, showing price and
+payee, only when it cannot check: no nullifier of its notes, a local tree that does not reach the
+anchor, or a verifier that cannot run.
 
 **8.3 A buyer is protected by the indexers that know the listing; one is enough, and an indexer
 that does not know it is ignored.** High.
@@ -629,8 +631,9 @@ the main case; a failure during one sync still drops that note silently. A sync 
 only while it is in the last six blocks; after that, only a full rescan finds the note. Closing it:
 let anything but a malformed output propagate.
 
-Fixed in #33 (commit `c674e73`): `scanOutput` lets a failure propagate (malformed outputs are still
-null), and the sync reads unscanned leaves again until the vault has scanned them.
+Fixed in #33 (commits `c674e73`, `950f9d0`): `scanOutput` lets a failure propagate (malformed
+outputs are still null); a note whose scan fails does not stop the others, and the sync reads again
+from the first that failed until the vault has scanned it.
 
 **8.7 Signatures by secp256k1 keys use the indexer's verification code.** Low.
 Lock keys sign offers, cancels and claims, and a one-time key signs each reveal, with
