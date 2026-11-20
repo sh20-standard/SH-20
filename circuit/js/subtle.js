@@ -9,7 +9,7 @@
 // No import: this file loads wherever `crypto.subtle` exists, which in a browser means a secure
 // context (https, or localhost). X25519 is the recent one (Safari 17, Firefox 130, Chrome 133 by
 // their compatibility tables): `available()` says whether this platform has it, and is what a
-// wallet should go by. Checked in Node 22 and Chrome 157 (test/subtle-kat.js).
+// wallet should go by. Checked in Node 22 and Chrome 158 (test/subtle-kat.js).
 
 const subtle = () => {
   const s = globalThis.crypto?.subtle;
@@ -23,6 +23,7 @@ const bytes = (name, b, length) => {
   }
   return b;
 };
+const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 /** The parts, one after the other. */
 export function concat(...parts) {
@@ -58,22 +59,47 @@ export async function hkdfSha256(salt, ikm, info, length) {
 const PKCS8 = Uint8Array.of(0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20);
 const BASE_POINT = Uint8Array.of(9, ...new Uint8Array(31));
 
+// The points of low order, as X25519 reads u (bit 255 aside, which it ignores): 0, 1, the two of
+// order 8, p − 1, p and p + 1, with p = 2^255 − 19. They are every point of order 2, 4 or 8 on the
+// curve or on its twist. X25519(k, u) is all zeros for them and for no other u, whatever k: a
+// clamped k is a multiple of 8, and of neither of the two large prime orders.
+const LOW_ORDER = new Set([
+  '0000000000000000000000000000000000000000000000000000000000000000',
+  '0100000000000000000000000000000000000000000000000000000000000000',
+  'e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800',
+  '5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157',
+  'ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+  'edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+  'eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
+]);
+
 /**
- * X25519(k, u). All zeros when u is a low-order point: the platform refuses that secret (an
- * OperationError, or a DataError where it refuses the point itself) and so do the callers.
- * Any other failure is thrown: a platform without X25519 must not look like a bad point.
+ * True when u is a point of low order: X25519(k, u) is then all zeros for every k, and for no other
+ * u. u is a public key (an address's IVK, an output's pk_eph), so this takes no care about time.
+ */
+export function isLowOrder(u) {
+  const low = Uint8Array.from(bytes('public key', u, 32));
+  low[31] &= 0x7f;
+  return LOW_ORDER.has(hex(low));
+}
+
+/**
+ * X25519(k, u). All zeros when u is a point of low order, and only then. That is decided here, from
+ * u, and the platform is not asked: most refuse such a point with an OperationError, which is also
+ * how they report a failure of their own. Every failure of the platform is thrown, as is an all-zero
+ * answer for any other point: a wallet that read one as a zero secret would take a note it could
+ * not try to open for somebody else's.
  */
 export async function x25519(k, u) {
   bytes('private key', k, 32);
-  bytes('public key', u, 32);
+  if (isLowOrder(u)) return new Uint8Array(32);
   const priv = await subtle().importKey('pkcs8', concat(PKCS8, k), { name: 'X25519' }, false, ['deriveBits']);
-  try {
-    const pub = await subtle().importKey('raw', u, { name: 'X25519' }, true, []);
-    return new Uint8Array(await subtle().deriveBits({ name: 'X25519', public: pub }, priv, 256));
-  } catch (e) {
-    if (e?.name === 'OperationError' || e?.name === 'DataError') return new Uint8Array(32);
-    throw e;
-  }
+  const pub = await subtle().importKey('raw', u, { name: 'X25519' }, true, []);
+  const z = new Uint8Array(await subtle().deriveBits({ name: 'X25519', public: pub }, priv, 256));
+  let any = 0;
+  for (const b of z) any |= b;
+  if (z.length !== 32 || any === 0) throw new Error('X25519: the platform gave no secret for a point that is not of low order');
+  return z;
 }
 
 /** X25519(k, 9): the public key of the private key k. */
