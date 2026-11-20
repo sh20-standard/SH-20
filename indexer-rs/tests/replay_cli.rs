@@ -135,7 +135,7 @@ fn replay_prints_the_vectors_digests() {
         // in a batch, the index of the refused envelope
         assert_eq!(got.get("envelope"), want.get("envelope"));
     }
-    assert_eq!(refused.iter().filter(|r| r.get("envelope").is_some()).count(), 1);
+    assert_eq!(refused.iter().filter(|r| r.get("envelope").is_some()).count(), 3);
 
     // without a verifier every spend is refused: the digests leave the vectors' at block 2
     let (ok, stdout, _) =

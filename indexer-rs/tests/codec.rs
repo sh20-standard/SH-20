@@ -34,7 +34,7 @@ const R_LE: &str = "010000f093f5e1439170b97948e833285d588181b64550b829a031e1724e
 fn every_vector_envelope_round_trips() {
     let v = vectors();
     let names: Vec<&String> = v["envelopes"].as_object().unwrap().keys().collect();
-    assert_eq!(names.len(), 43);
+    assert_eq!(names.len(), 50);
     for name in names {
         vector_envelope(&v, name);
     }
@@ -368,28 +368,43 @@ fn deploy_layout_rules() {
     assert!(!ok(&Deploy { pay_mode: 2, pay_script: vec![1; 35], ..base.clone() }));
     assert!(!ok(&Deploy { pay_mode: 1, pay_script: vec![1; 22], ..base.clone() }));
     assert!(!ok(&Deploy { pay_mode: 0, pay_script: vec![1], ..base.clone() }));
+    // and never one that starts with OP_RETURN, whatever follows; the byte is free further on
+    let paid = |script: &[u8]| Deploy { pay_mode: 2, pay_script: script.to_vec(), ..base.clone() };
+    assert!(!ok(&paid(&[0x6a])));
+    assert!(!ok(&paid(b"\x6a\x04SH20")));
+    assert!(!ok(&paid(&[[0x6a].as_slice(), &[1; 33]].concat())));
+    assert!(ok(&paid(&[0x51, 0x6a])));
+    assert!(ok(&paid(&[0x69])) && ok(&paid(&[0x6b])));
+    assert_eq!(
+        Envelope::decode(&Envelope::Deploy(paid(&[0x6a])).encode()),
+        Err(DecodeError::Rejected("payScript starts with OP_RETURN"))
+    );
     // a team opening exactly when pre > 0: these byte strings read as something else and fail
     let no_opening = Envelope::Deploy(Deploy { pre: 1000, team_opening: None, ..base.clone() }).encode();
     assert!(rejected(&no_opening));
     let stray_opening = Envelope::Deploy(Deploy { pre: 0, team_opening: Some(fe(1)), ..base.clone() }).encode();
     assert!(rejected(&stray_opening));
     // a LIST payScript is bounded the same way
-    let list = |n: usize| {
+    let list_paying = |script: &[u8]| {
         Envelope::List {
             ticker: tk("ABCD"),
             amount: 1,
             price: 1,
             lock_vout: 0,
             lock_key: [3; 32],
-            pay_script: vec![1; n],
+            pay_script: script.to_vec(),
             spend: spend(1, 1),
         }
         .encode()
     };
+    let list = |n: usize| list_paying(&vec![1; n]);
     assert!(Envelope::decode(&list(34)).is_ok());
     assert!(Envelope::decode(&list(1)).is_ok());
     assert!(rejected(&list(0)));
     assert!(rejected(&list(35)));
+    assert!(rejected(&list_paying(&[0x6a])));
+    assert!(rejected(&list_paying(b"\x6a\x04SH20")));
+    assert!(Envelope::decode(&list_paying(&[0x00, 0x6a])).is_ok());
 }
 
 #[test]

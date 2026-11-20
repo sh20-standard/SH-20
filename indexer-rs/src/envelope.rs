@@ -3,6 +3,7 @@
 //! `decode` accepts exactly the byte strings the spec describes: after parsing, re-serialising
 //! gives the same bytes, and trailing bytes are rejected.
 
+use crate::chain::OP_RETURN;
 use crate::field::{body_hash, is_canonical, Bytes32};
 use ark_bn254::Fr;
 
@@ -183,7 +184,13 @@ impl<'a> Reader<'a> {
         if n > PAY_SCRIPT_MAX {
             return Err(Rejected("payScript longer than 34 bytes"));
         }
-        Ok(self.take(n)?.to_vec())
+        let script = self.take(n)?;
+        // §4: what pays an OP_RETURN is burned, and `OP_RETURN <"SH20">` would be read as a
+        // second envelope. payMode 1 is the way to ask for a burn.
+        if script.first() == Some(&OP_RETURN) {
+            return Err(Rejected("payScript starts with OP_RETURN"));
+        }
+        Ok(script.to_vec())
     }
     fn spend(&mut self) -> Result<Spend, DecodeError> {
         if self.left() < SPEND_LEN {
