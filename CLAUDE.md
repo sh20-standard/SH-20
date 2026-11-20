@@ -43,7 +43,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
 | `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
 | `circuit/` | the spend circuit: PLONK prover and verifier in Rust, WebAssembly build, measurements ([`circuit/README.md`](circuit/README.md)) |
-| `circuit/js/` | what a wallet computes, in dependency-free JavaScript: the witness of a spend, and the addresses, sealing and scanning of `SPEC-NOTES.md`. Two entry points with the same names and the same vectors: `index.js` (synchronous, `node:crypto`) and `webcrypto.js` (asynchronous, WebCrypto, for browsers). Checked against vectors written by the Rust models (`cd circuit/js && npm test`, 47 tests) |
+| `circuit/js/` | what a wallet computes, in dependency-free JavaScript: the witness of a spend, and the addresses, sealing and scanning of `SPEC-NOTES.md`. Two entry points with the same names and the same vectors: `index.js` (synchronous, `node:crypto`) and `webcrypto.js` (asynchronous, WebCrypto, for browsers). Checked against vectors written by the Rust models (`cd circuit/js && npm test`, 48 tests) |
 | `circuit/circom/` | the same relation in circom, used only to cross-check the Rust circuit |
 | `circuit/web/` | the phone test page, and the host side of the threaded WebAssembly prover |
 

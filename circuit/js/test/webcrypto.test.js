@@ -5,7 +5,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createCipheriv, createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, hkdfSync } from 'node:crypto';
+import nodeCrypto, { createCipheriv, createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, hkdfSync } from 'node:crypto';
+import { syncBuiltinESMExports } from 'node:module';
 import { readFileSync } from 'node:fs';
 import * as node from '../index.js';
 import * as web from '../webcrypto.js';
@@ -201,6 +202,44 @@ test('X25519: a failure of the platform is thrown, never read as a point of low 
     });
   }
   assert.equal((await web.scan(keys.ivk, keys.address, out)).v, 1n);
+});
+
+test('X25519 on node:crypto: the same rule, a failure of OpenSSL is thrown', () => {
+  const k = bytes('failing/k');
+  const keys = node.walletKeys(bytes('failing/m'));
+  const out = node.seal(keys.address, 'GENE', 1n, bytes('failing/e'));
+  const address = node.encodeAddress('sh20', keys.address);
+  const original = nodeCrypto.diffieHellman;
+  let asked = 0;
+  // address.js imports diffieHellman by name: the binding follows the module once it is synchronised
+  const replace = (fn) => {
+    nodeCrypto.diffieHellman = fn;
+    syncBuiltinESMExports();
+  };
+  try {
+    replace((...args) => (asked++, original(...args)));
+    for (const u of LOW) assert.ok(node.x25519(k, u).every((b) => b === 0), toHex(u));
+    for (const u of LOW) assert.equal(node.scan(keys.ivk, keys.address, { ...out, pkEph: Buffer.from(u) }), null, toHex(u));
+    for (const u of LOW) assert.throws(() => node.decodeAddress('sh20', node.encodeAddress('sh20', { ...keys.address, ivkPub: Buffer.from(u) })), /low-order/, toHex(u));
+    assert.equal(asked, 0, 'OpenSSL was asked about a point of low order');
+    assert.equal(node.scan(keys.ivk, keys.address, out).v, 1n);
+    assert.equal(asked, 1);
+
+    replace(() => {
+      throw new Error('error:1C8000A6:Provider routines::failed during derivation');
+    });
+    assert.throws(() => node.x25519(k, keys.address.ivkPub), /failed during derivation/);
+    assert.throws(() => node.scan(keys.ivk, keys.address, out), /failed during derivation/); // was null: "not ours"
+    assert.throws(() => node.seal(keys.address, 'GENE', 1n, bytes('failing/e')), /failed during derivation/); // was "IVK is a low-order point"
+    assert.throws(() => node.decodeAddress('sh20', address), /failed during derivation/);
+    assert.equal(node.scan(keys.ivk, keys.address, { ...out, pkEph: Buffer.from(KAT.lowOrder[2]) }), null);
+
+    replace(() => Buffer.alloc(32));
+    assert.throws(() => node.scan(keys.ivk, keys.address, out), /not of low order/);
+  } finally {
+    replace(original);
+  }
+  assert.equal(node.scan(keys.ivk, keys.address, out).v, 1n);
 });
 
 test('signatures: the vectors of the Rust model, and the same nonce as index.js', async () => {

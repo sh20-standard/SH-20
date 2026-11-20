@@ -28,7 +28,7 @@ is a `RangeError`, never silently reduced: `nk + l` is the same point as `nk` bu
 nullifier, and the circuit refuses it.
 
 ```sh
-npm test                # 47 tests, Node 20 or newer
+npm test                # 48 tests, Node 20 or newer
 npm run test:browser    # the WebCrypto primitives in headless Chrome
 ```
 
@@ -67,7 +67,7 @@ What a browser needs for it:
   functions reject; they never return "not found" for a note they could not try to open. The same
   holds for every other failure of the platform: a point of low order, the one case where the secret
   is all zeros, is recognised from its bytes (`isLowOrder` in `subtle.js`) and the platform is not
-  asked, so an `OperationError` is never read as one.
+  asked, so an `OperationError` is never read as one. `index.js` follows the same rule with OpenSSL.
 - **A stand-in for `node:crypto`**, by an import map. The modules `webcrypto.js` shares with
   `index.js` import it by name: the indexer's constants hash their public tags with
   `createHash('sha256')` when they load, and `address.js` and `seal.js` import what their

@@ -35,7 +35,7 @@ contract and no operator.
 | [`circuit/src/plonk/verifier.rs`](../circuit/src/plonk/verifier.rs) | 71 | the PLONK verifier | consensus: every indexer runs it |
 | [`indexer/src/adapters/plonk.js`](../indexer/src/adapters/plonk.js) | 49 | loads the verifier (WebAssembly), checks the verifying-key digest, orders the public inputs | the only bridge between the rules and the proof |
 | [`docs/SPEC-NOTES.md`](SPEC-NOTES.md) | 198 | wallet keys, the address, sealing an output, scanning, public notes | theft and privacy on the wallet side |
-| [`circuit/js/`](../circuit/js/) | 904 | the wallet reference: `seal.js`, `address.js`, `notes.js`, `eddsa.js`, `babyjub.js`, and the browser entry point `webcrypto.js` on `subtle.js` | what the vault computes; the Rust model of the same is `circuit/src/notes.rs` |
+| [`circuit/js/`](../circuit/js/) | 908 | the wallet reference: `seal.js`, `address.js`, `notes.js`, `eddsa.js`, `babyjub.js`, and the browser entry point `webcrypto.js` on `subtle.js` | what the vault computes; the Rust model of the same is `circuit/src/notes.rs` |
 
 ### What those files stand on
 
@@ -240,7 +240,7 @@ would tell the indexer which notes are its own. None of this is cryptographicall
 | the wallet's spend values | `J/vectors.test.js`, `J/reference.test.js`; `the_wallet_vectors_are_the_ones_the_model_writes` | — |
 
 Counts: `cargo test --release` 35, `indexer` 57 (those of `plonk.test.js` are skipped without the
-verifier module), `circuit/js` 47.
+verifier module), `circuit/js` 48.
 
 ## 5. Reproducing everything from zero
 
@@ -270,7 +270,7 @@ The three digests are constants of `circuit/src/lib.rs` (`SRS_SHA256`, `VK_DIGES
 cd circuit && cargo test --release           # 35 tests
 ./build-wasm.sh                              # needs the targets wasm32-unknown-unknown and wasm32-wasip1-threads
 cd ../indexer && npm test                    # 57 tests; those of plonk.test.js need the module just built
-cd ../circuit/js && npm test                 # 47 tests
+cd ../circuit/js && npm test                 # 48 tests
 npm run test:browser                         # the WebCrypto primitives in headless Chrome
 ```
 

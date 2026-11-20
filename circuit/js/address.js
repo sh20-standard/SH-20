@@ -5,6 +5,7 @@
 import { createPrivateKey, createPublicKey, diffieHellman } from 'node:crypto';
 import { P } from '../../indexer/src/poseidon.js';
 import { A, D, IDENTITY, L, equal, mul, onCurve } from './babyjub.js';
+import { isLowOrder } from './subtle.js';
 
 export const ADDRESS_VERSION = 0;
 export const ADDRESS_BYTES = 97;
@@ -26,14 +27,17 @@ export function x25519Public(k) {
   return Buffer.from(createPublicKey(privateKey(key32('private key', k))).export({ format: 'der', type: 'spki' }).subarray(-32));
 }
 
-/** X25519(k, u). All zeros when u is a low-order point (libraries refuse that secret; so do we). */
+/**
+ * X25519(k, u). All zeros when u is a point of low order, and only then: decided from u (subtle.js),
+ * not from an error of OpenSSL, which refuses such a point with the error of any failed derivation.
+ * Every other failure is thrown, as is an all-zero answer for any other point.
+ */
 export function x25519(k, u) {
-  try {
-    return diffieHellman({ privateKey: privateKey(key32('private key', k)), publicKey: publicKey(key32('public key', u)) });
-  } catch (e) {
-    if (e instanceof RangeError) throw e;
-    return Buffer.alloc(32);
-  }
+  const [priv, pub] = [key32('private key', k), key32('public key', u)];
+  if (isLowOrder(pub)) return Buffer.alloc(32);
+  const z = diffieHellman({ privateKey: privateKey(priv), publicKey: publicKey(pub) });
+  if (z.every((b) => b === 0)) throw new Error('X25519: the platform gave no secret for a point that is not of low order');
+  return z;
 }
 
 // ── points ──
