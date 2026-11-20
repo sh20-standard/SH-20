@@ -3,8 +3,8 @@
 
 import { defaultCache } from '../cache.js';
 import { frHex } from '../fr.js';
-import { PUBLIC_RHO, noteLeaf, tickerT } from '../sh20.js';
 import { Sync } from '../sync.js';
+import { matchNotes } from '../match.js';
 import { $, explorerTx, fill, h, indexer, indexers, report, short, st, staticWarnings, units } from './context.js';
 import { digestAgreement, agreementText } from '../consensus.js';
 import { balances } from './send-panel.js';
@@ -62,45 +62,6 @@ export async function getSyncer() {
   return syncer;
 }
 
-/**
- * Finds the vault's notes among the notes read by a sync, on the device (docs/SPEC-NOTES.md §4, §5):
- * public notes by npk (leaf recomputed with rho = 0), sealed outputs by opening them with the
- * viewing key (leaf checked by circuit/js). Notes are told apart by position, never by leaf.
- */
-async function matchNotes(pub) {
-  const v = st.vault;
-  let found = 0;
-  for (const n of pub) if (n.kind === 'OUT' && n.pkEph && n.ct && n.leaf !== null && n.pos !== null && (await v.receive(n))) found++;
-  // public notes: repeat while a match moves the window of keys to look for (a restore)
-  for (let before = -1; before !== v.state.next;) {
-    before = v.state.next;
-    const keys = await v.npkWindow({ onProgress: (d, n) => fill('sync-status', `Deriving note keys on this device: ${d} / ${n} (once per key)…`) });
-    for (const n of pub) {
-      if (n.kind === 'OUT' || n.npk === null || n.ticker === null || n.v === null || n.pos === null) continue;
-      const index = keys.get(frHex(n.npk));
-      if (index === undefined) continue;
-      // never trust the API's (ticker, v) alone: they must give back the leaf it put in the tree
-      const leaf = frHex(noteLeaf(tickerT(n.ticker), n.v, n.npk, PUBLIC_RHO));
-      if (n.leaf !== null && frHex(n.leaf) !== leaf) continue;
-      const txid = n.txid ? { txid: n.txid } : {};
-      const here = v.state.notes.find((x) => x.pos === n.pos);
-      if (here) {
-        if (here.leaf === leaf && here.status !== 'in tree' && here.status !== 'spending') {
-          await v.updateNote(here.id, { status: 'in tree', ...txid });
-          found++;
-        }
-        continue;
-      }
-      // our own mint confirmed; its amount is the indexer's when a late batch got fewer than k mints
-      const pending = v.state.notes.find((x) => x.kind === 'public' && x.index === index && x.pos === null);
-      if (pending) await v.updateNote(pending.id, { status: 'in tree', pos: n.pos, ticker: n.ticker, v: n.v.toString(), leaf, ...txid });
-      else await v.addNote({ index, ticker: n.ticker, v: n.v, txid: n.txid, status: 'in tree', pos: n.pos });
-      found++;
-    }
-  }
-  return found;
-}
-
 /** Merkle path and spent status of every owned note, from the local tree and nullifier set only. */
 async function checkOwned(s) {
   const v = st.vault;
@@ -129,10 +90,14 @@ export async function syncNotes({ full = false } = {}) {
   // the other indexers' root and digest after the same block (AUDIT §8.5): shown next to the balance
   st.sync = { height: r.height, leaves: r.leaves, nullifiersKnown: r.nullifiersKnown, agreement: await digestAgreement(indexers, r.height, r.digest, r.root) };
   let found = 0;
+  let failed = [];
   if (st.vault) {
-    // a scan that throws leaves the sync's notes unscanned: the next sync reads them again (AUDIT §8.6)
-    found = await matchNotes(r.notes);
-    await s.scanned();
+    // a note whose scan throws does not stop the others; the sync's leaves from the first of them stay
+    // unscanned, and the next sync reads them again (AUDIT §8.6)
+    const m = await matchNotes(st.vault, r.notes, { onProgress: (d, n) => fill('sync-status', `Deriving note keys on this device: ${d} / ${n} (once per key)…`) });
+    found = m.found;
+    failed = m.failed;
+    await s.scanned(failed[0]?.pos ?? null);
     await checkOwned(s);
     await syncListings();
   }
@@ -140,4 +105,7 @@ export async function syncNotes({ full = false } = {}) {
   staticWarnings();
   processDeploys().catch(report);
   if (found) $('warnings').append(h('div', { class: 'warn' }, `${found} note(s) found in the tree.`));
+  if (failed.length) {
+    $('warnings').append(h('div', { class: 'warn err' }, `${failed.length} note(s) could not be scanned, from leaf ${failed[0].pos} (${failed[0].error.message}). The others were; the next sync reads these again.`));
+  }
 }

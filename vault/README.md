@@ -374,7 +374,9 @@ checks every request the page sends). Instead `src/sync.js`:
   yours), so the next sync downloads only new blocks. Each sync re-reads the last 6 blocks to absorb
   reorgs; a deeper reorg shows as a root mismatch and triggers one full re-download. Leaves the
   vault has not scanned yet (a sync while it was locked, or a scan that could not be made because
-  WebCrypto failed, which is an error, not "not ours") are read again until it has. "Rescan from
+  WebCrypto failed, which is an error, not "not ours") are read again until it has. A note whose
+  scan fails does not stop the others: they are scanned, the page shows the error, and the next
+  sync reads again from that note (`match.js`). "Rescan from
   zero" ignores the cache; a restored vault always rescans everything to find its notes.
 
 Loading a cached tree recomputes it (about 0.2 ms per leaf) to check it against the cached root.

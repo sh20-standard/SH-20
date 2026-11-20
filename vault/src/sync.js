@@ -131,9 +131,12 @@ export class Sync {
     return { height: H, digest: status.digest ?? null, root: frHex(this.tree.root), notes, leaves: this.tree.size, nullifiersKnown: this.nullifiersKnown };
   }
 
-  /** The vault has scanned every note the last sync returned: the next one reads only the last blocks. */
-  async scanned() {
-    this.unscanned = null;
+  /**
+   * The vault has scanned the notes the last sync returned: all of them (the next sync reads only the
+   * last blocks), or all before position `from`, the first it could not scan (read again from there).
+   */
+  async scanned(from = null) {
+    this.unscanned = Number.isInteger(from) ? from : null;
     await this.save();
   }
 
