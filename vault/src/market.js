@@ -19,7 +19,7 @@
 import { serializeEnvelope, parseEnvelope, extractEnvelope, tickerT, schnorrSign, schnorrVerify, DOMAIN } from './sh20.js';
 import { sigMsg, sigHash, signKeyPath, SIGHASH_DEFAULT, SIGHASH_SINGLE_ANYONECANPAY } from './taproot.js';
 import { buildFunded } from './mint.js';
-import { opReturnScript, parseTx, txid as txidOf, scriptType, dustLimit, addressToScript } from './btc.js';
+import { opReturnScript, parseTx, txid as txidOf, scriptType, dustLimit, addressToScript, standardPayee } from './btc.js';
 import { sha256 } from './hash.js';
 import { concat, fromHex, toHex, utf8 } from './bytes.js';
 import { spendFrom, shuffled } from './send.js';
@@ -210,8 +210,19 @@ export async function offerTerms({ rec, l, lockKey, ownNullifiers, rootAt, verif
 
 const takeOutput = (npk) => ({ value: 0n, script: opReturnScript(serializeEnvelope({ type: 'TAKE', npk })) });
 
+/**
+ * Why a TAKE cannot pay this listing's payee, or null: a payScript that is not one of the standard
+ * templates (btc.js PAYEE_TYPES) makes the TAKE non-standard, and the network would not relay it.
+ */
+export function payeeProblem(payScript) {
+  if (standardPayee(payScript)) return null;
+  return `the seller's payee is the script ${toHex(payScript)}, not a standard address (P2PKH, P2SH, P2WPKH, P2WSH or P2TR): the network would not relay a transaction that pays it`;
+}
+
 /** The buyer's transaction: the signed lock at input 0, the price at output 0, the TAKE, the buyer's inputs. */
 export function buildTake({ l, sig, npk, payer, utxos, feeRate, tipHeight }) {
+  const bad = payeeProblem(l.payScript);
+  if (bad) throw new Error(`not bought: ${bad}`);
   if (!offerValid(l, sig)) throw new Error('the offer\'s signature is not the lock key\'s, for this price and payee');
   return buildFunded({
     fixed: [{ value: l.price, script: l.payScript }, takeOutput(npk)],

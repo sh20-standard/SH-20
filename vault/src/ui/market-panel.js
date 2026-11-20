@@ -5,7 +5,7 @@ import { scriptToAddress } from '../btc.js';
 import { frHex } from '../fr.js';
 import { loadProver } from '../prover.js';
 import { LOCK_GAP } from '../keys.js';
-import { buildCancel, buildClaim, buildTake, claimProblem, decodeOffer, encodeOffer, listingFromChain, offerTerms, offerValid, signOffer } from '../market.js';
+import { buildCancel, buildClaim, buildTake, claimProblem, decodeOffer, encodeOffer, listingFromChain, offerTerms, offerValid, payeeProblem, signOffer } from '../market.js';
 import { busy, esplora, fill, h, indexer, indexers, requireProfile, result, resultBox, sats, short, st, units } from './context.js';
 import { renderAll } from './render.js';
 import { sendForm } from './send-panel.js';
@@ -102,8 +102,9 @@ export function renderMarket() {
   check.addEventListener('click', busy(check, checkOffer));
   const c = marketForm.checked;
   let buy = null;
+  const badPayee = c ? payeeProblem(c.l.payScript) : null; // a TAKE to it would not be relayed
   if (c) {
-    buy = h('button', { type: 'button', disabled: !st.wallet || c.state !== 'ACTIVE' || !c.enough, name: 'buy', title: c.enough ? null : `a TAKE needs ${TAKE_QUORUM} indexers that report this listing` }, `Buy ${units(c.l.amount)} ${c.l.ticker} for ${sats(c.l.price)}`);
+    buy = h('button', { type: 'button', disabled: !st.wallet || c.state !== 'ACTIVE' || !c.enough || !!badPayee, name: 'buy', title: badPayee ?? (c.enough ? null : `a TAKE needs ${TAKE_QUORUM} indexers that report this listing`) }, `Buy ${units(c.l.amount)} ${c.l.ticker} for ${sats(c.l.price)}`);
     buy.addEventListener('click', busy(buy, () => sendTake(c)));
   }
   fill('market-body',
@@ -120,12 +121,14 @@ export function renderMarket() {
       h('dt', {}, 'Price'), h('dd', {}, `${sats(c.l.price)} to ${payee(c.l.payScript)}`),
       h('dt', {}, 'State'), h('dd', {}, c.state),
       h('dt', {}, 'Checked'), h('dd', {}, `the LIST on chain, the seller's signature for this price and payee, ${c.agreed} indexer${c.agreed > 1 ? 's' : ''} ${c.agreed > 1 ? 'agree' : 'knows it'}${c.down.length ? ` (${c.down.length} unreachable, not counted)` : ''}`)) : null,
+    badPayee ? h('p', { class: 'warn err', id: 'payee-problem' }, `Cannot buy: ${badPayee}.`) : null,
     c && !c.enough ? h('p', { class: 'warn err' }, `Not enough to buy: ${c.agreed} indexer${c.agreed > 1 ? 's' : ''} ${c.agreed > 1 ? 'report' : 'reports'} this listing, and a TAKE needs ${TAKE_QUORUM} that agree. The chain alone cannot show whether the indexers accepted the LIST; one indexer could report a listing the others rejected, and the price would be paid for nothing. Add an independent indexer in Settings.`) : null,
     buy,
     resultBox('buy-out'));
 }
 
-const payee = (script) => scriptToAddress(script) ?? `script ${toHex(script)}`;
+// an address only for a whole standard template (btc.js scriptType); anything else as its raw hex, flagged
+const payee = (script) => scriptToAddress(script) ?? `script ${toHex(script)} (not a standard address)`;
 
 /**
  * Signs an offer for one of the vault's listings, for terms it can vouch for (market.js offerTerms,
@@ -178,6 +181,8 @@ async function sendFunded(m, outId, label, note) {
 async function sendTake(c) {
   const fresh = await checkedListing(c.l.listTxid); // still ACTIVE, same terms, now
   if (fresh.state !== 'ACTIVE') throw new Error(`the listing is ${fresh.state} now`);
+  const bad = payeeProblem(fresh.l.payScript);
+  if (bad) throw new Error(`not bought: ${bad}`);
   if (!fresh.enough) throw new Error(`not bought: ${fresh.agreed} indexer${fresh.agreed > 1 ? 's' : ''} ${fresh.agreed > 1 ? 'report' : 'reports'} this listing, and a TAKE needs ${TAKE_QUORUM} that agree (add one in Settings)`);
   const tip = await esplora.tipHeight();
   const o = await st.vault.reserveNote(); // the tokens come as this public note

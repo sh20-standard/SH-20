@@ -101,8 +101,8 @@ export function addressToScript(addr, net = NETWORKS.signet) {
 }
 
 /**
- * scriptPubKey → address for `net`, to show a payee: segwit (bech32, bech32m) and the base58 forms;
- * null for anything else (the page then shows the script's hex).
+ * scriptPubKey → address for `net`, to show a payee: segwit (bech32, bech32m) and the base58 forms,
+ * each on its whole template (scriptType); null for anything else (the page then shows the script's hex).
  */
 export function scriptToAddress(s, net = NETWORKS.signet) {
   const type = scriptType(s);
@@ -127,15 +127,24 @@ export function scriptToAddress(s, net = NETWORKS.signet) {
   return null;
 }
 
+/**
+ * The type of a scriptPubKey, on its whole template only: P2PKH `76 a9 14 <20> 88 ac`, P2SH
+ * `a9 14 <20> 87`, P2WPKH `00 14 <20>`, P2WSH `00 20 <32>`, P2TR `51 20 <32>`. A script that only
+ * starts like one of them is 'unknown': shown as its hex, never as an address (scriptToAddress).
+ */
 export function scriptType(s) {
   if (s.length === 22 && s[0] === 0x00 && s[1] === 0x14) return 'p2wpkh';
   if (s.length === 34 && s[0] === 0x00 && s[1] === 0x20) return 'p2wsh';
   if (s.length === 34 && s[0] === 0x51 && s[1] === 0x20) return 'p2tr';
   if (s.length === 23 && s[0] === 0xa9 && s[1] === 0x14 && s[22] === 0x87) return 'p2sh';
-  if (s.length === 25 && s[0] === 0x76 && s[1] === 0xa9) return 'p2pkh';
+  if (s.length === 25 && s[0] === 0x76 && s[1] === 0xa9 && s[2] === 0x14 && s[23] === 0x88 && s[24] === 0xac) return 'p2pkh';
   if (s.length > 0 && s[0] === 0x6a) return 'opreturn';
   return 'unknown';
 }
+
+/** The payees a payment can go to in a transaction the network relays: the five templates above. */
+export const PAYEE_TYPES = Object.freeze(['p2pkh', 'p2sh', 'p2wpkh', 'p2wsh', 'p2tr']);
+export const standardPayee = (s) => PAYEE_TYPES.includes(scriptType(s));
 
 /** Bitcoin Core's dust limit at the default 3 sat/vB dust relay fee. */
 export function dustLimit(script) {

@@ -333,7 +333,10 @@ control block, signature message) is checked against the BIP341 vectors (`test/t
   every indexer that answers to report the same listing, ACTIVE: one that does not know it refuses
   it, and at least two must agree (`consensus.js` `listingCheck`, `TAKE_QUORUM`), since a LIST the
   indexers rejected still looks like one on chain. It checks the seller's signature for
-  that price and payee, then builds the buyer's transaction: the lock at input 0 with the seller's
+  that price and payee. The payee shows as an address only when its script is a whole standard
+  template (P2PKH, P2SH, P2WPKH, P2WSH, P2TR; `btc.js` `scriptType`); any other script shows as its
+  hex, and Buy stays off with the reason, since the network would not relay a TAKE that pays it
+  (`market.js` `payeeProblem`). Then it builds the buyer's transaction: the lock at input 0 with the seller's
   signature, the price at output 0, the TAKE (an OP_RETURN with a public note key of this vault) and
   the wallet's own inputs, which are the only ones the wallet signs. The tokens become a public note
   of the buyer. A lock is spent once: a sale can be neither doubled nor left unpaid.
