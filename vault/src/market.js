@@ -168,7 +168,11 @@ export function listingFromChain(listTxid, rawHex, indexed) {
  *             the root at its anchor (`rootAt`, from the local tree). Only the owner of that note can
  *             have signed that body; the other input may be an unused one, whose fresh keys no
  *             wallet recognises
- *   'ask'     neither: `why` says what is missing, and the page shows the price and payee and asks
+ *             If that note is the vault's and the root is known but the proof does not verify, the
+ *             terms are not the ones the vault signed: refused, as a difference with the record is
+ *   'ask'     the vault cannot check: no nullifier of its notes, a local tree that does not reach the
+ *             anchor, or a verifier that cannot run (`verify` throws). `why` says which, and the page
+ *             shows the price and payee and asks
  *
  * The lock key must be the vault's own for the record's index in every case. Returns { l, vouched, why }.
  */
@@ -191,11 +195,14 @@ export async function offerTerms({ rec, l, lockKey, ownNullifiers, rootAt, verif
   const root = rootAt(env.spend.anchorHeight);
   if (root === undefined || root === null) return { l, vouched: 'ask', why: `the local tree does not reach block ${env.spend.anchorHeight}, the LIST's anchor (sync first)` };
   const publics = publicInputs({ root, env, body, vPub: env.amount, tPub: tickerT(env.ticker) });
-  let ok = false;
+  let ok;
   try {
     ok = await verify(publics, env.spend.proof);
-  } catch {}
-  if (!ok) return { l, vouched: 'ask', why: 'the LIST\'s proof does not verify for its terms: they may not be the ones this vault signed' };
+  } catch (e) {
+    return { l, vouched: 'ask', why: `the LIST's proof could not be checked (${e.message})` };
+  }
+  // a note of this vault, the root at the anchor, and a proof that fails: the body is not the one this vault signed
+  if (ok !== true) throw new Error('not signed: the LIST\'s proof does not verify for the terms on chain, so they are not the ones this vault signed');
   return { l, vouched: 'proof', why: null };
 }
 

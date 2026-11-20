@@ -307,8 +307,10 @@ control block, signature message) is checked against the BIP341 vectors (`test/t
   witness, where the LIST is, so the terms signed are ones the vault vouches for (`offerTerms`):
   those of its own record for a listing it sent, refused if the chain or the indexer say otherwise;
   for a listing found again after a restore, a LIST whose nullifiers include one of this vault's
-  notes and whose proof verifies for its body against the local tree's root at its anchor. Failing
-  both, the page shows the price and payee and asks. The signed terms are shown with the offer.
+  notes and whose proof verifies for its body against the local tree's root at its anchor; a proof
+  that fails there is refused. Only when the vault cannot check (no nullifier of its notes, a local
+  tree that does not reach the anchor, a prover that cannot run) does the page show the price and
+  payee and ask. The signed terms are shown with the offer.
 - **TAKE** ("Buy from an offer"): the vault reads the LIST from the chain (Esplora) and requires
   every indexer that answers to report the same listing, ACTIVE: one that does not know it refuses
   it, and at least two must agree (`consensus.js` `listingCheck`, `TAKE_QUORUM`), since a LIST the

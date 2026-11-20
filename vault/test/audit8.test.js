@@ -186,11 +186,13 @@ test('8.2 an offer is signed only for terms the vault vouches for: its record, o
     assert.equal(sync.rootAt(ix.height + 1), undefined);
     const ok = await terms(found, genuine);
     assert.deepEqual([ok.vouched, ok.why], ['proof', null]);
-    const bad = await terms(found, forged);
-    assert.equal(bad.vouched, 'ask', 'the real proof does not verify for the swapped terms');
-    assert.match(bad.why, /proof does not verify/);
+    // the swap: a note of this vault, the root at the anchor, and the real proof fails for the swapped body: refused
+    await assert.rejects(terms(found, forged), /not signed: the LIST's proof does not verify for the terms on chain/);
+    // asked only when the vault cannot check
     assert.equal((await terms(found, genuine, { ownNullifiers: new Set() })).vouched, 'ask', 'no note of this vault among its nullifiers');
     assert.match((await terms(found, genuine, { rootAt: () => undefined })).why, /does not reach block/);
+    const unloaded = await terms(found, forged, { verify: async () => { throw new Error('the prover is not loaded'); } });
+    assert.deepEqual([unloaded.vouched, unloaded.why], ['ask', 'the LIST\'s proof could not be checked (the prover is not loaded)']);
     assert.equal((await terms({ ...rec }, genuine)).vouched, 'proof', 'a record from before this check is not vouched by itself');
 
     // the lock must be this vault's, whatever vouches for the rest
