@@ -35,7 +35,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `docs/SPEC-WIRE.md` | wire format and acceptance rules, draft v0.3 (normative for the indexer) |
 | `docs/SPEC-NOTES.md` | wallet keys, addresses, note sealing (`pk_eph`, `ct`) and scanning, draft v0.3 (normative for wallets; reviewed once by the circuit session, §8 lists the changes; not audited) |
 | `indexer/` | reference indexer, Node ≥ 20, zero dependencies |
-| `indexer/vectors/v0.3.json` | deterministic vectors for a second implementation: primitives, envelopes with `bodyHash`, carrier cases, a CLAIM, and a 13-block scenario with every root, `eventsH`, digest, refusal and verifier input; `sections` says what each part means |
+| `indexer/vectors/v0.3.json` | deterministic vectors for a second implementation: primitives, envelopes with `bodyHash`, carrier cases, a CLAIM, a 17-block scenario with every root, `eventsH`, digest, refusal and verifier input, and a reorg of its last two blocks; `sections` says what each part means |
 | `indexer-rs/` | a second indexer in Rust, written from the spec alone (clean room): `cargo test --release` replays the vectors |
 | `docs/SPEC-GAPS.md` | what the clean-room indexer found open in the spec, and where each point is now settled |
 | `docs/AUDIT.md` | the dossier for an external zero-knowledge auditor: scope, the relation constraint by constraint, threat model, open doubts; §8 is a first reading of the vault's cryptography, with its findings |

@@ -109,13 +109,18 @@ spends the lock (refused, then CLOSED), and a TAKE that spends two locks (the fi
 **Still with no vector.** These are clear in the text; only `indexer-rs`'s own tests cover them (and nothing
 covers a full tree, which no test can reach):
 
-- a push above 65,535 bytes (R1), and a coinbase whose input has a witness shaped like a script-path spend (R3);
 - a field element at or above `r` (1.2), a `payMode` above 2 (3.1), an empty or too long `payScript` (3.2);
 - a refused DEPLOY for each of its conditions, `unlock < start` with `pre = 0` (4.4), a spend with `D = 0` (4.5);
-- payMode 2, an unpaid mint, a mint outside its window, a minted-out token, the last batch that gets what is left;
-- the anchor window at its bounds, a reused or zero nullifier, a zero leaf, a refused proof;
-- two team notes in one block (4.13), a spend carried by an OP_RETURN (2.6), a full tree of 2^32 leaves (4.6);
-- a block below `A` (the file has no place for one), and a reorg.
+- a mint outside its window, a minted-out token, the last batch that gets what is left;
+- a zero nullifier, a zero leaf, a refused proof;
+- a spend carried by an OP_RETURN (2.6), a full tree of 2^32 leaves (4.6), a block below `A` (the file has no place
+  for one).
+
+Given vectors since (2026-11-20): a push above 65,535 bytes (R1) and a coinbase whose input has a witness (R3) as
+carrier cases; in blocks 14 to 17 (with `W = 12`), the anchor window at both ends, a nullifier spent before, earlier
+in the block and twice in one spend, payMode 2 paid, paid in an OP_RETURN and one sat short, a DEPLOY commit exactly
+`N` blocks old, and two team notes unlocked in one block in ticker order (4.13); and a reorg of blocks 16 and 17,
+whose new block 16 spends again the nullifiers the old one had spent.
 
 ## DEPLOY maturity (2026-11-19)
 
