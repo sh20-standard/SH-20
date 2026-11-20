@@ -13,7 +13,7 @@ import { DEFAULT_PROFILE, DOMAIN, FR, MIN_LOCK_SATS, PAY_MODE, N_OUT } from './c
 import { extractEnvelope } from './carrier.js';
 import { parseEnvelope, CodecError } from './codec.js';
 import { NoteTree } from './tree.js';
-import { noteLeaf, frToBytes, tickerT, PUBLIC_RHO } from './notes.js';
+import { noteLeaf, frToBytes, hexFr, tickerT, PUBLIC_RHO } from './notes.js';
 import { verify as schnorrVerify } from './schnorr.js';
 import { encodeEvents } from './events.js';
 
@@ -27,7 +27,6 @@ const sha256 = (...parts) => {
   return h.digest();
 };
 
-const hexFr = (x) => x.toString(16).padStart(64, '0');
 
 const isOpReturn = (script) => script.length > 0 && script[0] === 0x6a;
 const isP2TR = (script) => script.length === 34 && script[0] === 0x51 && script[1] === 0x20;

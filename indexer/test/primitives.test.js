@@ -52,12 +52,50 @@ test('note tree: paths recompute the root', () => {
   const leaves = [11n, 22n, 33n, 44n, 55n];
   leaves.forEach((l) => t.append(l));
   leaves.forEach((l, i) => assert.equal(rootFromPath(l, i, t.path(i)), t.root));
+  const before = t.root;
   const snap = t.snapshot();
   t.append(66n);
-  assert.notEqual(t.root, snap.root);
+  assert.notEqual(t.root, before);
   t.restore(snap);
-  assert.equal(t.root, snap.root);
+  assert.equal(t.root, before);
   assert.equal(t.size, 5);
+});
+
+test('note tree: every root and path agrees with a tree recomputed from its leaves, through appends and rollbacks', async () => {
+  const { poseidon2 } = await import('../src/poseidon.js');
+  const DEPTH = 6; // small enough to recompute, deep enough for every shape of unfinished subtree
+  const naive = (leaves) => {
+    const zeros = [0n];
+    for (let i = 0; i < DEPTH; i++) zeros.push(poseidon2(zeros[i], zeros[i]));
+    const levels = [leaves.slice()];
+    for (let i = 0; i < DEPTH; i++) {
+      const lv = levels[i];
+      const up = [];
+      for (let k = 0; k < Math.max(1, Math.ceil(lv.length / 2)); k++) up.push(poseidon2(lv[2 * k] ?? zeros[i], lv[2 * k + 1] ?? zeros[i]));
+      levels.push(up);
+    }
+    const node = (i, k) => levels[i][k] ?? zeros[i];
+    return { root: node(DEPTH, 0), path: (p) => Array.from({ length: DEPTH }, (_, i) => node(i, Math.floor(p / 2 ** i) ^ 1)) };
+  };
+  const t = new NoteTree(DEPTH);
+  const leaves = [];
+  assert.equal(t.root, naive([]).root);
+  for (let n = 1; n <= 2 ** DEPTH; n++) {
+    leaves.push(BigInt(1000 + n));
+    t.append(leaves.at(-1));
+    const ref = naive(leaves);
+    assert.equal(t.root, ref.root, `root at size ${n}`);
+    for (const p of [0, n - 1, Math.floor(n / 2), Math.floor(n / 3)]) assert.deepEqual(t.path(p), ref.path(p), `path ${p} at size ${n}`);
+    if (n % 7 === 0) {
+      // roll back a few leaves and grow again: the tree must be the one of the shorter list
+      const keep = n - 3;
+      t.restore({ size: keep });
+      assert.equal(t.root, naive(leaves.slice(0, keep)).root, `root after rollback to ${keep}`);
+      for (let i = keep; i < n; i++) t.append(leaves[i]);
+      assert.equal(t.root, ref.root);
+    }
+  }
+  assert.throws(() => t.append(1n), /tree full/);
 });
 
 test('sibling index stays right past 2^31 (no 32-bit bitwise ops in the tree)', async () => {

@@ -3,14 +3,14 @@
 // spent nullifier of /nullifiers; it never asks /path/:pos or /nullifier/:hex,
 // which would tell the indexer which notes are the user's (docs/API.md).
 //
-// The tree is rebuilt locally (tree.js) and must hash to the indexer's root at
-// the same height; Merkle paths for spends come from that local tree.
+// The tree is rebuilt locally with the indexer's own NoteTree (indexer/src/tree.js: an append hashes only
+// the subtrees it completes, a path is 32 lookups, a reorg a truncation) and must hash to the indexer's
+// root at the same height; Merkle paths for spends come from that local tree.
 // Leaves and nullifiers are cached; each sync re-reads only the last few blocks
 // (REORG_MARGIN) plus new ones. A deeper reorg shows up as a root mismatch and
 // triggers one full re-download.
 
-import { LocalTree } from './tree.js';
-import { rootFromPath } from './sh20.js';
+import { NoteTree, rootFromPath } from './sh20.js';
 import { frHex } from './fr.js';
 
 export const REORG_MARGIN = 6; // blocks re-read on every sync
@@ -42,7 +42,7 @@ export class Sync {
   }
 
   reset() {
-    this.tree = new LocalTree();
+    this.tree = new NoteTree();
     this.leafHeights = []; // block of each leaf, to roll back the last blocks
     this.height = null; // indexer height of the last successful sync
     this.nullifiers = new Map(); // hex -> block height
@@ -52,7 +52,7 @@ export class Sync {
   async load() {
     const c = await this.cache.get(this.key);
     if (!c || c.v !== FORMAT) return false;
-    this.tree.append(fromBytes(c.leaves));
+    for (const leaf of fromBytes(c.leaves)) this.tree.append(leaf);
     if (frHex(this.tree.root) !== c.root) {
       this.reset(); // corrupted cache: start again
       return false;
@@ -69,7 +69,7 @@ export class Sync {
       v: FORMAT,
       height: this.height,
       root: frHex(this.tree.root),
-      leaves: toBytes(this.tree.levels[0]),
+      leaves: toBytes(this.tree.leaves),
       leafHeights: Uint32Array.from(this.leafHeights),
       nullifiers: [...this.nullifiers],
       nullifiersKnown: this.nullifiersKnown,
@@ -92,7 +92,7 @@ export class Sync {
     const keepBelow = this.height === null ? 0 : this.height - REORG_MARGIN + 1;
     let keep = this.leafHeights.findIndex((h) => h >= keepBelow);
     if (keep < 0) keep = this.leafHeights.length;
-    this.tree.truncate(keep);
+    if (keep < this.tree.size) this.tree.restore({ size: keep }); // drop the leaves of the re-read blocks
     this.leafHeights.length = keep;
     const notes = (await api.notes(keep)).filter((n) => n.height !== null && n.height <= H);
     const leaves = [];
@@ -101,7 +101,7 @@ export class Sync {
       leaves.push(n.leaf);
       this.leafHeights.push(n.height);
     }
-    this.tree.append(leaves);
+    for (const leaf of leaves) this.tree.append(leaf);
 
     const want = String(status.root).toLowerCase();
     if (frHex(this.tree.root) !== want || (Number.isInteger(status.leaves) && status.leaves !== this.tree.size)) {
@@ -127,7 +127,7 @@ export class Sync {
 
   /** Merkle witness of the leaf at `pos` from the local tree, checked against the local root. */
   witness(pos, leaf) {
-    if (this.tree.leaf(pos) !== leaf) throw new Error(`leaf ${pos} is not the expected note`);
+    if (this.tree.leaves[pos] !== leaf) throw new Error(`leaf ${pos} is not the expected note`);
     const siblings = this.tree.path(pos);
     const root = this.tree.root;
     if (rootFromPath(leaf, pos, siblings) !== root) throw new Error('local Merkle path does not reach the root');

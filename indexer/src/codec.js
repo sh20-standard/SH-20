@@ -4,6 +4,7 @@
 // Integers are little-endian. Field elements are 32-byte little-endian
 // integers below the BN254 scalar field. Layouts are in docs/SPEC-WIRE.md.
 
+import { frToBytes } from './notes.js';
 import {
   FR, MAGIC, VERSION, TYPE, TYPE_NAME, N_IN, N_OUT, PROOF_BYTES, PAYSCRIPT_MAX, PAY_MODE, MINT_BATCH_MAX,
 } from './constants.js';
@@ -97,7 +98,7 @@ class Writer {
   }
   fr(v) {
     if (v < 0n || v >= FR) throw new CodecError('field element out of range');
-    this.parts.push(Buffer.from(v.toString(16).padStart(64, '0'), 'hex').reverse());
+    this.parts.push(frToBytes(v));
   }
   out() {
     return Buffer.concat(this.parts);
