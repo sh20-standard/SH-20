@@ -9,14 +9,14 @@ Never opened: `indexer/` apart from the vectors file, `explorer/`, `vault/`, `ci
 with the reference: Poseidon is [`light-poseidon`](https://crates.io/crates/light-poseidon) (circom parameters, over
 `ark-bn254`), BIP340 is the [`secp256k1`](https://crates.io/crates/secp256k1) crate (libsecp256k1), SHA-256 is `sha2`.
 
-**Result.** It reproduces every value of `indexer/vectors/v0.3.json`: the 13 blocks of the scenario, the `bodyHash`
+**Result.** It reproduces every value of `indexer/vectors/v0.3.json`: the 17 blocks of the scenario and its reorg, the `bodyHash`
 of every spend envelope, the nine inputs of every verifier call, the 23 carrier cases and the CLAIM.
 [`docs/SPEC-GAPS.md`](../docs/SPEC-GAPS.md) lists the 28 points the first draft of the spec left open and the six a
 recheck still found, all settled in the spec since, and what the vectors still do not pin.
 
 ```sh
 cd indexer-rs
-cargo test --release      # 64 tests
+cargo test --release      # 69 tests
 cargo run --release -- replay <folder of `bitcoin-cli getblock <hash> 3` JSON files> [options]
 ```
 
@@ -35,7 +35,8 @@ height they contain, and prints one line per block from the activation block on:
 ```
 
 `--json` prints one object per block instead, with the field names of the vectors (`height`, `root`, `events`,
-`eventsH`, `digest`) and the refused envelopes (`rejected`). The profile used goes to standard error. Defaults:
+`eventsH`, `digest`) and the refused envelopes (`rejected`, with `envelope`, the index of the envelope, when the
+transaction is a batch). The profile used goes to standard error. Defaults:
 `A` = the lowest height in the folder, `D = 0`, `W = 100`, `K_min = 1`, `N = 6`. Heights must be consecutive from
 `A`; blocks below `A` are not read.
 
@@ -71,9 +72,9 @@ the digests. The first block where they differ holds the event to look at; `--js
 
 | File | What |
 | --- | --- |
-| `tests/vectors.rs` | replays `v0.3.json`: primitives; per block the root, the events, `eventsH`, the digest; the refusals; every verifier call and its nine inputs; the final state; every `bodyHash`; the 23 carrier cases, alone and through the rules; the CLAIM message and signature; `digest_{A−1}` |
+| `tests/vectors.rs` | replays `v0.3.json`: primitives; per block the root, the events, `eventsH`, the digest; the refusals (with the index of the envelope in a batch); every verifier call and its nine inputs; the final state; the `reorg` part (roll back, apply, compare); every `bodyHash`; the carrier cases, alone and through the rules; the CLAIM message and signature; `digest_{A−1}` |
 | `tests/codec.rs` | every envelope of the vectors and of the §4 table, byte for byte; the note leaf; what the decoder refuses |
-| `tests/rules.rs` | what the vectors do not cover: carriers at their edges, mint window and payment, DEPLOY conditions, anchors, nullifiers, CANCELLED, CLOSED, CLAIM, team unlocks, reorgs |
+| `tests/rules.rs` | what the vectors do not cover: carriers at their edges, batches at their edges, mint window and payment, DEPLOY conditions and maturity, anchors, nullifiers, CANCELLED, CLOSED, CLAIM, team unlocks, reorgs |
 | `tests/replay_cli.rs` | the `replay` command over the scenario written as `getblock` files |
 
 `tests/rules.rs` states this implementation's reading of the spec. It is not evidence of agreement with the

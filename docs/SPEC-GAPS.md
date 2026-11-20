@@ -109,13 +109,18 @@ spends the lock (refused, then CLOSED), and a TAKE that spends two locks (the fi
 **Still with no vector.** These are clear in the text; only `indexer-rs`'s own tests cover them (and nothing
 covers a full tree, which no test can reach):
 
-- a push above 65,535 bytes (R1), and a coinbase whose input has a witness shaped like a script-path spend (R3);
 - a field element at or above `r` (1.2), a `payMode` above 2 (3.1), an empty or too long `payScript` (3.2);
 - a refused DEPLOY for each of its conditions, `unlock < start` with `pre = 0` (4.4), a spend with `D = 0` (4.5);
-- payMode 2, an unpaid mint, a mint outside its window, a minted-out token, the last batch that gets what is left;
-- the anchor window at its bounds, a reused or zero nullifier, a zero leaf, a refused proof;
-- two team notes in one block (4.13), a spend carried by an OP_RETURN (2.6), a full tree of 2^32 leaves (4.6);
-- a block below `A` (the file has no place for one), and a reorg.
+- a mint outside its window, a minted-out token, the last batch that gets what is left;
+- a zero nullifier, a zero leaf, a refused proof;
+- a spend carried by an OP_RETURN (2.6), a full tree of 2^32 leaves (4.6), a block below `A` (the file has no place
+  for one).
+
+Given vectors since (2026-11-20): a push above 65,535 bytes (R1) and a coinbase whose input has a witness (R3) as
+carrier cases; in blocks 14 to 17 (with `W = 12`), the anchor window at both ends, a nullifier spent before, earlier
+in the block and twice in one spend, payMode 2 paid, paid in an OP_RETURN and one sat short, a DEPLOY commit exactly
+`N` blocks old, and two team notes unlocked in one block in ticker order (4.13); and a reorg of blocks 16 and 17,
+whose new block 16 spends again the nullifiers the old one had spent.
 
 ## DEPLOY maturity (2026-11-19)
 
@@ -137,6 +142,44 @@ before the stop) and now undoes it, with a test (`indexer/test/adapter.test.js`)
 M1 and M2 cannot change a digest: an indexer that stops has no digest for that block. They decide whether two
 indexers given the same incomplete data both stop. The vectors pin a commit exactly `N` blocks old (accepted, blocks
 4 and 5) and one `N − 2` blocks old (refused); `N − 1` has only this crate's test.
+
+## Batches, and the vectors of blocks 14 to 17 (2026-11-20)
+
+`indexer-rs` follows the batch rule of `SPEC-WIRE.md` §3 (and §6 for the order of the events), read alone, and
+replays the vectors that go with it: the 17 blocks with `W = 12`, the 15 refusals, the 18 verifier calls, the 29
+carrier cases, and the `reorg` part (back to block 15, two new blocks, the same state as an indexer that never saw
+the first 16 and 17). **No contradiction** between the text and the vectors. The three points M1 to M3 above are in
+the text as chosen here; nothing changed in the code for them.
+
+What the text leaves open on batches:
+
+| # | Point | Chosen in `indexer-rs` | Vectors |
+| --- | --- | --- | --- |
+| B1 | **Is a batch decided by the type byte, or by decoding?** The text says "all with the type byte `0x03`". It does not say what becomes of an envelope with that byte that does not decode as a TRANSFER, or of an envelope too short to have a type byte (`SH20`, `SH20 00`). | By the byte, as written. `SH20 00 03 …` that does not decode is a member, refused alone; the others still apply. An envelope with no type byte is not "of type `0x03`": the transaction is not a batch and is refused as one. | silent: every `0x03` envelope in them decodes |
+| B2 | **What `envelope` counts.** `sections` calls it "the index of the envelope in the transaction". With an envelope of another version between two TRANSFERs, is the second one index 1 or 2? | The index among the counted envelopes, from 0, in the order of the tapscript: the envelope of another version takes none. | block 17 gives 0, 1, 2 with nothing in between |
+| B3 | **A batch that spends a lock.** §6 puts the listings a transaction closes after "the accepted envelopes of a batch". Clear, but with no vector. | The batch's events in order, then one CLOSED per lock. | silent |
+
+**Settled (2026-11-21):** the reference indexer chose the same on all three, and `SPEC-WIRE.md` §3 now states B1 and
+B2. Three carrier cases pin them: a `0x03` envelope that does not decode stays in its batch, `SH20` with no type byte
+beside a TRANSFER is refused whole, and an envelope of another version between two TRANSFERs takes no index. B3 still
+has no vector.
+
+B1 can change a digest: an indexer that decided by decoding would refuse the whole transaction where this one
+applies the envelopes that decode. B2 cannot: the index is in `rejected` and `verifierCalls`, not in an event.
+
+Pinned by the vectors: two TRANSFERs in a witness are a batch; a TRANSFER with a MINT, or with a TRANSFER in an
+OP_RETURN, is refused whole; a TRANSFER beside an envelope of another version is alone; in block 17 the second of
+three spends a nullifier of the first and is refused alone, the third follows the first in the tree, and the two
+events share the txid. That last case also pins what "as if it were the only one" means next to "one after the
+other": each envelope sees what the ones before it did.
+
+Two remarks on the file, neither a doubt about a rule:
+
+- `reorg` has no `rejected` list (nothing is refused in its two blocks) and its `final` gives three values only
+  (`treeSize`, `pay2.mints`, `beta.mints`); `sections.reorg` does not say that `final` is partial. The test compares
+  what is given.
+- §5 writes `W = 100` among the profile constants and the scenario runs with `W = 12` (`scenario.profile`,
+  `sections`): an implementation must read `W`, `K_min`, `N`, `D` and `A` from the profile, never fix them.
 
 The sections below are the record of the first pass, before the resolution. They are left as written.
 

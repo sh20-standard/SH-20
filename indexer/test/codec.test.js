@@ -92,18 +92,18 @@ test('strict parsing rejects malformed envelopes', () => {
   assert.throws(() => serializeEnvelope(deployEnv({ payMode: 1, payScript: p2wpkh() })) && parseEnvelope(serializeEnvelope(deployEnv({ payMode: 1, payScript: p2wpkh() }))), /payScript only allowed/);
 });
 
-test('carrier cases of the vectors: none, many, or the one envelope', () => {
+test('carrier cases of the vectors: none, many, the one envelope, or a batch', () => {
   const v = JSON.parse(readFileSync(new URL('../vectors/v0.3.json', import.meta.url), 'utf8'));
   assert.ok(v.carriers.length >= 20);
   for (const c of v.carriers) {
     const tx = {
       txid: 'c',
-      vin: c.tx.vin.map((i) => (i.coinbase ? { coinbase: true } : { txid: 'p', vout: 0, witness: i.witness.map((w) => Buffer.from(w, 'hex')) })),
+      vin: c.tx.vin.map((i) => ({ ...(i.coinbase ? { coinbase: true } : { txid: 'p', vout: 0 }), witness: (i.witness ?? []).map((w) => Buffer.from(w, 'hex')) })),
       vout: c.tx.vout.map((o) => ({ value: BigInt(o.value), script: Buffer.from(o.script, 'hex') })),
     };
     const found = extractEnvelope(tx);
-    const got = found.none ? 'none' : found.error ? 'many' : found.bytes.toString('hex');
-    assert.equal(got, c.expect, c.name);
+    const got = found.none ? 'none' : found.error ? 'many' : found.batch ? found.batch.map((x) => x.bytes.toString('hex')) : found.bytes.toString('hex');
+    assert.deepEqual(got, c.expect, c.name);
   }
 });
 

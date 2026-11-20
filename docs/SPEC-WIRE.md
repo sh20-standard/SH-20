@@ -72,8 +72,14 @@ A script is read as opcodes from its first byte; a script with a push that runs 
 
 Anything that does not match a carrier exactly carries no envelope. Every envelope found counts, except one whose fifth
 byte (the version) exists and is not `0x00`: it belongs to another version, is not counted and has no effect.
-A transaction with **one** counted envelope applies it (§5). With **two or more**, none is applied: the transaction is
-refused (the listings whose locks it spends still close, §6). Any type but DEPLOY (witness only, §5) may use either carrier; a proof-carrying envelope
+A transaction with **one** counted envelope applies it (§5). A transaction whose counted envelopes are two or more, all in
+the witness and all with the type byte `0x03` (TRANSFER), is a **batch**: its envelopes apply one after the other in the
+order of the tapscript, each accepted or refused alone, as if it were the only one (§5), so that a relayer can publish
+several people's transfers in one transaction. Membership is decided by that byte alone: an envelope of type `0x03` that
+does not decode is still in the batch and is refused alone, while one too short to have a type byte is not of type `0x03`.
+Envelopes of another version take no place in a batch; its envelopes are numbered from 0 among the counted ones. No count
+limit is set beyond Bitcoin's own (a standard transaction holds about 470). Any other transaction with **two or more** counted envelopes applies none: it is refused (the listings whose
+locks it spends still close, §6). Any type but DEPLOY (witness only, §5) may use either carrier; a proof-carrying envelope
 (830 bytes for a TRANSFER) costs four times more in an OP_RETURN than in a witness. A coinbase transaction is read like
 any other for its OP_RETURN outputs; the witness of its input is not looked at.
 
@@ -233,15 +239,17 @@ indexer read before `A`. For `H ≥ A`:
 
 1. In block `A`, create the genesis token (event `GENESIS`). Append team notes whose `unlock = H` (by ticker, ascending
    byte order; `pool += pre`), then for each transaction in block order: note the ACTIVE listings whose lock it spends,
-   in input order; apply its envelope (§3, §5); set any of those still ACTIVE to CLOSED.
+   in input order; apply its envelope, or each envelope of a batch in order (§3, §5); set any of those still ACTIVE to
+   CLOSED.
 2. Record `R[H]`.
 3. `digest_H = SHA256(digest_{H−1} ‖ u32le(H) ‖ R[H] (32, LE) ‖ SHA256(events_H))`,
    `events_H` = the records of the block's accepted events, in the order they happen (genesis, team unlocks, then each
-   transaction's envelope followed by the listings it closes), concatenated. A block with no event has an empty `events_H`.
+   transaction's envelope, or the accepted envelopes of a batch, followed by the listings it closes), concatenated. A
+   block with no event has an empty `events_H`.
    Rejected envelopes are not events.
 
 Every record is `code(1) ‖ txid(32) ‖ payload`. `txid` is the transaction's id in display (RPC) byte order, and 32 zero bytes
-for the two block events (GENESIS, TEAM_UNLOCK). Integers are little-endian, field elements 32 bytes little-endian,
+for the two block events (GENESIS, TEAM_UNLOCK); the events of a batch share its `txid`. Integers are little-endian, field elements 32 bytes little-endian,
 tickers their 4 ASCII bytes, `pos` a u32 leaf position. `spent` = `nf0 ‖ nf1 ‖ pos0 ‖ pos1 ‖ pos2`: the two nullifiers and the
 positions of the three output leaves (76 bytes). Each payload has one size for its code (DEPLOY: one per flag), so the
 concatenation parses one way only.

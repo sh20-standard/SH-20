@@ -30,11 +30,16 @@ const push = (d) => {
   return Buffer.concat([Buffer.from([0x4d]), l, d]);
 };
 const opReturn = (d) => Buffer.concat([Buffer.from([0x6a]), push(d)]);
-const witness = (env) => {
-  const rest = env.subarray(4);
-  const parts = [Buffer.from([0x20]), Buffer.alloc(32, 7), Buffer.from([0xac, 0x00, 0x63]), push(Buffer.from('SH20'))];
-  for (let i = 0; i < rest.length; i += 520) parts.push(push(rest.subarray(i, i + 520)));
-  parts.push(Buffer.from([0x68]));
+// The witness of input 0: <sig> <tapscript> <control block>, the tapscript `<key> OP_CHECKSIG` then one envelope per
+// argument, each `OP_0 OP_IF "SH20" <pushes of ≤ 520 bytes> OP_ENDIF` (several make a batch of TRANSFERs).
+const witness = (...envs) => {
+  const parts = [Buffer.from([0x20]), Buffer.alloc(32, 7), Buffer.from([0xac])];
+  for (const env of envs) {
+    const rest = env.subarray(4);
+    parts.push(Buffer.from([0x00, 0x63]), push(Buffer.from('SH20')));
+    for (let i = 0; i < rest.length; i += 520) parts.push(push(rest.subarray(i, i + 520)));
+    parts.push(Buffer.from([0x68]));
+  }
   return [Buffer.alloc(64, 1), Buffer.concat(parts), Buffer.concat([Buffer.from([0xc0]), Buffer.alloc(32, 9)])];
 };
 const spend = (seed, anchorHeight) => ({
@@ -84,10 +89,42 @@ const envs = {
   list7: { type: 'LIST', ticker: 'GENE', amount: 100n, price: 1000n, lockVout: 0, lockKey: lockKeyN(7), payScript: pay, spend: spend('list7', 11) },
   claimTooEarly: { type: 'CLAIM', listTxid: txid('list5-tx'), ...op('claim5'), sig: sign(h('lock5-secret'), Indexer.claimMessage(txid('list5-tx'), op('claim5').npk)) },
   take6: { type: 'TAKE', ...op('buyer6') },
+  // Blocks 14 to 17, with W = 12 and K_min = 1: the anchor window at both ends, nullifiers spent before, earlier in the
+  // block and twice in one spend, a payMode 2 token, and two team notes unlocked in one block.
+  mintSH20x10: { type: 'MINT', ticker: 'SH20', ...op('mint-sh20-10'), k: 10 },
+  anchorOldest: { type: 'TRANSFER', spend: spend('anchor-oldest', 2) }, // H − W = 14 − 12
+  anchorTooOld: { type: 'TRANSFER', spend: spend('anchor-too-old', 1) },
+  anchorNewest: { type: 'TRANSFER', spend: spend('anchor-newest', 13) }, // H − K_min = 14 − 1
+  anchorTooNew: { type: 'TRANSFER', spend: spend('anchor-too-new', 14) },
+  nfSpentBefore: { type: 'TRANSFER', spend: { ...spend('nf-spent-before', 13), nf: [spend('transfer', 1).nf[0], fr('nf-spent-before/x')] } },
+  nfSpentInBlock: { type: 'TRANSFER', spend: { ...spend('nf-spent-in-block', 13), nf: [fr('nf-spent-in-block/x'), spend('anchor-oldest', 2).nf[1]] } },
+  nfTwice: { type: 'TRANSFER', spend: { ...spend('nf-twice', 13), nf: [fr('nf-twice/x'), fr('nf-twice/x')] } },
+  deployPay2: {
+    type: 'DEPLOY', ticker: 'PAY2', max: 100000n, lim: 1000n, pre: 10000n, start: 16, end: 0, unlock: 17,
+    price: 2000n, payMode: 2, payScript: pay, team: op('team-pay2'), spend: spend('deploy-pay2', 14),
+  },
+  deployBeta: {
+    type: 'DEPLOY', ticker: 'BETA', max: 50000n, lim: 500n, pre: 5000n, start: 16, end: 0, unlock: 17,
+    price: 0n, payMode: 0, payScript: Buffer.alloc(0), team: op('team-beta'), spend: spend('deploy-beta', 14),
+  },
+  mintPay2: { type: 'MINT', ticker: 'PAY2', ...op('mint-pay2') },
+  mintPay2OpReturn: { type: 'MINT', ticker: 'PAY2', ...op('mint-pay2-opreturn') },
+  mintPay2Short: { type: 'MINT', ticker: 'PAY2', ...op('mint-pay2-short') },
+  mintPay2Split: { type: 'MINT', ticker: 'PAY2', ...op('mint-pay2-split'), k: 2 },
+  mintBeta: { type: 'MINT', ticker: 'BETA', ...op('mint-beta') },
+  transferR: { type: 'TRANSFER', spend: spend('transfer-r', 15) },
+  // The reorg: blocks 16 and 17 replaced. 16' spends the nullifiers of transferR again, which only a rollback allows.
+  transferR2: { type: 'TRANSFER', spend: { ...spend('transfer-r2', 15), nf: spend('transfer-r', 15).nf } },
+  mintBeta2: { type: 'MINT', ticker: 'BETA', ...op('mint-beta-2') },
+  // Block 17: a batch, three TRANSFERs in one tapscript; the second spends a nullifier of the first and is refused alone.
+  batchA: { type: 'TRANSFER', spend: spend('batch-a', 16) },
+  batchB: { type: 'TRANSFER', spend: { ...spend('batch-b', 16), nf: [spend('batch-a', 16).nf[0], fr('batch-b/x')] } },
+  batchC: { type: 'TRANSFER', spend: spend('batch-c', 16) },
 };
 const ser = Object.fromEntries(Object.entries(envs).map(([k, v]) => [k, serializeEnvelope(v)]));
 
 const input = (seed) => ({ txid: txid(seed), vout: 0, witness: [] });
+const wit = (k) => ({ txid: txid(k + '-tx'), vin: [{ txid: txid('fund-' + k), vout: 0, witness: witness(ser[k]) }], vout: [] });
 const listTxid = txid('list-tx');
 const txs = [
   [
@@ -137,6 +174,27 @@ const txs = [
     // A paid TAKE spending the locks of list6 then list7: list6 SOLD, then list7 CLOSED.
     { txid: txid('take6-tx'), vin: [{ txid: txid('list6-tx'), vout: 0, witness: [] }, { txid: txid('list7-tx'), vout: 0, witness: [] }], vout: [{ value: 0n, script: opReturn(ser.take6) }, { value: 1000n, script: pay }] },
   ],
+  [
+    { txid: txid('mint-sh20-10'), vin: [input('fi')], vout: [{ value: 0n, script: opReturn(ser.mintSH20x10) }] },
+    ...['anchorOldest', 'anchorTooOld', 'anchorNewest', 'anchorTooNew', 'nfSpentBefore', 'nfSpentInBlock', 'nfTwice'].map((k) => wit(k)),
+  ],
+  [
+    // PAY2 first, its commit exactly N = 3 blocks old; BETA second: their team notes still unlock in ticker order.
+    { txid: txid('deploy-pay2-tx'), vin: [{ txid: txid('fj'), vout: 0, witness: witness(ser.deployPay2), prevHeight: 12 }], vout: [] },
+    { txid: txid('deploy-beta-tx'), vin: [{ txid: txid('fk'), vout: 0, witness: witness(ser.deployBeta), prevHeight: 5 }], vout: [] },
+  ],
+  [
+    // payMode 2 counts the outputs to payScript only: paid, paid in an OP_RETURN (refused), one sat short (refused),
+    // k = 2 paid by two outputs. Then a free mint and a transfer that the reorg below takes back.
+    { txid: txid('mint-pay2'), vin: [input('fl')], vout: [{ value: 0n, script: opReturn(ser.mintPay2) }, { value: 2000n, script: pay }] },
+    { txid: txid('mint-pay2-opreturn'), vin: [input('fm')], vout: [{ value: 2000n, script: opReturn(ser.mintPay2OpReturn) }] },
+    { txid: txid('mint-pay2-short'), vin: [input('fn')], vout: [{ value: 0n, script: opReturn(ser.mintPay2Short) }, { value: 1999n, script: pay }] },
+    { txid: txid('mint-pay2-split'), vin: [input('fo')], vout: [{ value: 0n, script: opReturn(ser.mintPay2Split) }, { value: 2000n, script: pay }, { value: 2000n, script: pay }] },
+    { txid: txid('mint-beta'), vin: [input('fp')], vout: [{ value: 0n, script: opReturn(ser.mintBeta) }] },
+    wit('transferR'),
+  ],
+  // Block 17: the team notes of BETA and PAY2, in that order, then a batch of three TRANSFERs.
+  [{ txid: txid('batch-tx'), vin: [{ txid: txid('fr'), vout: 0, witness: witness(ser.batchA, ser.batchB, ser.batchC) }], vout: [] }],
 ];
 const blocks = txs.map((t, i) => ({ height: i + 1, hash: `b${i + 1}`, txs: t }));
 
@@ -149,14 +207,41 @@ const verifier = {
     verifierCalls.push({
       height: ix._ctx.height,
       txid: ix._ctx.txid,
+      ...(ix._ctx.envelope !== undefined ? { envelope: ix._ctx.envelope } : {}),
       publicInputs: [a.root, ...a.nullifiers, ...a.outLeaves, a.bodyHash, a.vPub, a.tPub].map((x) => hexFr(x)),
     });
     return Buffer.from(a.proof).equals(PROOF);
   },
 };
 const hexFr = (x) => x.toString(16).padStart(64, '0');
-const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 1000n, deployMaturity: 3 }, verifier });
+const PROFILE = { activationHeight: 1, deployBurn: 1000n, deployMaturity: 3, anchorWindow: 12 };
+const ix = new Indexer({ profile: PROFILE, verifier });
 const results = blocks.map((b) => ix.applyBlock(b));
+const tok = (t) => ({ mints: ix.token(t).mints.toString(), pool: ix.token(t).pool.toString(), teamUnlocked: ix.notes.some((x) => x.kind === 'TEAM' && x.ticker === t) });
+const finalState = {
+  treeSize: ix.tree.size,
+  sh20: { mints: ix.token('SH20').mints.toString(), burned: ix.token('SH20').burned.toString(), pool: ix.token('SH20').pool.toString() },
+  gene: tok('GENE'),
+  pay2: tok('PAY2'),
+  beta: tok('BETA'),
+  listings: Object.fromEntries([listTxid, list2Txid, list3Txid, ...[4, 5, 6, 7].map((n) => txid(`list${n}-tx`))].map((id) => [id, ix.listings.get(id).state])),
+};
+
+// The reorg: blocks 16 and 17 give way to 16' and 17'. An indexer rolls back to block 15 and applies them; every root and
+// digest must be those of a chain that never had the first 16 and 17, which a fresh indexer checks here.
+const reorgFrom = 15;
+const reorgBlocks = [
+  { height: 16, hash: "b16'", txs: [wit('transferR2'), { txid: txid('mint-beta-2'), vin: [input('fq')], vout: [{ value: 0n, script: opReturn(ser.mintBeta2) }] }] },
+  { height: 17, hash: "b17'", txs: [] },
+];
+const callsBeforeReorg = verifierCalls.length;
+ix.rollback(reorgFrom);
+const reorgResults = reorgBlocks.map((b) => ix.applyBlock(b));
+const reorgCalls = verifierCalls.splice(callsBeforeReorg);
+const fresh = new Indexer({ profile: PROFILE, verifier: { name: 'test', verifySpend: (a) => Buffer.from(a.proof).equals(PROOF) } });
+for (const b of [...blocks.slice(0, reorgFrom), ...reorgBlocks]) fresh.applyBlock(b);
+if (fresh.digest.toString('hex') !== ix.digest.toString('hex')) throw new Error('the reorg does not end where a fresh chain does');
+if (reorgResults.some((r) => r.rejected.length)) throw new Error('a block of the reorg refused something');
 // The expected rejections: a copied LIST whose lock pays the copier, and a BURN beyond the turnstile.
 const expected = [
   { height: 2, txid: txid('list-copy-tx'), reason: 'lock output must be P2TR to lockKey' },
@@ -166,8 +251,16 @@ const expected = [
   { height: 11, txid: txid('claim-forged-tx'), reason: 'bad CLAIM signature' },
   { height: 13, txid: txid('two-envelopes-tx'), reason: 'more than one SH-20 envelope in the transaction' },
   { height: 13, txid: txid('claim-too-early-tx'), reason: 'listing is not CLOSED' },
+  { height: 14, txid: txid('anchorTooOld-tx'), reason: 'anchor outside the window' },
+  { height: 14, txid: txid('anchorTooNew-tx'), reason: 'anchor outside the window' },
+  { height: 14, txid: txid('nfSpentBefore-tx'), reason: 'nullifier already spent' },
+  { height: 14, txid: txid('nfSpentInBlock-tx'), reason: 'nullifier already spent' },
+  { height: 14, txid: txid('nfTwice-tx'), reason: 'duplicate nullifier' },
+  { height: 16, txid: txid('mint-pay2-opreturn'), reason: 'mint not paid' },
+  { height: 16, txid: txid('mint-pay2-short'), reason: 'mint not paid' },
+  { height: 17, txid: txid('batch-tx'), envelope: 1, reason: 'nullifier already spent' },
 ];
-const rejected = results.flatMap((r) => r.rejected.map((x) => ({ height: r.height, txid: x.txid, reason: x.reason })));
+const rejected = results.flatMap((r) => r.rejected.map((x) => ({ height: r.height, txid: x.txid, ...(x.envelope !== undefined ? { envelope: x.envelope } : {}), reason: x.reason })));
 if (JSON.stringify(rejected) !== JSON.stringify(expected)) throw new Error(`unexpected rejections: ${JSON.stringify(rejected)}`);
 
 const txJson = (t) => ({
@@ -196,6 +289,9 @@ const wtx = (script, extra = {}) => ({
 });
 const otx = (...scripts) => ({ vin: [{ witness: [] }], vout: scripts.map((script) => ({ value: 0n, script })) });
 const v1 = Buffer.concat([Buffer.from('SH20'), Buffer.from([0x01, 0x02]), Buffer.alloc(36, 3)]);
+const T1 = ser.batchA;
+const T2 = ser.batchC;
+const T0 = Buffer.concat([Buffer.from('SH20'), Buffer.from([0x00, 0x03]), Buffer.alloc(10)]); // type 0x03, far too short to decode
 const carrierCases = [
   ['opreturn', otx(opReturn(M)), M],
   ['opreturn: a 42-byte push written with OP_PUSHDATA1 is not minimal', otx(Buffer.concat([Buffer.from([0x6a, 0x4c, M.length]), M])), 'none'],
@@ -220,17 +316,27 @@ const carrierCases = [
   ['an envelope of version 1 beside a v0 envelope: the v0 one alone counts', { ...wtx(plain), vout: [{ value: 0n, script: opReturn(v1) }] }, M],
   ['an envelope of version 1 alone', otx(opReturn(v1)), 'none'],
   ['coinbase: its OP_RETURN outputs are read', { vin: [{ coinbase: true }], vout: [{ value: 0n, script: opReturn(M) }] }, M],
+  ['coinbase: the witness of its input is not read', { vin: [{ coinbase: true, witness: [SIG, plain, CONTROL] }], vout: [] }, 'none'],
+  ['witness: two TRANSFERs are a batch', wtx(witness(T1, T2)[1]), [T1, T2]],
+  ['witness: a TRANSFER and a MINT are not a batch', wtx(witness(T1, M)[1]), 'many'],
+  ['a TRANSFER in the witness and one in an OP_RETURN are not a batch', { ...wtx(witness(T1)[1]), vout: [{ value: 0n, script: opReturn(T2) }] }, 'many'],
+  ['witness: a TRANSFER beside an envelope of version 1 is alone, not a batch', wtx(Buffer.concat([witness(T1)[1], env0(push(v1.subarray(4))).subarray(KEY.length)])), T1],
+  // B1 and B2 of SPEC-GAPS: a batch is decided by the type byte alone, and an envelope of another version takes no index.
+  ['witness: an envelope of type 0x03 that does not decode is still in the batch (it will be refused alone)', wtx(witness(T1, T0)[1]), [T1, T0]],
+  ['witness: SH20 with no type byte beside a TRANSFER is not a batch', wtx(witness(T1, Buffer.from('SH20'))[1]), 'many'],
+  ['witness: an envelope of version 1 between two TRANSFERs takes no place in the batch', wtx(Buffer.concat([witness(T1)[1], env0(push(v1.subarray(4))).subarray(KEY.length), witness(T2)[1].subarray(KEY.length)])), [T1, T2]],
+  ['opreturn: a push of 65,536 bytes is minimal only with OP_PUSHDATA4, so it counts beside a second envelope', otx(opReturn(M), Buffer.concat([Buffer.from([0x6a, 0x4e, 0x00, 0x00, 0x01, 0x00]), Buffer.from('SH20'), Buffer.alloc(65532)])), 'many'],
 ];
 const carriers = carrierCases.map(([name, tx, expect]) => {
   const t = { txid: txid('carrier/' + name), ...tx };
   const found = extractEnvelope(t);
-  const got = found.none ? 'none' : found.error ? 'many' : found.bytes.toString('hex');
-  const want = Buffer.isBuffer(expect) ? expect.toString('hex') : expect;
-  if (got !== want) throw new Error(`carrier case "${name}": expected ${want}, got ${got}`);
+  const got = found.none ? 'none' : found.error ? 'many' : found.batch ? found.batch.map((x) => x.bytes.toString('hex')) : found.bytes.toString('hex');
+  const want = Buffer.isBuffer(expect) ? expect.toString('hex') : Array.isArray(expect) ? expect.map((x) => x.toString('hex')) : expect;
+  if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error(`carrier case "${name}": expected ${want}, got ${got}`);
   return {
     name,
     tx: {
-      vin: t.vin.map((i) => (i.coinbase ? { coinbase: true } : { witness: i.witness.map((w) => w.toString('hex')) })),
+      vin: t.vin.map((i) => (i.coinbase ? { coinbase: true, ...(i.witness ? { witness: i.witness.map((w) => w.toString('hex')) } : {}) } : { witness: i.witness.map((w) => w.toString('hex')) })),
       vout: t.vout.map((o) => ({ value: o.value.toString(), script: o.script.toString('hex') })),
     },
     expect: want,
@@ -241,13 +347,14 @@ const out = {
   version: 'SH-20 draft v0.3',
   notes: 'Field elements are hex, big-endian here for readability; on the wire they are 32-byte little-endian. The scenario uses a test verifier that accepts exactly one 480-byte proof: \"valid-proof\" padded with zeros. eventsH is the byte string of SPEC-WIRE §6 whose SHA-256 enters the digest. rejected lists the envelopes an indexer must refuse; the reason is informative, only the refusal is normative.',
   sections: {
-    envelopes: 'Each envelope of the scenario: its bytes, and for a spend its bodyHash (SPEC-WIRE §4: SHA256("sh20/v0/body" ‖ body) mod r, body from "SH20" up to the proof).',
+    envelopes: 'Each envelope of the scenario and of the reorg: its bytes, and for a spend its bodyHash (SPEC-WIRE §4: SHA256("sh20/v0/body" ‖ body) mod r, body from "SH20" up to the proof).',
     claim: 'One CLAIM: the message SHA256("sh20/v0/claim" ‖ listTxid ‖ npk) and its BIP340 signature by lockKey, with 32 zero bytes of auxiliary randomness.',
     preActivation: 'digest_{A-1}: the digest an indexer starts from at block A.',
-    carriers: 'One transaction each, and what SPEC-WIRE §3 finds in it. expect is the hex of the one counted envelope, "none" when no envelope is counted (an envelope of another version alone is "none"), or "many" when two or more are counted (the transaction is refused). Inputs give their witness only; their outpoints play no part. {"coinbase": true} is the input of a coinbase.',
-    'scenario.verifierCalls': 'Every call to the verifier, in order, with its nine public inputs in the order of SPEC-WIRE §4: R[anchorHeight], nf0, nf1, leaf0, leaf1, leaf2, bodyHash, vPub, tPub. The proof is checked last (§5), so a spend refused for another reason is not in the list. An anchor below A is checked against the empty root.',
+    carriers: 'One transaction each, and what SPEC-WIRE §3 finds in it. expect is the hex of the one counted envelope, "none" when no envelope is counted (an envelope of another version alone is "none"), a list of hex when they are a batch (two or more TRANSFERs, all in the witness: each applies alone), or "many" when two or more are counted otherwise (the transaction is refused). Inputs give their witness only; their outpoints play no part. {"coinbase": true} is the input of a coinbase; its witness, when given, is not read.',
+    'scenario.verifierCalls': 'Every call to the verifier, in order, with its nine public inputs in the order of SPEC-WIRE §4: R[anchorHeight], nf0, nf1, leaf0, leaf1, leaf2, bodyHash, vPub, tPub. The proof is checked last (§5), so a spend refused for another reason is not in the list. In a batch, envelope is the index of the envelope in the transaction (also in rejected). An anchor below A is checked against the empty root.',
     'scenario.after': 'For each block: root R[H], the event types, eventsH, and digest_H.',
-    'scenario.blocks': 'The transactions of each block. vin[].prevHeight is the height of the block that confirmed the output an input spends, given where a DEPLOY needs it (SPEC-WIRE §5: its commit must be N = deployMaturity blocks old; here N = 3).',
+    'scenario.blocks': 'The transactions of each block. vin[].prevHeight is the height of the block that confirmed the output an input spends, given where a DEPLOY needs it (SPEC-WIRE §5: its commit must be N = deployMaturity blocks old; here N = 3). The window is W = 12 here (anchorWindow), so blocks 12 and 14 reach its lower end.',
+    reorg: 'After the scenario, blocks 16 and 17 give way to the two blocks given here: roll back to rollbackTo, then apply them. 16\' spends the nullifiers of the TRANSFER of the first 16 again, which only a rollback allows. after is what an indexer that never saw the first 16 and 17 computes.',
   },
   poseidon2: [
     { in: ['1', '2'], out: poseidon2(1n, 2n).toString() },
@@ -270,17 +377,19 @@ const out = {
   },
   carriers,
   scenario: {
-    profile: { activationHeight: 1, deployBurn: '1000', anchorWindow: 100, anchorMinDepth: 1, deployMaturity: 3 },
+    profile: { activationHeight: PROFILE.activationHeight, deployBurn: String(PROFILE.deployBurn), anchorWindow: PROFILE.anchorWindow, anchorMinDepth: 1, deployMaturity: PROFILE.deployMaturity },
     blocks: blocks.map((b) => ({ height: b.height, txs: b.txs.map(txJson) })),
     rejected,
     verifierCalls,
     after: results.map((r) => ({ height: r.height, root: hexFr(r.root), events: r.events.map((e) => e.type), eventsH: encodeEvents(r.events).toString('hex'), digest: r.digest })),
-    final: {
-      treeSize: ix.tree.size,
-      sh20: { mints: ix.token('SH20').mints.toString(), burned: ix.token('SH20').burned.toString(), pool: ix.token('SH20').pool.toString() },
-      gene: { mints: ix.token('GENE').mints.toString(), pool: ix.token('GENE').pool.toString(), teamUnlocked: ix.notes.some((x) => x.kind === 'TEAM' && x.ticker === 'GENE') },
-      listings: Object.fromEntries([listTxid, list2Txid, list3Txid, ...[4, 5, 6, 7].map((n) => txid(`list${n}-tx`))].map((id) => [id, ix.listings.get(id).state])),
-    },
+    final: finalState,
+  },
+  reorg: {
+    rollbackTo: reorgFrom,
+    blocks: reorgBlocks.map((b) => ({ height: b.height, txs: b.txs.map(txJson) })),
+    verifierCalls: reorgCalls,
+    after: reorgResults.map((r) => ({ height: r.height, root: hexFr(r.root), events: r.events.map((e) => e.type), eventsH: encodeEvents(r.events).toString('hex'), digest: r.digest })),
+    final: { treeSize: ix.tree.size, pay2: { mints: ix.token('PAY2').mints.toString() }, beta: { mints: ix.token('BETA').mints.toString() } },
   },
 };
 mkdirSync(new URL('../vectors/', import.meta.url), { recursive: true });

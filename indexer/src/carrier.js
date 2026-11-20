@@ -6,9 +6,10 @@
 //  - Witness: in the tapscript of input 0, `OP_0 OP_IF <push "SH20"> <minimal pushes of ≤ 520 bytes> OP_ENDIF`.
 //    For envelopes with a proof, paid at the witness rate.
 // Anything that does not match a carrier exactly carries no envelope. An envelope whose version byte is not 0x00
-// belongs to another version: it is not counted. A transaction with two or more counted envelopes is refused.
+// belongs to another version: it is not counted. Two or more counted envelopes, all TRANSFERs in the witness, are a
+// batch, each applied alone; any other transaction with two or more counted envelopes is refused.
 
-import { MAGIC, MAX_PUSH, VERSION } from './constants.js';
+import { MAGIC, MAX_PUSH, TYPE, VERSION } from './constants.js';
 
 const OP_0 = 0x00;
 const OP_PUSHDATA1 = 0x4c;
@@ -149,8 +150,11 @@ function fromWitness(tx) {
 // An envelope of another version is not counted (SPEC-WIRE §3); one too short to have a version byte is v0.
 const counted = (x) => x.bytes.length <= MAGIC.length || x.bytes[MAGIC.length] === VERSION;
 
+const isTransfer = (x) => x.bytes.length > MAGIC.length + 1 && x.bytes[MAGIC.length + 1] === TYPE.TRANSFER;
+
 /**
- * @returns {{none: true} | {error: string} | {bytes: Buffer, carrier: 'opreturn'|'witness', index?: number}}
+ * @returns {{none: true} | {error: string} | {bytes: Buffer, carrier: 'opreturn'|'witness'} |
+ *   {batch: {bytes: Buffer, carrier: 'witness'}[]}}
  */
 export function extractEnvelope(tx) {
   const all = [
@@ -158,6 +162,8 @@ export function extractEnvelope(tx) {
     ...fromWitness(tx).map((x) => ({ ...x, carrier: 'witness' })),
   ].filter(counted);
   if (all.length === 0) return { none: true };
-  if (all.length > 1) return { error: 'more than one SH-20 envelope in the transaction' };
-  return all[0];
+  if (all.length === 1) return all[0];
+  // A batch (SPEC-WIRE §3): TRANSFERs in the witness only, so a relayer can publish several people's transfers at once.
+  if (all.every((x) => x.carrier === 'witness' && isTransfer(x))) return { batch: all };
+  return { error: 'more than one SH-20 envelope in the transaction' };
 }

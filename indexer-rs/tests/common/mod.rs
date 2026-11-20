@@ -88,6 +88,18 @@ pub fn witness_tx(n: u64, envelope: &[u8]) -> Tx {
     Tx { txid: txid(n), vin: vec![i], vout: Vec::new() }
 }
 
+/// A transaction whose tapscript holds several envelopes, one after the other.
+pub fn batch_tx(n: u64, envelopes: &[Vec<u8>]) -> Tx {
+    let mut script = push(&[7u8; 32]);
+    script.push(0xac);
+    for e in envelopes {
+        script.extend(envelope_script(e));
+    }
+    let mut i = input(n);
+    i.witness = vec![vec![1u8; 64], script, control_block()];
+    Tx { txid: txid(n), vin: vec![i], vout: Vec::new() }
+}
+
 pub fn p2tr(key: &[u8; 32]) -> Vec<u8> {
     let mut s = vec![0x51, 0x20];
     s.extend_from_slice(key);

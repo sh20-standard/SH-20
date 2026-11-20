@@ -162,7 +162,8 @@ The verifier stays cross-checked against snarkjs' PLONK verifier.
 3. Tickers have 4 characters only.
 4. Several envelopes per transaction, for TRANSFER only, each judged alone: a relayer publishes many people's
    transfers in one transaction, which costs less per transfer and mixes the senders. LIST, TAKE, CLAIM, MINT, BURN
-   and DEPLOY stay one per transaction, so the lock rules stay simple. Specified before the relayer is built.
+   and DEPLOY stay one per transaction, so the lock rules stay simple. Specified in `SPEC-WIRE.md` §3 (a batch), with
+   no count limit beyond Bitcoin's own.
 
 Decided in v0.3: the events inside the digest have a fixed byte encoding (`SPEC-WIRE.md` §6), so a second
 indexer in any language reproduces every digest; the GENESIS record commits to the profile's rules.
