@@ -154,13 +154,15 @@ The verifier stays cross-checked against snarkjs' PLONK verifier.
   aggregated batches (one proof for many transfers, built by anyone) and a BTC entry and exit once Bitcoin
   can enforce one without a federation. Both arrive as new rules that indexers opt into; existing tokens keep working.
 
-## Open decisions
+## Decisions of 2026-11-20
 
-1. Final name and 4-byte magic.
-2. Value of `D`, or no genesis burn at all.
-3. Tickers of 4 characters only, or also 5 to 12 (then `t` = the ticker's bytes as a big-endian number,
-   still unique and below the field size, and ticker fields get a length byte).
-4. Several envelopes per transaction, so relayers can publish in batches.
+1. The name stays SH-20, and the 4-byte magic `SH20`.
+2. `D = 1000`: every DEPLOY burns 1,000 SH20, one free mint's worth while the SH20 mint lasts. It also bounds the
+   number of tokens that can ever exist at 21,000,000 / `D` = 21,000, so a ticker keeps a price once the mint is over.
+3. Tickers have 4 characters only.
+4. Several envelopes per transaction, for TRANSFER only, each judged alone: a relayer publishes many people's
+   transfers in one transaction, which costs less per transfer and mixes the senders. LIST, TAKE, CLAIM, MINT, BURN
+   and DEPLOY stay one per transaction, so the lock rules stay simple. Specified before the relayer is built.
 
 Decided in v0.3: the events inside the digest have a fixed byte encoding (`SPEC-WIRE.md` §6), so a second
 indexer in any language reproduces every digest; the GENESIS record commits to the profile's rules.

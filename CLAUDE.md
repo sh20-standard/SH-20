@@ -143,7 +143,9 @@ claims exist. What is left before people can try it, in order (review of 2026-11
    Testers send the phone page's JSON: that is where mid-range and Android phones get measured.
 3. **Before mainnet** (each with an owner and a test):
    - **Sender privacy: relayers.** The Bitcoin inputs that pay a transfer show who sent something; a relayer pays them
-     and is paid in tokens by the third output. Needs "several envelopes per transaction" decided.
+     and is paid in tokens by the third output. Decided (2026-11-20): several TRANSFER envelopes per transaction, each
+     judged alone; every other type stays one per transaction. To specify (cap per transaction, order, vectors) before
+     the relayer is built.
    - **Differential fuzzing.** Random chains (valid and broken envelopes, both carriers, lock spends, reorgs) through
      `indexer/` and `indexer-rs/`, digests compared at every block: the vectors only cover the cases someone thought of.
    - **Scale.** The note tree is no longer the limit (2026-11-19: an append hashes only the subtrees it completes,
@@ -237,8 +239,11 @@ private part that already proves and verifies, in open code.
 
 ## Open decisions (ask the maintainer)
 
-Final name and 4-byte magic · value of `D` (SH20 burned per DEPLOY) or no burn · ticker length (4 only, or 5–12) ·
-several envelopes per transaction.
+None open on 2026-11-20. Still to fix before the signet: the profile constants (activation height `A`).
+
+Decided (2026-11-20): the name stays **SH-20** and the magic `SH20`; tickers are 4 characters only; `D = 1000` SH20
+burned per DEPLOY, so at most 21,000 tokens can ever be deployed (21,000,000 / `D`); several TRANSFER envelopes per
+transaction, each judged alone (every other type stays one per transaction).
 
 Decided by the maintainer: the genesis token is **SH20**, fixed in the activation profile (no DEPLOY, no race):
 21,000,000 max, 1,000 per mint, free mint (network fees only), no team allocation.
