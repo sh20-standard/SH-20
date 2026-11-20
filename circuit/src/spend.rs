@@ -50,7 +50,7 @@ pub fn synthesize(w: &SpendWitness) -> Cs {
     let head = gadgets::poseidon(cs, &[Lane::Const(model::tag_leaf()), Lane::Var(t)]);
 
     let mut in_v = Vec::with_capacity(N_IN);
-    for i in 0..N_IN {
+    for (i, &nf_i) in nf.iter().enumerate() {
         cs.at(format!("in{i} value"));
         let v = cs.alloc(w.in_v[i]);
         gadgets::range(cs, v, 64);
@@ -78,7 +78,7 @@ pub fn synthesize(w: &SpendWitness) -> Cs {
 
         cs.at(format!("in{i} nullifier"));
         let nfh = gadgets::poseidon_vars(cs, &[nk, leaf, index]);
-        cs.assert_eq(nfh, nf[i]);
+        cs.assert_eq(nfh, nf_i);
 
         cs.at(format!("in{i} signature"));
         let r8 = [cs.alloc(w.sig_r8[i][0]), cs.alloc(w.sig_r8[i][1])];
@@ -89,7 +89,7 @@ pub fn synthesize(w: &SpendWitness) -> Cs {
     }
 
     let mut out_v = Vec::with_capacity(N_OUT);
-    for k in 0..N_OUT {
+    for (k, &out_leaf_k) in out_leaf.iter().enumerate() {
         cs.at(format!("out{k} value"));
         let v = cs.alloc(w.out_v[k]);
         gadgets::range(cs, v, 64);
@@ -97,7 +97,7 @@ pub fn synthesize(w: &SpendWitness) -> Cs {
         let npk = cs.alloc(w.out_npk[k]);
         let rho = cs.alloc(w.out_rho[k]);
         let leaf = note_leaf(cs, head, v, npk, rho);
-        cs.assert_eq(leaf, out_leaf[k]);
+        cs.assert_eq(leaf, out_leaf_k);
         out_v.push(v);
     }
 

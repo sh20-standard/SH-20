@@ -6,7 +6,7 @@
 #   target/wasm32-wasip1-threads/release/sh20_circuit.wasm     a thread pool over Web Workers on a
 #                                                              shared memory (host side: web/host.js)
 #
-# Needs the targets once: rustup target add wasm32-unknown-unknown wasm32-wasip1-threads
+# The two targets come with the Rust pinned in rust-toolchain.toml.
 set -euo pipefail
 cd "$(dirname "$0")"
 cargo build --lib --release --target wasm32-unknown-unknown --no-default-features

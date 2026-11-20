@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 const NOTE_PAGE_MAX = 5000;
 const BLOCK_PAGE_MAX = 200;
 
-const hex32 = (x) => x.toString(16).padStart(64, '0');
+import { hexFr as hex32 } from './notes.js';
 
 const json = (value) =>
   JSON.stringify(value, (_, v) => {

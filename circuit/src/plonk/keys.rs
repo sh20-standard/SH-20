@@ -109,11 +109,11 @@ fn structure(cs: &Cs) -> Result<Structure, String> {
     let mut q_h: [Vec<Fr>; 5] = std::array::from_fn(|_| vec![Fr::zero(); n]);
     let mut wires: [Vec<u32>; 3] = std::array::from_fn(|_| vec![0u32; n]);
     for (i, g) in cs.gates.iter().enumerate() {
-        for j in 0..5 {
-            q_h[j][i] = g.q[j];
+        for (column, q) in q_h.iter_mut().zip(g.q) {
+            column[i] = q;
         }
-        for j in 0..3 {
-            wires[j][i] = g.w[j];
+        for (column, w) in wires.iter_mut().zip(g.w) {
+            column[i] = w;
         }
     }
 

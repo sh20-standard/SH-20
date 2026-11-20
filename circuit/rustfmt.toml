@@ -1,0 +1,4 @@
+# The crate is written in wide lines. With these two settings rustfmt leaves all but the longest
+# lines as they were written; `cargo fmt --check` is part of the CI (.github/workflows/ci.yml).
+max_width = 160
+use_small_heuristics = "Max"

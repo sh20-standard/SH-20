@@ -1,0 +1,88 @@
+# Every suite of the repository on every push and pull request. No secret, no third-party action.
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+
+jobs:
+  indexer:
+    name: indexer, vectors, explorer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: tests
+        working-directory: indexer
+        run: npm test
+      - name: real proofs through the indexer (the vault's WebAssembly verifier)
+        working-directory: indexer
+        env:
+          SH20_VERIFIER_WASM: ../vault/prover/sh20_circuit.wasm
+        run: node --test test/plonk.test.js
+      - name: the vectors are byte-identical when regenerated
+        working-directory: indexer
+        run: npm run vectors && git diff --exit-code vectors/
+      - name: the explorer's demo data is up to date
+        working-directory: explorer
+        run: node build-demo.mjs && git diff --exit-code index.html
+
+  indexer-rs:
+    name: indexer-rs (clean room)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            indexer-rs/target
+          key: indexer-rs-${{ hashFiles('indexer-rs/Cargo.lock', 'indexer-rs/rust-toolchain.toml') }}
+      - name: the Rust pinned in rust-toolchain.toml, with rustfmt and clippy
+        working-directory: indexer-rs
+        run: rustup toolchain install --no-self-update || rustup show
+      - working-directory: indexer-rs
+        run: cargo fmt --check
+      - working-directory: indexer-rs
+        run: cargo clippy --release --all-targets -- -D warnings
+      - working-directory: indexer-rs
+        run: cargo test --release
+
+  circuit:
+    name: circuit (Rust prover and verifier)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            circuit/target
+          key: circuit-${{ hashFiles('circuit/Cargo.lock', 'circuit/rust-toolchain.toml') }}
+      - name: the Rust pinned in rust-toolchain.toml, with rustfmt and clippy
+        working-directory: circuit
+        run: rustup toolchain install --no-self-update || rustup show
+      - working-directory: circuit
+        run: cargo fmt --check
+      - working-directory: circuit
+        run: cargo clippy --release --all-targets -- -D warnings
+      - working-directory: circuit
+        run: cargo test --release
+      # Not cached: the two modules are rebuilt from nothing on every run (vault/tools/rustc-host.sh
+      # says why a Linux runner and a laptop give the same bytes).
+      - name: the WebAssembly modules the vault ships are what this source builds
+        run: vault/tools/prover.sh --check
+
+  wallet:
+    name: circuit/js and vault
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - working-directory: circuit/js
+        run: npm test
+      - working-directory: vault
+        run: npm test

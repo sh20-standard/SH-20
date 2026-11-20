@@ -56,9 +56,8 @@ fn prove_and_verify() {
         for i in 0..15 {
             let mut bad = bytes;
             bad[i * 32] ^= 1;
-            match Proof::from_bytes(&bad) {
-                Some(p) => assert!(!plonk::verify(&pk.vk, &[y], &p), "field {i}"),
-                None => {}
+            if let Some(p) = Proof::from_bytes(&bad) {
+                assert!(!plonk::verify(&pk.vk, &[y], &p), "field {i}");
             }
         }
         // the verifying key round-trips and its digest is stable

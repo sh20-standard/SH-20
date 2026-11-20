@@ -91,7 +91,13 @@ fn scenario(pk: &sh20_circuit::ProvingKey) -> String {
 
     // block 3: TRANSFER 1,000 + 1,000 → 1,500 and 400 to the recipient, 100 of change, anchored at block 2
     let tree = Tree::new(&leaves);
-    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: notes::spend_keys(&payer, &minted[i].1).expect("keys"), v: 1000, rho: minted[i].1.rho, index: i as u64, path: tree.path(i) });
+    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote {
+        keys: notes::spend_keys(&payer, &minted[i].1).expect("keys"),
+        v: 1000,
+        rho: minted[i].1.rho,
+        index: i as u64,
+        path: tree.path(i),
+    });
     let pay = [(&recipient.address, 1500u64), (&recipient.address, 400), (&payer.address, 100)];
     let sealed: Vec<(Sealed, notes::NoteSecrets, Fr)> = pay.iter().map(|(to, v)| notes::seal(to, ticker, *v, &fresh()).unwrap_or_else(|e| fail(&e))).collect();
     let outputs: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: sealed[k].2, v: pay[k].1, rho: sealed[k].1.rho });
@@ -103,7 +109,8 @@ fn scenario(pk: &sh20_circuit::ProvingKey) -> String {
     leaves.extend(sealed.iter().map(|o| o.0.leaf));
 
     // block 4: the recipient scans, finds leaves 2 and 3, and burns 900 of them, anchored at block 3
-    let found: Vec<(usize, notes::Opened)> = (2..5).filter_map(|pos| notes::scan(&recipient.ivk, &recipient.address, &sealed[pos - 2].0).map(|o| (pos, o))).collect();
+    let found: Vec<(usize, notes::Opened)> =
+        (2..5).filter_map(|pos| notes::scan(&recipient.ivk, &recipient.address, &sealed[pos - 2].0).map(|o| (pos, o))).collect();
     assert_eq!(found.iter().map(|(pos, o)| (*pos, o.v)).collect::<Vec<_>>(), vec![(2, 1500), (3, 400)], "the recipient finds its two notes and not the change");
     let tree = Tree::new(&leaves);
     let inputs: [InputNote; 2] = std::array::from_fn(|i| {
@@ -112,7 +119,8 @@ fn scenario(pk: &sh20_circuit::ProvingKey) -> String {
     });
     // 1,000 kept; the two unused outputs are notes of 0 sealed to the recipient itself
     let keep = [1000u64, 0, 0];
-    let sealed: Vec<(Sealed, notes::NoteSecrets, Fr)> = keep.iter().map(|v| notes::seal(&recipient.address, ticker, *v, &fresh()).unwrap_or_else(|e| fail(&e))).collect();
+    let sealed: Vec<(Sealed, notes::NoteSecrets, Fr)> =
+        keep.iter().map(|v| notes::seal(&recipient.address, ticker, *v, &fresh()).unwrap_or_else(|e| fail(&e))).collect();
     let change: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: sealed[k].2, v: keep[k], rho: sealed[k].1.rho });
     let nf: [Fr; 2] = std::array::from_fn(|i| model::nullifier(&inputs[i].keys.nk, &leaves[found[i].0], found[i].0 as u64));
     let body = wire::burn_body(ticker, 900, 3, &nf, &std::array::from_fn(|k| sealed[k].0.into()));
@@ -146,7 +154,15 @@ fn main() {
         "info" => {
             let cs = spend::synthesize(&SpendWitness::default());
             let rows = plonk::keys::rows_for(cs.n_gates());
-            println!("{} gates, {} variables, {} public inputs, domain 2^{} = {} rows, SRS {} powers", cs.n_gates(), cs.n_vars(), cs.n_public(), rows.trailing_zeros(), rows, srs_size());
+            println!(
+                "{} gates, {} variables, {} public inputs, domain 2^{} = {} rows, SRS {} powers",
+                cs.n_gates(),
+                cs.n_vars(),
+                cs.n_public(),
+                rows.trailing_zeros(),
+                rows,
+                srs_size()
+            );
             for (tag, gates) in cs.gate_counts() {
                 println!("{gates:>7}  {tag}");
             }
@@ -278,7 +294,12 @@ fn main() {
                 times.iter().map(|x| format!("{x:.2}")).collect::<Vec<_>>().join(" / "),
                 t_witness.as_secs_f64()
             );
-            println!("verify {:.2} ms; loading the shipped key {:.2} s; key generation from the SRS {:.2} s", t_verify * 1e3, t_load.as_secs_f64(), t_keygen.as_secs_f64());
+            println!(
+                "verify {:.2} ms; loading the shipped key {:.2} s; key generation from the SRS {:.2} s",
+                t_verify * 1e3,
+                t_load.as_secs_f64(),
+                t_keygen.as_secs_f64()
+            );
             println!("vk digest {}", hex::encode(pk.vk.digest()));
         }
         "scenario" => {

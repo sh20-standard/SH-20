@@ -143,11 +143,14 @@ fn the_second_decomposition_of_a_field_element_is_refused() {
             changes.extend(gap_bits.iter().map(|&b| (b, Fr::zero()))); // the high halves are equal: the gap is 0
             changes.push((inverse, Fr::zero())); // any value does, for the inverse of 0
             changes.extend(last_bits.iter().enumerate().map(|(i, &b)| {
-                (b, match attempt {
-                    "its low bits" => bit(&wanted, i),
-                    "zeros" => Fr::zero(),
-                    _ => Fr::one(),
-                })
+                (
+                    b,
+                    match attempt {
+                        "its low bits" => bit(&wanted, i),
+                        "zeros" => Fr::zero(),
+                        _ => Fr::one(),
+                    },
+                )
             }));
             let stop = probe.first_break_of(&changes).expect("the second decomposition went through");
             assert_eq!(stop, cs.n_gates() - 1, "x = {x}, {attempt}: refused at gate {stop}, not by the comparison");

@@ -1,5 +1,10 @@
 // Append-only Merkle tree of note leaves, shared by every ticker.
-// Depth 32, Poseidon nodes, empty leaf = 0. Snapshots make reorg rollback cheap.
+// Depth 32, Poseidon nodes, empty leaf = 0.
+//
+// The tree keeps every complete subtree's root: levels[i][k] is the root of the k-th full subtree of height i
+// (levels[0] are the leaves). An append hashes only the subtrees it completes, one hash on average instead of 32;
+// the root and the nodes over the rightmost, unfinished subtree are computed when asked for, once per size. A path
+// is then 32 lookups, and a rollback (reorg) is a truncation of each level.
 
 import { poseidon2 } from './poseidon.js';
 import { TREE_DEPTH } from './constants.js';
@@ -9,64 +14,69 @@ export class NoteTree {
     this.depth = depth;
     this.zeros = [0n];
     for (let i = 0; i < depth; i++) this.zeros.push(poseidon2(this.zeros[i], this.zeros[i]));
-    this.filled = this.zeros.slice(0, depth);
-    this.leaves = [];
-    this.root = this.zeros[depth];
+    this.levels = Array.from({ length: depth + 1 }, () => []);
+    this.partial = new Map(); // nodes over the unfinished subtree, for the current size: "level:index" -> node
+  }
+
+  get leaves() {
+    return this.levels[0];
   }
 
   get size() {
-    return this.leaves.length;
+    return this.levels[0].length;
   }
 
   get capacity() {
     return 2 ** this.depth;
   }
 
+  get root() {
+    return this.node(this.depth, 0);
+  }
+
   /** Appends a leaf and returns its position. */
   append(leaf) {
-    if (this.leaves.length >= this.capacity) throw new Error('tree full');
-    let index = this.leaves.length;
+    if (this.size >= this.capacity) throw new Error('tree full');
+    const pos = this.size;
+    this.levels[0].push(leaf);
     let cur = leaf;
-    for (let i = 0; i < this.depth; i++) {
-      if (index % 2 === 0) {
-        this.filled[i] = cur;
-        cur = poseidon2(cur, this.zeros[i]);
-      } else {
-        cur = poseidon2(this.filled[i], cur);
-      }
-      index = Math.floor(index / 2);
+    for (let i = 0, k = pos; k % 2 === 1; i++, k = (k - 1) / 2) {
+      cur = poseidon2(this.levels[i][k - 1], cur); // this leaf completes the subtree k−1, k: its parent is final
+      this.levels[i + 1].push(cur);
     }
-    this.root = cur;
-    this.leaves.push(leaf);
-    return this.leaves.length - 1;
+    this.partial.clear();
+    return pos;
   }
 
+  /** The node at `level` (0 = leaves) and `index`: a complete subtree's root, a node over unfinished leaves, or a zero. */
+  node(level, index) {
+    const lv = this.levels[level];
+    if (index < lv.length) return lv[index];
+    if (level === 0 || index * 2 ** level >= this.size) return this.zeros[level];
+    const key = `${level}:${index}`;
+    let n = this.partial.get(key);
+    if (n === undefined) {
+      n = poseidon2(this.node(level - 1, 2 * index), this.node(level - 1, 2 * index + 1));
+      this.partial.set(key, n);
+    }
+    return n;
+  }
+
+  /** A snapshot is the size: everything above it can be cut off. */
   snapshot() {
-    return { filled: this.filled.slice(), root: this.root, size: this.leaves.length };
+    return { size: this.size };
   }
 
-  restore(s) {
-    this.filled = s.filled.slice();
-    this.root = s.root;
-    this.leaves.length = s.size;
+  restore({ size }) {
+    for (let i = 0; i <= this.depth; i++) this.levels[i].length = Math.floor(size / 2 ** i);
+    this.partial.clear();
   }
 
-  /** Sibling path for a leaf at the current root (for wallets). O(size). */
+  /** Sibling path of a leaf at the current root (for wallets): one node per level. */
   path(position) {
-    if (position < 0 || position >= this.leaves.length) throw new Error('no such leaf');
-    let level = this.leaves.slice();
-    let idx = position;
+    if (position < 0 || position >= this.size) throw new Error('no such leaf');
     const siblings = [];
-    for (let i = 0; i < this.depth; i++) {
-      const sib = siblingIndex(idx);
-      siblings.push(sib < level.length ? level[sib] : this.zeros[i]);
-      const next = [];
-      for (let k = 0; k < level.length; k += 2) {
-        next.push(poseidon2(level[k], k + 1 < level.length ? level[k + 1] : this.zeros[i]));
-      }
-      level = next;
-      idx = Math.floor(idx / 2);
-    }
+    for (let i = 0, idx = position; i < this.depth; i++, idx = Math.floor(idx / 2)) siblings.push(this.node(i, siblingIndex(idx)));
     return siblings;
   }
 }

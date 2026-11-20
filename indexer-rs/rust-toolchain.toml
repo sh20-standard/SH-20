@@ -1,0 +1,5 @@
+# The Rust this crate is built, formatted and linted with, here and in the CI: a newer clippy or
+# rustfmt cannot fail the main branch by surprise. Raise it on purpose, in a commit of its own.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]

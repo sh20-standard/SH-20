@@ -139,7 +139,13 @@ fn a_scanned_note_can_be_spent() {
     let minted: Vec<_> = (0..2).map(|i| notes::public_opening(&alice.ivk, &alice.address, i).unwrap()).collect();
     let mut leaves: Vec<Fr> = minted.iter().map(|(npk, _)| model::note_leaf(&tf, &Fr::from(1000u64), npk, &Fr::zero())).collect();
     let tree = Tree::new(&leaves);
-    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: notes::spend_keys(&alice, &minted[i].1).unwrap(), v: 1000, rho: Fr::zero(), index: i as u64, path: tree.path(i) });
+    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote {
+        keys: notes::spend_keys(&alice, &minted[i].1).unwrap(),
+        v: 1000,
+        rho: Fr::zero(),
+        index: i as u64,
+        path: tree.path(i),
+    });
     let pay = [(&bob.address, 1500u64), (&bob.address, 400), (&alice.address, 100)];
     let sealed: Vec<_> = pay.iter().enumerate().map(|(k, (to, v))| notes::seal(to, ticker, *v, &[10 + k as u8; 32]).unwrap()).collect();
     let outputs: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: sealed[k].2, v: pay[k].1, rho: sealed[k].1.rho });
@@ -154,7 +160,13 @@ fn a_scanned_note_can_be_spent() {
     let found: Vec<(usize, notes::Opened)> = (0..3).filter_map(|k| notes::scan(&bob.ivk, &bob.address, &sealed[k].0).map(|o| (2 + k, o))).collect();
     assert_eq!(found.iter().map(|(pos, o)| (*pos, o.v)).collect::<Vec<_>>(), vec![(2, 1500), (3, 400)]);
     let tree = Tree::new(&leaves);
-    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote { keys: notes::spend_keys(&bob, &found[i].1.secrets).unwrap(), v: found[i].1.v, rho: found[i].1.secrets.rho, index: found[i].0 as u64, path: tree.path(found[i].0) });
+    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote {
+        keys: notes::spend_keys(&bob, &found[i].1.secrets).unwrap(),
+        v: found[i].1.v,
+        rho: found[i].1.secrets.rho,
+        index: found[i].0 as u64,
+        path: tree.path(found[i].0),
+    });
     let keep: Vec<_> = [1000u64, 0, 0].iter().enumerate().map(|(k, v)| (notes::seal(&bob.address, ticker, *v, &[20 + k as u8; 32]).unwrap(), *v)).collect();
     let outputs: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: keep[k].0 .2, v: keep[k].1, rho: keep[k].0 .1.rho });
     let nf: [Fr; 2] = std::array::from_fn(|i| model::nullifier(&inputs[i].keys.nk, &leaves[found[i].0], found[i].0 as u64));
