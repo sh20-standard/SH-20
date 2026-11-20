@@ -6,10 +6,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { Indexer } from '../../indexer/src/indexer.js';
 import { DEFAULT_PROFILE } from '../../indexer/src/constants.js';
-import { chain } from '../../indexer/test/helpers.js';
-import { GENESIS, ACTIVATION_HEIGHT } from '../src/profile.js';
+import { GENESIS, ACTIVATION_HEIGHT, PROFILE } from '../src/profile.js';
 import { genesisMismatches, verifyMintTerms } from '../src/deploy.js';
-import { crossCheck, profileOf } from '../src/consensus.js';
+import { crossCheck } from '../src/consensus.js';
 import { buildMint } from '../src/mint.js';
 import { normToken, Esplora } from '../src/api.js';
 import { noteOpening } from '../src/keys.js';
@@ -17,13 +16,23 @@ import { txid } from '../src/btc.js';
 import { noteLeaf, tickerT } from '../src/sh20.js';
 
 const json = (x) => JSON.parse(JSON.stringify(x, (_, v) => (typeof v === 'bigint' ? v.toString() : v)));
-const A = 5;
+const A = PROFILE.activationHeight; // the vault's own: an indexer activated at another height is on another profile
+
+// blocks from A on (indexer/test/helpers.js chain() starts at 1)
+function chainFrom(indexer, start) {
+  let h = start;
+  return { block: (...txs) => indexer.applyBlock({ height: h++, hash: `h${h}`, txs }), get next() { return h; } };
+}
 
 function activated() {
   const idx = new Indexer({ profile: { activationHeight: A } }); // default profile: D = 1000
-  const c = chain(idx);
-  for (let h = 1; h <= A; h++) c.block();
-  return { idx, c, token: normToken(json(idx.token('SH20'))), status: { activationHeight: A, deployBurn: String(idx.profile.deployBurn), deployMaturity: idx.profile.deployMaturity, genesis: idx.genesis } };
+  const c = chainFrom(idx, A);
+  c.block(); // block A installs SH20
+  const status = {
+    network: 'signet', activationHeight: A, deployBurn: String(idx.profile.deployBurn), deployMaturity: idx.profile.deployMaturity,
+    anchorWindow: idx.profile.anchorWindow, genesis: idx.genesis,
+  };
+  return { idx, c, token: normToken(json(idx.token('SH20'))), status };
 }
 
 test('the vault\'s genesis constants are the profile\'s and the vectors\'', async () => {
@@ -32,51 +41,47 @@ test('the vault\'s genesis constants are the profile\'s and the vectors\'', asyn
   assert.equal(GENESIS.max, DEFAULT_PROFILE.genesis.max);
   assert.equal(GENESIS.lim, DEFAULT_PROFILE.genesis.lim);
   for (const k of ['ticker', 'max', 'lim', 'pre', 'price', 'payMode']) assert.equal(String(GENESIS[k]), String(v[k]), k);
-  assert.equal(ACTIVATION_HEIGHT, null, 'A is not fixed yet: update this test when it is');
+  assert.equal(ACTIVATION_HEIGHT, DEFAULT_PROFILE.activationHeight, 'A is the reference profile\'s');
 });
 
 test('SH20 from the reference indexer matches the profile; every lie is refused', async () => {
   const { token } = activated();
   assert.equal(token.genesis, true);
   assert.equal(token.deployTxid, null);
-  assert.deepEqual(genesisMismatches(token, A), []);
+  assert.deepEqual(genesisMismatches(token), []);
   for (const [k, v] of [['price', 1n], ['payMode', 2], ['payScript', '0014' + 'ee'.repeat(20)], ['lim', 10000n], ['max', 1n],
     ['pre', 1000n], ['start', A + 1], ['end', 99]]) {
-    assert.match(genesisMismatches({ ...token, [k]: v }, A).join(), new RegExp(`^${k}: profile says`), k);
+    assert.match(genesisMismatches({ ...token, [k]: v }).join(), new RegExp(`^${k}: profile says`), k);
   }
-  assert.match(genesisMismatches(token, A + 1).join(), /start: profile says 6, indexer says 5/, 'start is the activation height');
-  assert.match(genesisMismatches(token, undefined).join(), /activation height is unknown/);
-  assert.match(genesisMismatches({ ...token, deployTxid: 'ab'.repeat(32) }, A).join(), /has no DEPLOY/);
-  assert.match(genesisMismatches({ ...token, genesis: false }, A).join(), /does not mark it/);
-  assert.match(genesisMismatches({ ...token, t: 7n }, A).join(), /^t: the ticker gives/);
+  assert.match(genesisMismatches({ ...token, start: A + 1 }).join(), new RegExp(`start: profile says ${A}, indexer says ${A + 1}`), 'start is the vault\'s activation height');
+  assert.match(genesisMismatches({ ...token, deployTxid: 'ab'.repeat(32) }).join(), /has no DEPLOY/);
+  assert.match(genesisMismatches({ ...token, genesis: false }).join(), /does not mark it/);
+  assert.match(genesisMismatches({ ...token, t: 7n }).join(), /^t: the ticker gives/);
 });
 
 test('only SH20 skips the DEPLOY check: a token called genesis by a liar is refused', async () => {
   const { token } = activated();
   globalThis.fetch = async () => { throw new Error('no network needed for SH20'); };
   const esplora = new Esplora('http://esplora');
-  assert.equal(await verifyMintTerms(esplora, token, { activationHeight: A }), 'genesis');
-  await assert.rejects(verifyMintTerms(esplora, { ...token, ticker: 'FAKE', genesis: true }, { activationHeight: A }), /only SH20 is a genesis token/);
-  await assert.rejects(verifyMintTerms(esplora, { ...token, price: 5000n, payMode: 1 }, { activationHeight: A }), /genesis profile.*price/);
-  await assert.rejects(verifyMintTerms(esplora, { ...token, genesis: false, deployTxid: 'ab'.repeat(32) }, { activationHeight: A }), /has no DEPLOY/,
+  assert.equal(await verifyMintTerms(esplora, token), 'genesis');
+  await assert.rejects(verifyMintTerms(esplora, { ...token, ticker: 'FAKE', genesis: true }), /only SH20 is a genesis token/);
+  await assert.rejects(verifyMintTerms(esplora, { ...token, price: 5000n, payMode: 1 }), /genesis profile.*price/);
+  await assert.rejects(verifyMintTerms(esplora, { ...token, genesis: false, deployTxid: 'ab'.repeat(32) }), /has no DEPLOY/,
     'SH20 shown with a DEPLOY is not sent to the DEPLOY check');
 });
 
-test('indexers on different profiles (activation height, D) refuse the mint', async () => {
+test('an indexer on another profile than the vault (activation height, D, N) refuses the mint, and names it', async () => {
   const { token, status } = activated();
-  const ix = (base, s) => ({ base, status: async () => ({ network: 'signet', height: 9, digest: 'd'.repeat(64), ...s }), token: async () => token });
+  const ix = (base, s) => ({ base, status: async () => ({ height: 9, digest: 'd'.repeat(64), ...s }), token: async () => token });
   let r = await crossCheck([ix('a', status), ix('b', status)], 'SH20');
   assert.deepEqual(r.problems, []);
-  assert.deepEqual(r.profile, { activationHeight: A, deployBurn: 1000n, deployMaturity: 6, genesis: 'SH20' });
-  r = await crossCheck([ix('a', status), ix('b', { ...status, activationHeight: 4 })], 'SH20');
-  assert.match(r.problems.join(), /different profiles: activationHeight 4 ≠ 5/);
+  assert.equal(r.profile, PROFILE);
+  r = await crossCheck([ix('a', status), ix('b', { ...status, activationHeight: A + 4 })], 'SH20');
+  assert.deepEqual(r.problems, [`b follows another profile: activationHeight ${A + 4}, the vault has ${A}`]);
   r = await crossCheck([ix('a', status), ix('b', { ...status, deployBurn: '0' })], 'SH20');
-  assert.match(r.problems.join(), /deployBurn 0 ≠ 1000/);
-  r = await crossCheck([ix('a', status), ix('b', { ...status, deployMaturity: 1 })], 'SH20');
-  assert.match(r.problems.join(), /deployMaturity 1 ≠ 6/, 'indexers must agree on N, the DEPLOY maturity');
-  assert.equal(profileOf({}).deployBurn, null);
-  for (const bad of ['abc', '1.5', -1, '1e3', {}, true]) assert.equal(profileOf({ deployBurn: bad }).deployBurn, null, `deployBurn ${JSON.stringify(bad)}`);
-  assert.equal(profileOf({ deployBurn: 1000 }).deployBurn, 1000n);
+  assert.deepEqual(r.problems, ['b follows another profile: deployBurn 0, the vault has 1000']);
+  r = await crossCheck([ix('a', { ...status, deployMaturity: 1 }), ix('b', { ...status, deployMaturity: 1 })], 'SH20');
+  assert.equal(r.problems.length, 2, 'two indexers that agree with each other on N, not with the vault: both named');
 });
 
 test('MINT of SH20 accepted by the indexer: free, 1,000 units, terms from the profile', async () => {
@@ -87,7 +92,7 @@ test('MINT of SH20 accepted by the indexer: free, 1,000 units, terms from the pr
     utxos: [{ txid: '11'.repeat(32), vout: 0, value: 50000n }], feeRate: 1, tipHeight: c.next - 1,
   });
   assert.equal(m.price, 0n);
-  assert.equal(await verifyMintTerms(null, token, profileOf(status)), 'genesis');
+  assert.equal(await verifyMintTerms(null, token), 'genesis');
   const r = c.block({
     txid: txid(m.tx),
     vin: m.tx.vin.map((i) => ({ txid: i.txid, vout: i.vout, witness: [Buffer.alloc(71), Buffer.alloc(33)] })),

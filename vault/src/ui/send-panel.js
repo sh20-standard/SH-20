@@ -165,6 +165,10 @@ export function renderPending() {
         }));
         return h('tr', {}, h('td', {}, p.kind), h('td', {}, 'signed; the commit may not be out yet'), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', {}, 'kept, signed'), h('td', {}, commit));
       }
+      if (/^refused/.test(p.status)) {
+        // refused: nothing was spent, the notes are back; broadcasting it again would be refused again
+        return h('tr', {}, h('td', {}, p.kind), h('td', {}, `${p.status}: its notes are back`), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', { class: 'mono' }, short(p.revealTxid ?? '')), h('td', {}));
+      }
       if (p.kind === 'DEPLOY' && p.status !== 'broadcast' && p.status !== 'waiting maturity') {
         // ticker taken, replaced: nothing to broadcast
         return h('tr', {}, h('td', {}, p.kind), h('td', {}, p.status), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', {}, '—'), h('td', {}));
@@ -172,6 +176,7 @@ export function renderPending() {
       if (p.status === 'waiting maturity') {
         const left = p.schedule === 'unconfirmed' || p.revealIn === undefined ? 'the commit is not confirmed yet'
           : /no indexer answered/.test(p.schedule ?? '') ? 'due, but no indexer answered: the reveal waits for one to say the ticker is free'
+          : /^due, but/.test(p.schedule ?? '') ? p.schedule
           : `reveal in ${p.revealIn} block${p.revealIn === 1 ? '' : 's'}`;
         const commitAgain = h('button', { type: 'button', class: 'small secondary' }, 'Broadcast the commit again');
         commitAgain.addEventListener('click', busy(commitAgain, async () => {
@@ -190,7 +195,7 @@ export function renderPending() {
         renderPending();
       }));
       return h('tr', {},
-        h('td', {}, p.kind), h('td', {}, p.status),
+        h('td', {}, p.kind), h('td', {}, p.refusal ? `${p.status}; ${p.refusal}` : p.status),
         h('td', { class: 'mono' }, p.commitTxid ? short(p.commitTxid) : '—'),
         h('td', { class: 'mono' }, p.revealTxid ? short(p.revealTxid) : '—'),
         h('td', {}, again));

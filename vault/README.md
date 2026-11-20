@@ -45,12 +45,13 @@ E2E_HOST=<cid>.ipfs.localhost node dev/e2e.js # a subdomain gateway: the page is
 E2E_PATH=/ipfs/<cid>/vault/ node dev/e2e.js   # a path gateway: the page refuses to run and names its subdomain address
 E2E_LIAR=1 node dev/e2e.js                    # a lying indexer in the list: the mint is refused
 
-node dev/serve.js --deploy-burn 0             # profile with D = 0: GENE is deployed too
-E2E_D0=1 node dev/e2e.js                      # mints GENE, terms checked against its DEPLOY
+node dev/serve.js --deploy-burn 0 [--deploy-maturity 0]   # every indexer on another profile, lying together
+E2E_OTHER_PROFILE=1 node dev/e2e.js           # the page names each one and what differs, mints and deploys nothing
 ```
 
 `dev/serve.js` serves the real indexer API (`indexer/src/api.js`) over a small demo chain of
-serialised transactions, with the reference profile (D = 1000) and the real PLONK verifier (from
+serialised transactions, with the reference profile, the vault's own (`DEFAULT_PROFILE`: D = 1000, N = 6; the chain starts at
+the activation height), and the real PLONK verifier (from
 `vault/prover/sh20_circuit.wasm`). Its mock Esplora serves those transactions and "mines" every
 broadcast one into the next block. The e2e run mints 2,000 SH20, syncs, sends 700 privately to
 another wallet's sh20 address (proved in the page), finds its 1,300 of change by scanning, deploys
@@ -161,8 +162,16 @@ vout n  change to the payer                                     only if above du
   (`src/profile.js`: `SH20`, max 21,000,000, 1,000 per mint, no team, price 0, payMode 0, no end,
   start = the activation height), which a test compares with `indexer/src/constants.js` and the
   vectors. Only `SH20` takes this path: another ticker that an indexer calls genesis, or SH20
-  named with a DEPLOY, is refused. The activation height is not fixed yet; until it is, the vault
-  takes the indexers' `activationHeight` and requires them to agree on it.
+  named with a DEPLOY, is refused. The start is the vault's own activation height, never an indexer's.
+- **The profile** is embedded (`src/profile.js`): `A`, `D = 1000`, `N = 6`, `W`, `K_min` and the
+  genesis ticker, from the reference indexer's constants (`indexer/src/constants.js`
+  `DEFAULT_PROFILE`), never from `/status`. Every value `/status` reports (`network`,
+  `activationHeight`, `deployBurn`, `deployMaturity`, `anchorWindow`, `genesis`) is compared with it
+  (`src/consensus.js` `profileCheck`): an indexer that reports another value, or none, is named on
+  the page with what differs, and while it is configured the vault does nothing. It mints, deploys,
+  reveals, burns, lists, transfers, buys, cancels and claims nothing, and asks every indexer again just
+  before each of these. Several indexers that agree with each other but not with the vault are all refused.
+  `A` is `DEFAULT_PROFILE`'s until the activation height is fixed there.
 - For every other token the vault does not take the mint terms from the indexer alone: it fetches `deployTxid` from Esplora,
   checks its txid and confirmation height, decodes the DEPLOY with the indexer's own `carrier.js`
   and `codec.js`, and refuses the mint if `ticker`, `max`, `lim`, `pre`, `start`, `end`, `price`,
@@ -174,8 +183,8 @@ vout n  change to the payer                                     only if above du
 - **Several indexers** (optional, Settings, one URL per line; the first lists tickers and notes).
   Before a mint the vault asks all of them (`src/consensus.js`) and refuses the mint if they
   disagree on the token's fixed terms (`ticker`, `t`, `max`, `lim`, `pre`, `start`, `end`,
-  `unlock`, `price`, `payMode`, `payScript`, `deployTxid`, `deployHeight`, `genesis`) or on the
-  profile (`activationHeight`, `deployBurn`, the genesis ticker), if one does not know the
+  `unlock`, `price`, `payMode`, `payScript`, `deployTxid`, `deployHeight`, `genesis`), if one follows
+  another profile than the vault's, if one does not know the
   ticker, or if two at the same height report different `digest`s. Indexers a block apart are
   retried, then compared on terms only, with a warning. An unreachable indexer, or a single one,
   only warns. After every sync, the others are asked for the tree's root and the digest after
@@ -205,8 +214,8 @@ ticker, `pre < max`, `(max − pre)` a multiple of `lim`, `start` after the DEPL
 `unlock` not before `start`, payMode 0 ⇔ price 0; `test/deploy-plan.test.js` runs each case through
 the reference indexer and requires the same verdict). It then shows what the DEPLOY costs:
 
-- **`D > 0`** (the reference profile, `D = 1000`; the vault reads `deployBurn` from `/status` and
-  requires every configured indexer to report the same): the DEPLOY burns `D` SH20 with a proof. It
+- **`D > 0`** (the vault's profile, `D = 1000`; an indexer that reports another `deployBurn` stops
+  the deploy screen): the DEPLOY burns `D` SH20 with a proof. It
   carries a spend (`vPub = D`, `tPub = t("SH20")`) over at most two of your SH20 notes, and the
   change comes back as a shielded note; the screen shows which unspent SH20 notes would pay it, and
   the envelope size in the witness carrier (56 bytes + `psLen`, + 32 with a team allocation, + 824
@@ -217,7 +226,8 @@ the reference indexer and requires the same verdict). It then shows what the DEP
 **DEPLOY maturity** (SPEC-WIRE §5, against ticker sniping). A DEPLOY is never in an OP_RETURN, where
 its ticker would show before anything is confirmed: it is always the reveal of a commit, and the
 indexers accept it only if the commit was confirmed at least `N` blocks before the reveal's block
-(`N = 6`, `deployMaturity` in `/status`, which every configured indexer must report alike). Someone
+(`N = 6`, from the vault's profile: the reveal waits that many blocks whatever an indexer or an old
+record says, `send.js` `deploySchedule`). Someone
 who copies the ticker from the mempool needs a commit of their own, too young by the time the
 original goes in. So the vault:
 
@@ -229,15 +239,23 @@ original goes in. So the vault:
    them;
 4. on every refresh, sync and minute while the vault is open (`processDeploys`), reads the commit's
    height from Esplora and shows a countdown ("reveal in 5 blocks"); once the reveal can land at a
-   height `≥ commit + N` (`revealSchedule`) it checks with every indexer that the ticker is still
-   free, then broadcasts the reveal. A ticker taken meanwhile gives the reserved notes back;
+   height `≥ commit + N` (`deploySchedule`, `N` of the vault's profile) it checks that every indexer
+   still follows the vault's profile and that the ticker is still free, then broadcasts the reveal.
+   A ticker taken meanwhile gives the reserved notes back;
 5. if the proof's anchor would be out of the window `W = 100` by then (a commit that stayed
    unconfirmed for long), marks the DEPLOY "Prove again": the vault proves it on today's tree and
    makes a new commit, which spends the old commit output by its key path (the one-time key, tweaked
    with the leaf), so its sats come back; the new commit matures in its turn.
 
 A team allocation gets one of the vault's public note keys, found by the sync when its block comes.
-Before signing, the vault asks the indexers again for `D`, `N`, the tickers taken and the tip.
+Before signing, the vault asks the indexers again for their profile, the tickers taken and the tip.
+A DEPLOY (or any spend) the indexers refused anyway records no nullifier, so it burns nothing: once its
+reveal is 6 blocks below the synced tip and none of its notes is spent there, the sync gives the notes
+back and says so (`send.js` `refusedSpend`; only the network fees are lost). Not on the word of the
+indexer it synced from: every configured indexer must answer, follow the vault's profile and list none
+of those nullifiers in its full list from block 0, where an earlier spend of one would show too
+(`consensus.js` `refusalAgreed`); else the notes
+stay reserved and the next sync asks again.
 `test/deploy-maturity.test.js` checks the schedule (the countdown, the anchor window), a DEPLOY
 without a burn refused one block early and accepted at `N`, one in an OP_RETURN refused, the key-path
 sweep of an old commit, and the reserved notes kept across a reload; `test/spend.test.js` runs a
@@ -402,8 +420,8 @@ has a random `m` and no words: its backup file restores it.
 
 The vault reads the API of `indexer/bin/follow.js` ([`docs/API.md`](../docs/API.md), default port 8020); `src/api.js` is the only file that knows its shape:
 
-- `GET /status` → `network` (must be `signet`), `height`, `digest`, `verifier`, `activationHeight`,
-  `deployBurn`, `genesis`
+- `GET /status` → `height`, `digest`, `verifier`, and the profile it follows, compared with the
+  vault's: `network`, `activationHeight`, `deployBurn`, `deployMaturity`, `anchorWindow`, `genesis`
 - `GET /tokens`, `GET /token/:ticker` → the reference indexer's token records (SH20 first, `genesis: true`;
   `pool`, the turnstile, read from every indexer before a BURN, LIST or DEPLOY burn)
 - `GET /notes?from&limit` → `{ from, total, notes }`, read page by page (5,000 per page); public
@@ -468,7 +486,7 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | `src/sync.js`, `src/cache.js` | private sync: the local tree (the indexer's `NoteTree`), paths, spends, IndexedDB cache |
 | `src/mint.js` | MINT pre-flight checks, coin selection, transaction and PSBT |
 | `src/deploy.js` | checks the indexer's mint terms against the DEPLOY transaction, or SH20's against the profile |
-| `src/profile.js` | profile constants the vault knows itself: the genesis token, the activation height |
+| `src/profile.js` | the profile the vault follows (`DEFAULT_PROFILE`: A, D, N, W, K_min, the genesis token), never taken from an indexer |
 | `src/deploy-plan.js` | the deploy screen: DEPLOY rules, envelope size, the burn of `D` SH20 |
 | `src/consensus.js` | cross-checks several indexers: before a mint, before a TAKE, and the state after every sync |
 | `src/btc.js` | addresses, transactions, PSBT v0, finalization, size estimates |

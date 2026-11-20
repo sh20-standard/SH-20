@@ -3,6 +3,7 @@
 // has passed its checks (app.js) and by applySettings() from the settings panel.
 
 import { Esplora, IndexerApi } from '../api.js';
+import { profileCheck } from '../consensus.js';
 
 // ---- settings -----------------------------------------------------------------
 
@@ -66,7 +67,18 @@ export const explorerTx = (id) => settings.esplora.replace(/\/api\/?$/, '') + '/
 
 // ---- state ----------------------------------------------------------------------
 
-export const st = { vault: null, wallet: null, tokens: [], status: null, tip: null, sync: null, profiles: [], results: {} };
+// profile: what the last /status of every indexer said against the vault's profile (consensus.js profileCheck)
+export const st = { vault: null, wallet: null, tokens: [], status: null, tip: null, sync: null, profile: { answered: 0, problems: [] }, results: {} };
+
+/**
+ * Before any action (a DEPLOY and its reveal, a burn, a spend, a TAKE, a cancel, a CLAIM): every
+ * indexer that answers must follow the vault's own profile (profile.js). Asked now, not from the
+ * last refresh; throws naming each indexer that differs and on what.
+ */
+export async function requireProfile() {
+  st.profile = await profileCheck(indexers);
+  if (st.profile.problems.length) throw new Error(`nothing was done: ${st.profile.problems.join('. ')}. Remove that indexer in Settings, or use one that follows this vault's profile.`);
+}
 
 /** Shows `nodes` in the panel `id` and keeps them there across renders. */
 export function result(id, ...nodes) {

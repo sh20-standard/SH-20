@@ -6,7 +6,7 @@ import { frHex } from '../fr.js';
 import { loadProver } from '../prover.js';
 import { LOCK_GAP } from '../keys.js';
 import { buildCancel, buildClaim, buildTake, claimProblem, decodeOffer, encodeOffer, listingFromChain, offerTerms, offerValid, signOffer } from '../market.js';
-import { busy, esplora, fill, h, indexer, indexers, result, resultBox, sats, short, st, units } from './context.js';
+import { busy, esplora, fill, h, indexer, indexers, requireProfile, result, resultBox, sats, short, st, units } from './context.js';
 import { renderAll } from './render.js';
 import { sendForm } from './send-panel.js';
 import { signFunded, txLink, walletUtxos } from './spends.js';
@@ -167,6 +167,7 @@ async function checkOffer() {
 
 /** Signs a transaction with a pre-signed or vault-signed lock input, broadcasts it, records the public note. */
 async function sendFunded(m, outId, label, note) {
+  await requireProfile(); // a TAKE, a cancel, a CLAIM: only with indexers on the vault's profile
   const done = await signFunded(m);
   const id = await esplora.broadcast(done.hex);
   if (note) await st.vault.addNote({ ...note, txid: id, status: 'broadcast' });

@@ -5,8 +5,9 @@ import { defaultCache } from '../cache.js';
 import { frHex } from '../fr.js';
 import { Sync } from '../sync.js';
 import { matchNotes } from '../match.js';
-import { $, explorerTx, fill, h, indexer, indexers, report, short, st, staticWarnings, units } from './context.js';
-import { digestAgreement, agreementText } from '../consensus.js';
+import { REFUSAL_DEPTH, refusedSpend } from '../send.js';
+import { $, esplora, explorerTx, fill, h, indexer, indexers, report, short, st, staticWarnings, units } from './context.js';
+import { agreementText, digestAgreement, refusalAgreed } from '../consensus.js';
 import { balances } from './send-panel.js';
 import { processDeploys } from './deploy-panel.js';
 import { syncListings } from './market-panel.js';
@@ -80,6 +81,34 @@ async function checkOwned(s) {
 }
 
 /**
+ * Spends sent from this vault that the indexers refused (send.js refusedSpend): no nullifier was
+ * recorded, so the notes they had reserved are given back. Only spends whose notes are all unspent
+ * in the synced tree are looked up on Esplora. Returns the spends given back.
+ */
+async function settleRefused(s) {
+  const v = st.vault;
+  const back = [];
+  for (const p of (v.state.pending ?? []).filter((x) => x.status === 'broadcast' && x.inputs?.length && x.revealTxid)) {
+    if (!p.inputs.every((id) => v.state.notes.find((n) => n.id === id)?.spent === 'no')) continue;
+    const rs = await esplora.txStatus(p.revealTxid).catch(() => null);
+    const revealHeight = rs?.confirmed ? rs.block_height : null;
+    if (!refusedSpend(p, v.state.notes, { revealHeight, syncHeight: s.height, nullifiersKnown: s.nullifiersKnown })) continue;
+    // every indexer must agree, not only the primary this sync read: else the notes stay reserved, and the next sync asks again
+    const inputs = v.state.notes.filter((n) => p.inputs.includes(n.id));
+    const nfs = await Promise.all(inputs.map(async (n) => frHex(await v.nullifier(n))));
+    const agreed = await refusalAgreed(indexers, nfs, { atLeast: revealHeight + REFUSAL_DEPTH - 1 }); // their full lists, from block 0
+    if (!agreed.ok) {
+      await v.updatePending(p.id, { refusal: `looks refused, but ${agreed.why}: its notes stay reserved` });
+      continue;
+    }
+    await v.releaseInputs(p.inputs);
+    await v.updatePending(p.id, { status: 'refused by the indexers' });
+    back.push(p);
+  }
+  return back;
+}
+
+/**
  * Private sync: downloads every leaf and every spent nullifier (only what is
  * new since the cached block), rebuilds the tree here, then finds the vault's
  * notes, their Merkle paths and their spends on the device.
@@ -91,6 +120,7 @@ export async function syncNotes({ full = false } = {}) {
   st.sync = { height: r.height, leaves: r.leaves, nullifiersKnown: r.nullifiersKnown, agreement: await digestAgreement(indexers, r.height, r.digest, r.root) };
   let found = 0;
   let failed = [];
+  let refused = [];
   if (st.vault) {
     // a note whose scan throws does not stop the others; the sync's leaves from the first of them stay
     // unscanned, and the next sync reads them again (AUDIT §8.6)
@@ -99,6 +129,7 @@ export async function syncNotes({ full = false } = {}) {
     failed = m.failed;
     await s.scanned(failed[0]?.pos ?? null);
     await checkOwned(s);
+    refused = await settleRefused(s);
     await syncListings();
   }
   renderAll();
@@ -107,5 +138,8 @@ export async function syncNotes({ full = false } = {}) {
   if (found) $('warnings').append(h('div', { class: 'warn' }, `${found} note(s) found in the tree.`));
   if (failed.length) {
     $('warnings').append(h('div', { class: 'warn err' }, `${failed.length} note(s) could not be scanned, from leaf ${failed[0].pos} (${failed[0].error.message}). The others were; the next sync reads these again.`));
+  }
+  for (const p of refused) {
+    $('warnings').append(h('div', { class: 'warn' }, `The ${p.kind} of ${short(p.revealTxid)} was refused by the indexers: it spent none of your notes, and they are back in your balance (its network fees are lost).`));
   }
 }
