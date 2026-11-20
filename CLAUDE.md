@@ -38,7 +38,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `indexer/vectors/v0.3.json` | deterministic vectors for a second implementation: primitives, envelopes with `bodyHash`, carrier cases, a CLAIM, and a 13-block scenario with every root, `eventsH`, digest, refusal and verifier input; `sections` says what each part means |
 | `indexer-rs/` | a second indexer in Rust, written from the spec alone (clean room): `cargo test --release` replays the vectors |
 | `docs/SPEC-GAPS.md` | what the clean-room indexer found open in the spec, and where each point is now settled |
-| `docs/AUDIT.md` | the dossier for an external zero-knowledge auditor: scope, the relation constraint by constraint, threat model, open doubts |
+| `docs/AUDIT.md` | the dossier for an external zero-knowledge auditor: scope, the relation constraint by constraint, threat model, open doubts; §8 is a first reading of the vault's cryptography, with its findings |
 | `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` (for the vault and relayers) |
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
 | `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
@@ -121,7 +121,9 @@ likely causes, so note the conditions with every phone figure. Growing the memor
 Done since: a second indexer in Rust (`indexer-rs/`), written from `SPEC-WIRE.md` and the vectors alone without opening
 `indexer/`; it reproduces every vector, and the 28 points it found open (`docs/SPEC-GAPS.md`) are settled in the spec
 (2026-11-19). The vault proves transfers, burns, listings and DEPLOY burns, buys, cancels and claims (`vault/`).
-The audit dossier is `docs/AUDIT.md`.
+The audit dossier is `docs/AUDIT.md`. Its §8 (2026-11-19) lists what a reading of the vault's cryptography found, most
+serious first, all open: the vault only warns on a path gateway; after a restore an offer signs the terms the servers give;
+a buyer's check ignores an indexer that does not know the listing; a vault without a passphrase keeps its secrets in clear.
 
 Not done: an audit; a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the
 circuit session; its reference code and vectors are in `circuit/js`); a real wallet signing in the vault; a relayer; the
