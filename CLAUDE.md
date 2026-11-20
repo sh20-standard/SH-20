@@ -122,8 +122,9 @@ Done since: a second indexer in Rust (`indexer-rs/`), written from `SPEC-WIRE.md
 `indexer/`; it reproduces every vector, and the 28 points it found open (`docs/SPEC-GAPS.md`) are settled in the spec
 (2026-11-19). The vault proves transfers, burns, listings and DEPLOY burns, buys, cancels and claims (`vault/`).
 The audit dossier is `docs/AUDIT.md`. Its §8 (2026-11-19) lists what a reading of the vault's cryptography found, most
-serious first, all open: the vault only warns on a path gateway; after a restore an offer signs the terms the servers give;
-a buyer's check ignores an indexer that does not know the listing; a vault without a passphrase keeps its secrets in clear.
+serious first. 8.1 to 8.6 are fixed (#33; #40 for what 8.6 left in `circuit/js`), and each fix is followed by what its
+author's reading checked and what it leaves. Open, all low: lock keys sign with code that is not constant-time; secrets
+stay in memory and the vault never locks itself; an old backup reuses indices.
 
 Not done: an audit; a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the
 circuit session; its reference code and vectors are in `circuit/js`); a real wallet signing in the vault; a relayer; the
