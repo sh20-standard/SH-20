@@ -593,7 +593,7 @@ anchor; with that note and that root, a proof that fails is refused too. It asks
 payee, only when it cannot check: no nullifier of its notes, a local tree that does not reach the
 anchor, or a verifier that cannot run.
 
-Checked: `offerTerms` (`market.js` l. 179), called by `copyOffer` (`ui/market-panel.js` l. 135)
+Checked: `offerTerms` (`market.js` l. 179), called by `copyOffer` (`ui/market-panel.js` l. 138)
 before `signOffer`. Test "8.2 an offer is signed only for terms the vault vouches for" replays the
 swap above with a real proof: the same txid with another envelope is refused. Left: when the vault
 cannot check, the seller reading the price and the payee is the only check.
@@ -619,7 +619,7 @@ Fixed in #33 (commit `ecfcbb4`): `listingCheck`: an indexer that answers "unknow
 listing, and a TAKE needs two indexers that agree (`TAKE_QUORUM`).
 
 Checked: `listingCheck` (`consensus.js` l. 155) and `TAKE_QUORUM = 2` (l. 145), used by
-`checkedListing` (`ui/market-panel.js` l. 59) and again just before the TAKE is built (l. 181).
+`checkedListing` (`ui/market-panel.js` l. 59) and again just before the TAKE is built (l. 186).
 Test "8.3 an indexer that answers and does not know the listing refuses it". This closes the
 finding as proposed. Left: the quorum counts answers, so two indexers run by one party count as two.
 
