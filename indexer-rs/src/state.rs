@@ -2,7 +2,7 @@
 //! and the per-block undo log for reorgs.
 
 use crate::chain::{burned_sats, counted, is_batch, is_p2tr_to, paid_to, Block, Carried, Carrier, Tx};
-use crate::envelope::{body_hash_of, DecodeError, Deploy, Envelope, Spend, Ticker};
+use crate::envelope::{body_hash_of, DecodeError, Deploy, Envelope, Spend, Ticker, CT_LEN};
 use crate::events::{encode_all, Event, Outcome, Spent};
 use crate::field::{fr_from_le, fr_to_le, hex, public_leaf, sha256, Bytes32};
 use crate::tree::{Tree, TreeSnapshot};
@@ -112,12 +112,57 @@ pub struct Rejection {
     pub reason: &'static str,
 }
 
+/// What a public note is made from: its opening is public, its `rho` is 0 (§2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublicKind {
+    Mint,
+    Team,
+    Take,
+    Claim,
+}
+
+impl PublicKind {
+    pub fn name(&self) -> &'static str {
+        match self {
+            PublicKind::Mint => "MINT",
+            PublicKind::Team => "TEAM",
+            PublicKind::Take => "TAKE",
+            PublicKind::Claim => "CLAIM",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NoteKind {
+    /// A leaf `(t, v, npk, 0)`; `npk` as on the wire (little-endian).
+    Public { kind: PublicKind, ticker: Ticker, v: u64, npk: Bytes32 },
+    /// Output `j` of a spend, with what its owner needs to open it.
+    Out { j: u8, pk_eph: Bytes32, ct: [u8; CT_LEN] },
+}
+
+/// A leaf a block appended to the tree, and where it comes from: what a wallet reads to find
+/// its notes (`docs/API.md`, "Notes"). Not part of the digest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Note {
+    pub pos: u32,
+    /// The transaction that created it; `None` for a team note, which no transaction creates.
+    pub txid: Option<Bytes32>,
+    /// In a batch, the index of the envelope that created it.
+    pub envelope: Option<u32>,
+    pub leaf: Fr,
+    pub kind: NoteKind,
+}
+
 #[derive(Clone, Debug)]
 pub struct BlockResult {
     pub height: u32,
     /// `R[H]`.
     pub root: Fr,
     pub events: Vec<Event>,
+    /// For each event, the index of its envelope when its transaction is a batch.
+    pub event_envelopes: Vec<Option<u32>>,
+    /// The leaves the block appended, in tree order.
+    pub notes: Vec<Note>,
     /// `events_H`.
     pub events_bytes: Vec<u8>,
     /// `digest_H`.
@@ -188,6 +233,9 @@ pub struct Indexer {
     undo: VecDeque<Undo>,
     undo_depth: usize,
     journal: Vec<UndoOp>,
+    /// The leaves of the block being applied, and who appends them now.
+    notes: Vec<Note>,
+    author: (Option<Bytes32>, Option<u32>),
 }
 
 impl Indexer {
@@ -206,6 +254,8 @@ impl Indexer {
             undo: VecDeque::new(),
             undo_depth: DEFAULT_UNDO_DEPTH,
             journal: Vec::new(),
+            notes: Vec::new(),
+            author: (None, None),
         }
     }
 
@@ -306,17 +356,19 @@ impl Indexer {
         let tree_before = self.tree.snapshot();
         let digest_before = self.digest;
         self.journal.clear();
-        let mut events = Vec::new();
+        self.notes.clear();
+        self.author = (None, None);
+        let mut events: Vec<(Event, Option<u32>)> = Vec::new();
         let mut rejected = Vec::new();
 
         // 1. genesis, team unlocks, then the transactions in block order
         if h == self.profile.activation_height {
-            events.push(self.create_genesis(h));
+            events.push((self.create_genesis(h), None));
         }
         if let Some(tickers) = self.unlocks.get(&h).cloned() {
             for ticker in tickers {
                 if let Some(e) = self.unlock_team(ticker) {
-                    events.push(e);
+                    events.push((e, None));
                 }
             }
         }
@@ -329,6 +381,7 @@ impl Indexer {
         self.roots.push(root);
 
         // 3. digest
+        let (events, event_envelopes): (Vec<Event>, Vec<Option<u32>>) = events.into_iter().unzip();
         let events_bytes = encode_all(&events);
         self.digest = sha256(&[&digest_before, &h.to_le_bytes(), &fr_to_le(&root), &sha256(&[&events_bytes])]);
 
@@ -336,7 +389,16 @@ impl Indexer {
         while self.undo.len() > self.undo_depth {
             self.undo.pop_front();
         }
-        Ok(BlockResult { height: h, root, events, events_bytes, digest: self.digest, rejected })
+        Ok(BlockResult {
+            height: h,
+            root,
+            events,
+            event_envelopes,
+            notes: std::mem::take(&mut self.notes),
+            events_bytes,
+            digest: self.digest,
+            rejected,
+        })
     }
 
     /// Undoes the last block applied and returns its height.
@@ -439,7 +501,7 @@ impl Indexer {
         let pre = t.pre;
         let leaf = public_leaf(ticker.t(), pre, &fr_from_le(&opening)?);
         self.touch(ticker);
-        let pos = self.tree.append(leaf);
+        let pos = self.append(leaf, NoteKind::Public { kind: PublicKind::Team, ticker, v: pre, npk: opening });
         let t = self.tokens.get_mut(&ticker).expect("checked above");
         t.team_unlocked = true;
         t.pool += pre;
@@ -448,7 +510,14 @@ impl Indexer {
 
     // ---- transactions ----
 
-    fn apply_tx(&mut self, h: u32, tx: &Tx, found: &[Carried], events: &mut Vec<Event>, rejected: &mut Vec<Rejection>) {
+    fn apply_tx(
+        &mut self,
+        h: u32,
+        tx: &Tx,
+        found: &[Carried],
+        events: &mut Vec<(Event, Option<u32>)>,
+        rejected: &mut Vec<Rejection>,
+    ) {
         // the ACTIVE listings whose lock this transaction spends, in input order
         let mut spent_locks: Vec<Bytes32> = Vec::new();
         for input in &tx.vin {
@@ -462,17 +531,20 @@ impl Indexer {
         // one counted envelope is applied; a batch applies each of its envelopes alone, in
         // order; any other transaction with two or more is refused
         let txid = tx.txid;
+        self.author = (Some(txid), None);
         match found {
             [] => {}
             [one] => match self.decode_and_apply(h, tx, one, &spent_locks) {
-                Ok(event) => events.push(event),
+                Ok(event) => events.push((event, None)),
                 Err(reason) => rejected.push(Rejection { txid, envelope: None, reason }),
             },
             batch if is_batch(batch) => {
                 for (index, one) in batch.iter().enumerate() {
+                    let envelope = Some(index as u32);
+                    self.author = (Some(txid), envelope);
                     match self.decode_and_apply(h, tx, one, &spent_locks) {
-                        Ok(event) => events.push(event),
-                        Err(reason) => rejected.push(Rejection { txid, envelope: Some(index as u32), reason }),
+                        Ok(event) => events.push((event, envelope)),
+                        Err(reason) => rejected.push(Rejection { txid, envelope, reason }),
                     }
                 }
             }
@@ -483,7 +555,7 @@ impl Indexer {
         for list_txid in spent_locks {
             if self.listings.get(&list_txid).is_some_and(|l| l.status == ListingStatus::Active) {
                 self.set_status(list_txid, ListingStatus::Closed);
-                events.push(Event::Closed { txid: tx.txid, list_txid });
+                events.push((Event::Closed { txid: tx.txid, list_txid }, None));
             }
         }
     }
@@ -538,7 +610,8 @@ impl Indexer {
                 let v = m * t.lim;
                 let leaf = public_leaf(ticker.t(), v, &fr_from_le(opening).ok_or("opening is not a field element")?);
                 self.touch(*ticker);
-                let pos = self.tree.append(leaf);
+                let pos =
+                    self.append(leaf, NoteKind::Public { kind: PublicKind::Mint, ticker: *ticker, v, npk: *opening });
                 let t = self.tokens.get_mut(ticker).expect("checked above");
                 t.mints += m;
                 t.pool += v;
@@ -624,7 +697,8 @@ impl Indexer {
                 let leaf =
                     public_leaf(ticker.t(), amount, &fr_from_le(opening).ok_or("opening is not a field element")?);
                 self.touch(ticker);
-                let pos = self.tree.append(leaf);
+                let pos =
+                    self.append(leaf, NoteKind::Public { kind: PublicKind::Take, ticker, v: amount, npk: *opening });
                 self.tokens.get_mut(&ticker).expect("token of a listing").pool += amount;
                 self.set_status(
                     list_txid,
@@ -652,7 +726,8 @@ impl Indexer {
                 let leaf =
                     public_leaf(ticker.t(), amount, &fr_from_le(opening).ok_or("opening is not a field element")?);
                 self.touch(ticker);
-                let pos = self.tree.append(leaf);
+                let pos =
+                    self.append(leaf, NoteKind::Public { kind: PublicKind::Claim, ticker, v: amount, npk: *opening });
                 self.tokens.get_mut(&ticker).expect("token of a listing").pool += amount;
                 self.set_status(*list_txid, ListingStatus::Claimed);
                 Ok(Event::Claim { txid, list_txid: *list_txid, pos })
@@ -802,9 +877,18 @@ impl Indexer {
         }
         let mut pos = [0u32; 3];
         for (i, o) in spend.outputs.iter().enumerate() {
-            pos[i] = self.tree.append(fr_from_le(&o.leaf).expect("checked by check_spend"));
+            let leaf = fr_from_le(&o.leaf).expect("checked by check_spend");
+            pos[i] = self.append(leaf, NoteKind::Out { j: i as u8, pk_eph: o.pk_eph, ct: o.ct });
         }
         Spent { nf: spend.nf, pos }
+    }
+
+    /// Appends a leaf and keeps what `BlockResult::notes` says of it.
+    fn append(&mut self, leaf: Fr, kind: NoteKind) -> u32 {
+        let pos = self.tree.append(leaf);
+        let (txid, envelope) = self.author;
+        self.notes.push(Note { pos, txid, envelope, leaf, kind });
+        pos
     }
 
     // ---- undo bookkeeping ----
@@ -830,6 +914,12 @@ impl Indexer {
         }
         l.status = status;
     }
+}
+
+/// True when the indexer needs `prev_height` for input 0 of this transaction (§5, "DEPLOY
+/// maturity"): a source that does not give the height with the block asks for it then.
+pub fn needs_commit_height(tx: &Tx) -> bool {
+    is_witness_deploy(&counted(tx))
 }
 
 /// True when what a transaction carries is one counted envelope, in the witness, that decodes
