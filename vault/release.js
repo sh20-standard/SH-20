@@ -31,9 +31,10 @@ export function gitReader(commit) {
   };
 }
 
-export function buildRelease(commit) {
+/** The release of `commit`: on the signet profile, so only once its activation height is fixed. */
+export function buildRelease(commit, { signet = true } = {}) {
   const { version } = JSON.parse(git('cat-file', 'blob', `${commit}:vault/package.json`).toString('utf8'));
-  const entries = site(gitReader(commit));
+  const entries = site(gitReader(commit), { signet });
   const name = `sh20-vault-${version}`;
   const pkg = tar(entries, name);
   return { version, name, entries, pkg, sha256: sha256(pkg), cid: ipfsCid(entries), bytes: pkg.length };

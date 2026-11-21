@@ -34,8 +34,9 @@ test('tar is a valid ustar with fixed metadata, independent of input order', () 
 
 test('a release of the same commit is byte-identical, and has no external script', () => {
   const commit = execFileSync('git', ['rev-parse', 'HEAD']).toString().trim();
-  const a = buildRelease(commit);
-  const b = buildRelease(commit);
+  // on the test profile: a release proper needs the signet's activation height (test/signet.test.js)
+  const a = buildRelease(commit, { signet: false });
+  const b = buildRelease(commit, { signet: false });
   assert.equal(a.sha256, b.sha256);
   assert.equal(a.cid, b.cid);
   assert.ok(a.pkg.equals(b.pkg));

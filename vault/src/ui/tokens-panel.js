@@ -6,6 +6,7 @@ import { toHex } from '../bytes.js';
 import { TERMS, crossCheck, profileCheck } from '../consensus.js';
 import { verifyMintTerms } from '../deploy.js';
 import { buildMint, mintProblems, mintsLeft } from '../mint.js';
+import { PROFILE, PROFILE_NAME } from '../profile.js';
 import { MINT_BATCH_MAX, PAY_MODE } from '../sh20.js';
 import { $, MAX_FEE_SATS, busy, esplora, explorerTx, fill, h, indexer, indexers, report, sats, short, st, units } from './context.js';
 import { processDeploys, renderDeploy } from './deploy-panel.js';
@@ -21,13 +22,14 @@ export async function refresh() {
     const [status, tokens] = await Promise.all([indexer.status(), indexer.tokens()]);
     st.status = status;
     st.tokens = tokens;
-    const wrongNet = status.network && status.network !== 'signet';
+    const wrongNet = status.network && status.network !== PROFILE.network;
     fill('indexer-status',
-      wrongNet ? h('span', { class: 'err' }, `Indexer follows ${status.network}, not signet. `) : null,
+      wrongNet ? h('span', { class: 'err' }, `Indexer follows ${status.network}, not ${PROFILE.network}. `) : null,
       `Indexer at block ${status.height ?? '?'}`,
       status.digest ? ` · digest ${short(String(status.digest))}` : '',
       status.verifier === 'reject-all' ? ' · spends not verified yet' : '',
-      ` · ${indexers.length} indexer${indexers.length > 1 ? 's' : ''} configured`);
+      ` · ${indexers.length} indexer${indexers.length > 1 ? 's' : ''} configured`,
+      ` · ${PROFILE_NAME} profile, from block ${PROFILE.activationHeight}`);
     if (wrongNet) st.tokens = [];
   } catch (e) {
     st.tokens = [];
