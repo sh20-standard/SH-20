@@ -9,14 +9,15 @@
 use crate::api::Store;
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{IpAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv6Addr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 /// Requests answered at once; one more gets a 503.
 pub const MAX_CONNECTIONS: usize = 64;
-/// Of which one address may hold this many. A local address is not counted: a reverse proxy
-/// on the same machine speaks for everybody.
+/// Of which one address may hold this many: an IPv4 address, or an IPv6 /64 (whoever has one
+/// address in it has them all). A local address is not counted: a reverse proxy on the same
+/// machine speaks for everybody.
 pub const MAX_PER_ADDRESS: usize = 8;
 /// A request line and its headers hold in this.
 const MAX_HEAD: usize = 8192;
@@ -120,7 +121,20 @@ fn handle(mut stream: TcpStream, store: &RwLock<Store>, limits: Limits) {
     };
 }
 
-/// Who holds the places: how many in all, and how many for each address that is counted.
+/// Under what a peer is counted: `None` for a local address, which is not; an IPv4 address as
+/// it is, also when it comes written as IPv6 (`::ffff:a.b.c.d`); an IPv6 address by its /64.
+fn counted_as(address: IpAddr) -> Option<IpAddr> {
+    match address.to_canonical() {
+        a if a.is_loopback() => None,
+        IpAddr::V6(a) => {
+            let s = a.segments();
+            Some(IpAddr::V6(Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0)))
+        }
+        v4 => Some(v4),
+    }
+}
+
+/// Who holds the places: how many in all, and how many under each name of `counted_as`.
 #[derive(Default)]
 struct Places {
     taken: usize,
@@ -133,8 +147,8 @@ impl Places {
         if self.taken >= MAX_CONNECTIONS {
             return false;
         }
-        if !address.is_loopback() {
-            let held = self.by_address.entry(address).or_insert(0);
+        if let Some(key) = counted_as(address) {
+            let held = self.by_address.entry(key).or_insert(0);
             if *held >= MAX_PER_ADDRESS {
                 return false;
             }
@@ -144,12 +158,15 @@ impl Places {
         true
     }
 
+    /// Gives back a place `enter` gave for `address`.
     fn leave(&mut self, address: IpAddr) {
         self.taken -= 1;
-        if let Some(held) = self.by_address.get_mut(&address) {
-            *held -= 1;
-            if *held == 0 {
-                self.by_address.remove(&address);
+        if let Some(key) = counted_as(address) {
+            if let Some(held) = self.by_address.get_mut(&key) {
+                *held -= 1;
+                if *held == 0 {
+                    self.by_address.remove(&key);
+                }
             }
         }
     }
@@ -294,5 +311,44 @@ mod tests {
         }
         assert!(p.by_address.is_empty());
         assert!(p.enter(far(3)));
+    }
+
+    /// One /64 is one peer, an IPv4 address written as IPv6 is that IPv4 address, and a local
+    /// address is local however it is written.
+    #[test]
+    fn what_an_address_is_counted_as() {
+        let v6 = |text: &str| IpAddr::V6(text.parse::<Ipv6Addr>().unwrap());
+        let v4 = |a: [u8; 4]| IpAddr::from(a);
+        assert_eq!(counted_as(v6("2001:db8:1:2:aaaa:bbbb:cccc:dddd")), Some(v6("2001:db8:1:2::")));
+        assert_eq!(counted_as(v6("2001:db8:1:2::1")), counted_as(v6("2001:db8:1:2:ffff:ffff:ffff:ffff")));
+        assert_ne!(counted_as(v6("2001:db8:1:2::1")), counted_as(v6("2001:db8:1:3::1")));
+        assert_eq!(counted_as(v6("::ffff:203.0.113.7")), Some(v4([203, 0, 113, 7])));
+        assert_eq!(counted_as(v4([203, 0, 113, 7])), Some(v4([203, 0, 113, 7])));
+        for local in [v4([127, 0, 0, 1]), v4([127, 8, 9, 10]), v6("::1"), v6("::ffff:127.0.0.1")] {
+            assert_eq!(counted_as(local), None, "{local}");
+        }
+
+        // addresses of one /64 share its places, and give them back under the same name
+        let mut p = Places::default();
+        let host = |n: u16| IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 1, 2, 0, 0, 0, n));
+        for n in 0..MAX_PER_ADDRESS as u16 {
+            assert!(p.enter(host(n)));
+        }
+        assert!(!p.enter(host(999)));
+        assert!(p.enter(v6("2001:db8:1:3::1")));
+        // the same IPv4 peer under its two spellings
+        for n in 0..MAX_PER_ADDRESS {
+            assert!(p.enter(if n % 2 == 0 { v4([203, 0, 113, 7]) } else { v6("::ffff:203.0.113.7") }));
+        }
+        assert!(!p.enter(v4([203, 0, 113, 7])) && !p.enter(v6("::ffff:203.0.113.7")));
+        p.leave(host(3));
+        assert!(p.enter(host(4242)));
+        for n in 0..MAX_PER_ADDRESS as u16 {
+            p.leave(host(n));
+            p.leave(v6("::ffff:203.0.113.7"));
+        }
+        p.leave(v6("2001:db8:1:3::1"));
+        assert!(p.by_address.is_empty());
+        assert_eq!(p.taken, 0);
     }
 }
