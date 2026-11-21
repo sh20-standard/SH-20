@@ -10,6 +10,8 @@
 //
 // Outputs, in vault/release/:
 //   sh20-vault-<version>.tar   the package (ustar, fixed metadata, no compression)
+//   sh20-vault-<version>.car   the same files as IPFS blocks (CARv1), for a pinning service or
+//                              `ipfs dag import`: what they serve then has the release's CID
 //   sh20-vault-<version>/      the same files, ready for `ipfs add -r --cid-version=1`
 
 import { execFileSync } from 'node:child_process';
@@ -17,7 +19,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { site, writeSite, sha256 } from './build.js';
-import { tar, ipfsCid } from './tools/pack.js';
+import { tar, ipfsCid, car } from './tools/pack.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -108,6 +110,7 @@ function main(argv) {
   const out = join(here, 'release');
   mkdirSync(out, { recursive: true });
   writeFileSync(join(out, `${r.name}.tar`), r.pkg);
+  writeFileSync(join(out, `${r.name}.car`), car(r.entries));
   writeSite(r.entries, join(out, r.name));
   const added = record(r, commit);
   console.log(`${r.name} from commit ${commit}`);
@@ -115,7 +118,7 @@ function main(argv) {
   console.log(`  SHA-256   ${r.sha256}`);
   console.log(`  IPFS CID  ${r.cid}`);
   console.log(added ? '  recorded in vault/RELEASES.md: commit it' : '  already in vault/RELEASES.md');
-  console.log(`  publish:  ipfs add -r --cid-version=1 --pin release/${r.name}   (must print the same CID)`);
+  console.log(`  release/${r.name}.car  the IPFS blocks of that CID: pin them from a machine that is not yours (vault/RELEASES.md)`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main(process.argv.slice(2));
