@@ -96,3 +96,29 @@ jobs:
         run: npm test
       - working-directory: vault
         run: npm test
+
+  vault-regtest:
+    name: vault, the whole flow on Bitcoin Core regtest (headless Chrome)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/sh20-bitcoin
+          key: bitcoin-core-${{ hashFiles('vault/tools/bitcoind.sh') }}
+      # a pinned release of Bitcoin Core, its SHA-256 checked on every run, cached or not
+      - name: Bitcoin Core
+        run: vault/tools/bitcoind.sh
+      # mint, transfer, DEPLOY, burn, sale and purchase, cancel, CLAIM and a restore, proved in the page
+      # and signed by the test wallet (vault/dev/test-wallet.js); Bitcoin Core checks every transaction
+      - name: the whole flow, in the page
+        run: |
+          node vault/dev/regtest.js --isolate > regtest.log 2>&1 &
+          for i in $(seq 1 120); do curl -sf http://127.0.0.1:8030/status > /dev/null && break; sleep 1; done
+          node vault/dev/e2e.js
+      - name: what Bitcoin Core and the indexers said
+        if: always()
+        run: cat regtest.log

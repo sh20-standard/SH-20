@@ -1,9 +1,12 @@
-// Development only: drives the real page in headless Chrome (DevTools protocol,
-// no dependency) through the whole mint flow, against dev/serve.js mocks.
-// A fake UniSat is injected; it "signs" with a dummy Schnorr signature, which
-// the mock Esplora accepts because indexers never check Bitcoin signatures.
+// Development and CI: drives the real page in headless Chrome (DevTools protocol, no dependency)
+// through the whole flow: mint, transfer, DEPLOY, burn, sale and purchase, cancel, CLAIM, restore.
+// A UniSat stand-in is injected in the page; it asks this script to sign, with the key of
+// dev/test-wallet.js (BIP341, for real), so no real wallet is needed.
 //
+//   node vault/dev/regtest.js --isolate &   then   node vault/dev/e2e.js [path to Chrome]
+//     on Bitcoin Core regtest: every transaction is checked by Bitcoin Core (what the CI runs)
 //   node vault/dev/serve.js &   then   node vault/dev/e2e.js [path to Chrome]
+//     on the demo chain of serve.js, which takes any transaction (and the variants below)
 //   (after `npm run build`, E2E_PATH=/vault/dist/vault/ tests the IPFS build)
 //   With `serve.js --deploy-burn 0 [--deploy-maturity 0]`, run E2E_OTHER_PROFILE=1: every indexer on another profile.
 
@@ -11,9 +14,13 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { WALLET, signInput, signPsbt } from './test-wallet.js';
+import { parseTx, serializeTx } from '../src/btc.js';
+import { fromHex, toHex } from '../src/bytes.js';
 
-const CHROME = process.argv[2] || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CHROME = process.argv[2] || ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/google-chrome', '/usr/bin/chromium'].find(existsSync);
+const ESPLORA = 'http://127.0.0.1:8020/esplora';
 // E2E_PATH=/vault/dist/vault/ runs the same flow on the IPFS build.
 // E2E_LIAR=1 adds the lying indexer (:8031) and expects the mint to be refused.
 const LIAR = !!process.env.E2E_LIAR;
@@ -31,50 +38,27 @@ const INDEXERS = ['http://127.0.0.1:8020', 'http://127.0.0.1:8030', ...(LIAR ? [
 // E2E_HOST=<cid>.ipfs.localhost: a subdomain gateway (the page isolates itself with its service worker)
 // E2E_PATH=/ipfs/<cid>/vault/: a path gateway (the page refuses to run there: docs/AUDIT.md §8.1)
 const HOST = process.env.E2E_HOST || 'localhost';
-const PAGE = `http://${HOST}:8000${process.env.E2E_PATH || '/vault/'}?indexer=${INDEXERS}&esplora=http://127.0.0.1:8020/esplora`;
+const PAGE = `http://${HOST}:8000${process.env.E2E_PATH || '/vault/'}?indexer=${INDEXERS}&esplora=${ESPLORA}`;
 const PATH_GATEWAY = /^\/ip[fn]s\//.test(process.env.E2E_PATH || '');
 const PORT = 9333;
 
-// Runs in the page before any of its scripts.
+// Runs in the page before any of its scripts: a UniSat whose signPsbt asks this script
+// (Runtime.addBinding 'sh20Sign'), which signs with dev/test-wallet.js and answers with __signed().
 const FAKE_UNISAT = `(() => {
-  const ADDR = 'tb1pqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesf3hn0c';
-  const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
-  const unhex = (h) => Uint8Array.from(h.match(/../g), (x) => parseInt(x, 16));
-  // Adds PSBT_IN_TAP_KEY_SIG (64 zero bytes) to the input maps it is asked to sign (toSignInputs),
-  // as a wallet does; an input signed already (a seller's lock) is left as it is.
-  function sign(psbtHex, indexes) {
-    const b = unhex(psbtHex);
-    let p = 5;
-    const cs = () => { const f = b[p++]; if (f < 0xfd) return f; const v = b[p] | (b[p + 1] << 8); p += 2; return v; };
-    let nIn = 0;
-    for (;;) { // the global map; its unsigned transaction gives the number of inputs
-      const k = cs();
-      if (k === 0) break;
-      const type = b[p];
-      p += k;
-      const v = cs();
-      if (type === 0x00) nIn = b[p + 4];
-      p += v;
-    }
-    const skipMap = () => { for (;;) { const k = cs(); if (k === 0) return p - 1; p += k; const v = cs(); p += v; } };
-    const out = [];
-    let last = 0;
-    for (let i = 0; i < nIn; i++) {
-      const end = skipMap();
-      out.push(b.slice(last, end));
-      if (indexes.includes(i)) out.push(Uint8Array.from([1, 0x13, 64, ...new Uint8Array(64)]));
-      last = end;
-      p = end + 1;
-    }
-    out.push(b.slice(last));
-    return hex(Uint8Array.from(out.flatMap((x) => [...x])));
-  }
+  const waiting = new Map();
+  let n = 0;
+  window.__signed = (id, hex, error) => { const w = waiting.get(id); waiting.delete(id); error ? w.reject(new Error(error)) : w.resolve(hex); };
   window.unisat = {
-    requestAccounts: async () => [ADDR],
-    getAccounts: async () => [ADDR],
+    requestAccounts: async () => [${JSON.stringify(WALLET.address)}],
+    getAccounts: async () => [${JSON.stringify(WALLET.address)}],
     getChain: async () => ({ enum: 'BITCOIN_SIGNET' }),
-    getPublicKey: async () => '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798',
-    signPsbt: async (h, opts) => { window.__signed = opts; return sign(h, opts.toSignInputs.map((x) => x.index)); },
+    getPublicKey: async () => ${JSON.stringify(WALLET.publicKey)},
+    signPsbt: (psbt, opts) => new Promise((resolve, reject) => {
+      const id = ++n;
+      waiting.set(id, { resolve, reject });
+      window.__signOpts = opts;
+      window.sh20Sign(JSON.stringify({ id, psbt, indexes: opts.toSignInputs.map((x) => x.index) }));
+    }),
   };
 })();`;
 
@@ -85,7 +69,9 @@ let profile;
 
 async function main() {
   profile = mkdtempSync(join(tmpdir(), 'sh20-e2e-'));
-  chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`, '--no-first-run', 'about:blank'], { stdio: 'ignore' });
+  if (!CHROME) throw new Error('no Chrome found: give its path');
+  // in CI, Chrome runs without its sandbox (the runner's kernel may not let it create one), on the test page alone
+  chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`, '--no-first-run', ...(process.env.CI ? ['--no-sandbox'] : []), 'about:blank'], { stdio: 'ignore' });
   let target;
   for (let i = 0; i < 50 && !target; i++) {
     await sleep(200);
@@ -101,6 +87,7 @@ async function main() {
   const problems = [];
   const dialogs = [];
   const urls = [];
+  let signatures = 0;
   ws.addEventListener('message', (ev) => {
     const m = JSON.parse(ev.data);
     if (m.id && pending.has(m.id)) {
@@ -108,6 +95,17 @@ async function main() {
       pending.delete(m.id);
     } else if (m.method === 'Network.requestWillBeSent') {
       urls.push(m.params.request.url);
+    } else if (m.method === 'Runtime.bindingCalled' && m.params.name === 'sh20Sign') {
+      // the wallet: signs the inputs the page asked for, with the test key, and answers the page
+      const { id: sid, psbt, indexes } = JSON.parse(m.params.payload);
+      let answer;
+      try {
+        answer = `window.__signed(${sid}, ${JSON.stringify(signPsbt(psbt, indexes))})`;
+        signatures++;
+      } catch (e) {
+        answer = `window.__signed(${sid}, null, ${JSON.stringify(e.message)})`;
+      }
+      ws.send(JSON.stringify({ id: ++id, method: 'Runtime.evaluate', params: { expression: answer, contextId: m.params.executionContextId } }));
     } else if (m.method === 'Page.javascriptDialogOpening') {
       dialogs.push(m.params.message);
       ws.send(JSON.stringify({ id: ++id, method: 'Page.handleJavaScriptDialog', params: { accept: true } }));
@@ -141,6 +139,7 @@ async function main() {
   await send('Runtime.enable');
   await send('Log.enable');
   await send('Page.enable');
+  await send('Runtime.addBinding', { name: 'sh20Sign' });
   await send('Page.addScriptToEvaluateOnNewDocument', { source: FAKE_UNISAT });
   await send('Page.navigate', { url: PAGE });
 
@@ -277,7 +276,7 @@ async function main() {
   await waitFor(`/reveal in 5 blocks/.test(document.querySelector('#pending-body .countdown')?.textContent ?? '')`, 'the countdown');
   step('countdown: ' + (await countdown()));
   if (!/ 1,300 spending/.test(await evaluate(`document.querySelector('#notes-body tbody').innerText.replace(/\\s+/g, ' ')`))) throw new Error('the SH20 note the burn spends is not reserved');
-  const mine = (count) => fetch(`http://127.0.0.1:8020/esplora/mine?n=${count}`, { method: 'POST' }).then((r) => r.text());
+  const mine = (count) => fetch(`${ESPLORA}/mine?n=${count}`, { method: 'POST' }).then((r) => r.text());
   // two blocks pass, then the page is reloaded: the signed reveal and the countdown come back from the encrypted vault
   await mine(2);
   await send('Page.reload');
@@ -349,6 +348,41 @@ async function main() {
   await waitFor(`${listingRow(50)}?.children[3].textContent === 'CANCELLED'`, 'the listing CANCELLED');
   if (!/ 50 in tree/.test(await notesText())) throw new Error('no public note of 50 after the cancel');
   step('cancel: listing CANCELLED, the 50 back as a public note');
+
+  // CLAIM: someone completes an offer without its TAKE, as another tool could (SPEC-WIRE §5): the lock
+  // is spent and the seller paid, but no note is made, so the listing is CLOSED and the seller claims
+  // the tokens back with the lock key
+  await spend('list', { amount: '40', price: '2000' }, 'LIST', `LIST of 40 ${TICKER} for 2,000 sats: broadcast`);
+  await waitFor(`${listingRow(40)}?.children[3].textContent === 'ACTIVE'`, 'the third listing ACTIVE');
+  await evaluate(`${listingRow(40)}.querySelector('button[name=offer]').click()`);
+  await waitFor(`/^sh20offer1:/.test(document.querySelector('#offer-text')?.textContent ?? '') && document.querySelector('#listing-out').innerText.includes('40 ${TICKER}')`, 'the third offer');
+  const [, listTxid, offerSig] = (await evaluate(`document.querySelector('#offer-text').textContent`)).split(':');
+  const listing = await (await fetch(`http://127.0.0.1:8020/listing/${listTxid}`)).json();
+  const lockVout = Number(listing.lock.split(':')[1]);
+  const lockOut = parseTx(fromHex(await (await fetch(`${ESPLORA}/tx/${listTxid}/hex`)).text())).vout[lockVout];
+  const [coin] = await (await fetch(`${ESPLORA}/address/${WALLET.address}/utxo`)).json();
+  const price = BigInt(listing.price);
+  const fee = 1000n;
+  const closing = {
+    version: 2, locktime: 0, // what the offer signs (market.js offerSkeleton)
+    vin: [
+      { txid: listTxid, vout: lockVout, sequence: 0xfffffffd, scriptSig: new Uint8Array(0), witness: [fromHex(offerSig)] },
+      { txid: coin.txid, vout: coin.vout, sequence: 0xfffffffd, scriptSig: new Uint8Array(0), witness: [] },
+    ],
+    vout: [{ value: price, script: fromHex(listing.payScript) }, { value: BigInt(coin.value) - price - fee, script: WALLET.script }],
+  };
+  closing.vin[1].witness = [signInput(closing, 1, [lockOut, { value: BigInt(coin.value), script: WALLET.script }])];
+  const sent = await fetch(`${ESPLORA}/tx`, { method: 'POST', body: toHex(serializeTx(closing)) });
+  if (!sent.ok) throw new Error('the offer completed without a TAKE was refused: ' + (await sent.text()));
+  await syncDone();
+  await waitFor(`${listingRow(40)}?.children[3].textContent === 'CLOSED'`, 'the listing CLOSED');
+  step('an offer completed without its TAKE: the seller paid, the listing CLOSED');
+  await evaluate(`${listingRow(40)}.querySelector('button[name=claim]').click()`);
+  await waitFor(`/broadcast/.test(document.querySelector('#listing-out')?.innerText ?? '') && document.querySelector('#listing-out').innerText.includes('CLAIM of')`, 'the CLAIM broadcast');
+  await syncDone();
+  await waitFor(`${listingRow(40)}?.children[3].textContent === 'CLAIMED'`, 'the listing CLAIMED');
+  if (!/ 40 in tree/.test(await notesText())) throw new Error('no public note of 40 after the CLAIM: ' + (await notesText()));
+  step('CLAIM: listing CLAIMED, the 40 back as a public note');
   const listingsBefore = await evaluate(`[...document.querySelectorAll('#market-body tbody tr')].map((r) => r.children[1].textContent + ' ' + r.children[3].textContent).sort().join(', ')`);
 
   // restore on an empty device from the 12 words alone: the same notes come back, public and sealed
@@ -371,7 +405,7 @@ async function main() {
   if (amounts(after) !== amounts(before)) throw new Error(`restored from words: ${after}\nwas: ${before}`);
   if ((await evaluate(`document.querySelector('#address').textContent`)) !== address) throw new Error('another address after the restore');
   step('restored from the 12 words: same address, same notes: ' + after);
-  await waitFor(`document.querySelectorAll('#market-body tbody tr').length === 2`, 'the listings found again by their lock keys');
+  await waitFor(`document.querySelectorAll('#market-body tbody tr').length === ${listingsBefore.split(', ').length}`, 'the listings found again by their lock keys');
   const listingsAfter = await evaluate(`[...document.querySelectorAll('#market-body tbody tr')].map((r) => r.children[1].textContent + ' ' + r.children[3].textContent).sort().join(', ')`);
   if (listingsAfter !== listingsBefore) throw new Error(`listings after the restore: ${listingsAfter}, before: ${listingsBefore}`);
   step('listings found again from the words: ' + listingsAfter);
@@ -398,7 +432,8 @@ async function main() {
   if (real.length) {
     throw new Error('page problems:\n' + real.join('\n'));
   }
-  console.log('\nOK: no console error, no CSP violation');
+  if (!signatures) throw new Error('the wallet signed nothing');
+  console.log(`\nOK: no console error, no CSP violation; the wallet signed ${signatures} transactions`);
 }
 
 main()

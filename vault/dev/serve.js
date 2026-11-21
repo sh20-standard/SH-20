@@ -10,9 +10,10 @@
 // (E2E_OTHER_PROFILE=1). With --deploy-burn 0 the chain also deploys GENE (a proof-less DEPLOY).
 //
 // It also mocks an Esplora server under :8020/esplora: one UTXO for any address,
-// raw transactions and their status, and POST /tx mines the transaction in the
-// next block of the demo chain, so the whole mint flow runs without a real
-// wallet or signet coins (see e2e.js).
+// raw transactions, their status and outspends, and POST /tx mines the transaction in the
+// next block of the demo chain, so the whole flow runs without a real wallet or signet
+// coins (see e2e.js). It checks no Bitcoin rule: dev/regtest.js runs the same flow on
+// Bitcoin Core.
 //
 //   node vault/dev/serve.js [--port 8000] [--api-port 8020] [--api-port2 8030] [--liar-port 8031] [--deploy-burn 1000] [--deploy-maturity 6] [--isolate]
 //
@@ -21,8 +22,7 @@
 // without it the page is not isolated and proves on one thread, as from an IPFS gateway.
 
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { join, extname, normalize, dirname } from 'node:path';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { Indexer } from '../../indexer/src/indexer.js';
@@ -33,6 +33,7 @@ import { DEFAULT_PROFILE } from '../../indexer/src/constants.js';
 import { deployEnv, opening } from '../../indexer/test/helpers.js';
 import { parseTx, serializeTx, txid as txidOf, opReturnScript } from '../src/btc.js';
 import { fromHex, toHex } from '../src/bytes.js';
+import { staticServer } from './static.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const arg = (k, d) => (process.argv.includes(k) ? process.argv[process.argv.indexOf(k) + 1] : d);
@@ -51,6 +52,7 @@ const ISOLATE = process.argv.includes('--isolate'); // COOP/COEP: shared memory,
 const idx = new Indexer({ profile: { activationHeight: A, deployBurn: DEPLOY_BURN, deployMaturity: DEPLOY_MATURITY }, verifier });
 const api = apiHandler(idx, { network: 'signet' });
 const chainTxs = new Map(); // txid -> { hex, height }
+const spentBy = new Map(); // "txid:vout" -> the transaction that spent it (Esplora /outspend, for a CLAIM)
 
 // Applies real, serialised transactions, so Esplora can serve them back. Each input spending a
 // transaction of this chain gets its height as prevHeight, which a DEPLOY's input 0 needs (SPEC-WIRE §5,
@@ -61,6 +63,7 @@ function mine(txs, prevHeights = []) {
   const itxs = txs.map((t, k) => {
     const id = txidOf(t);
     chainTxs.set(id, { hex: toHex(serializeTx(t)), height });
+    for (const i of t.vin) spentBy.set(`${i.txid}:${i.vout}`, id);
     return {
       txid: id,
       vin: t.vin.map((i, j) => {
@@ -114,6 +117,11 @@ async function esplora(req, path, res) {
   if (m) return chainTxs.has(m[1]) ? text(200, chainTxs.get(m[1]).hex) : text(404, 'not found');
   m = path.match(/^\/tx\/([0-9a-f]{64})\/status$/);
   if (m) return text(200, json(chainTxs.has(m[1]) ? { confirmed: true, block_height: chainTxs.get(m[1]).height } : { confirmed: false }));
+  m = path.match(/^\/tx\/([0-9a-f]{64})\/outspend\/(\d+)$/);
+  if (m) {
+    const by = spentBy.get(`${m[1]}:${m[2]}`);
+    return text(200, json(by ? { spent: true, txid: by, vin: 0, status: { confirmed: true } } : { spent: false }));
+  }
   // development only: time passes. POST /esplora/mine?n=6 mines n empty blocks (a DEPLOY's commit matures)
   if (path === '/mine' && req.method === 'POST') {
     const count = Math.min(100, Number(new URL(req.url, 'http://x').searchParams.get('n')) || 1);
@@ -160,25 +168,7 @@ createServer(serveApi(api)).listen(API_PORT, '127.0.0.1');
 createServer(serveApi(api)).listen(API_PORT2, '127.0.0.1');
 createServer(serveApi(liar)).listen(LIAR_PORT, '127.0.0.1');
 
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm' };
-const ISOLATION = ISOLATE ? { 'cross-origin-opener-policy': 'same-origin', 'cross-origin-embedder-policy': 'require-corp' } : {};
-createServer(async (req, res) => {
-  // /ipfs/<cid>/… is served like a path gateway would (the same files), to check the page never
-  // registers its service worker there; <cid>.ipfs.localhost:<port> is a subdomain gateway
-  const pathname = new URL(req.url, 'http://x').pathname.replace(/^\/ip[fn]s\/[^/]+(?=\/)/, '');
-  // the site's root sw.js (build.js puts vault/sw.js there): the repository root has none
-  const path = pathname === '/sw.js' ? '/vault/sw.js' : normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, '');
-  let file = join(root, path);
-  if (!file.startsWith(root)) return res.writeHead(403).end();
-  if (file.endsWith('/')) file = join(file, 'index.html');
-  let body;
-  try {
-    body = await readFile(file);
-  } catch {
-    return res.writeHead(404).end('not found');
-  }
-  res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream', ...ISOLATION }).end(body);
-}).listen(STATIC_PORT, '127.0.0.1');
+staticServer({ root, isolate: ISOLATE }).listen(STATIC_PORT, '127.0.0.1');
 
 console.log(`vault http://localhost:${STATIC_PORT}/vault/`);
 console.log(`indexer API http://127.0.0.1:${API_PORT} and :${API_PORT2}, lying indexer :${LIAR_PORT}, mock Esplora at /esplora (demo chain, height ${idx.height}, D = ${DEPLOY_BURN}, N = ${DEPLOY_MATURITY})`);
