@@ -19,7 +19,7 @@ beside the reference indexer and be compared with it block by block (`follow`, b
 
 ```sh
 cd indexer-rs
-cargo test --release      # 98 tests
+cargo test --release      # 101 tests
 cargo run --release -- replay <folder of `bitcoin-cli getblock <hash> 3` JSON files> [options]
 cargo run --release -- follow --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS --activation A --deploy-burn D
 ```
@@ -171,7 +171,7 @@ cd indexer-rs && cargo run --release -- follow --rpc http://127.0.0.1:38332 --rp
 | `src/sources.rs` | the two sources: Bitcoin Core's JSON-RPC and Esplora (HTTP client: `ureq`, with `rustls`) |
 | `src/blocks.rs` | the block file of `--data` |
 | `src/api.rs` | what the API serves: every leaf, nullifier, root and digest by block, and the routes |
-| `src/server.rs` | the HTTP server (standard library only): GET, JSON, CORS, read-only |
+| `src/server.rs` | the HTTP server (standard library only): GET, JSON, CORS, read-only, with a deadline for each connection |
 | `src/main.rs` | the `replay` and `follow` commands |
 
 ## Tests
@@ -200,4 +200,5 @@ indexer's API: where `docs/API.md` is silent, the shape of an answer is this ind
   the first one.
 - The state lives in memory; `--data` keeps the blocks, not the state, so a restart applies them again.
 - `/nullifiers`, `/roots` and `/listings` return everything at once, as `docs/API.md` describes them.
-- One request per connection, 64 at a time: put a reverse proxy in front for a public address or for TLS.
+- One request per connection, 64 at a time and 8 for one remote address; a connection has 10 seconds in all to
+  send its request and 60 to take the answer. Put a reverse proxy in front for a public address or for TLS.
