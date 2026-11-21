@@ -221,6 +221,45 @@ One remark on the file: the two envelopes with an OP_RETURN `payScript` are in b
 `envelopes` (`sections.envelopes` says so). The test checks that they are the only unlisted ones, and that each is one
 byte away from an envelope that decodes: with the first byte of its `payScript` changed, the decoder accepts it.
 
+## The HTTP API: what `docs/API.md` leaves open (2026-11-21)
+
+`indexer-rs` now follows a chain (`follow`: Bitcoin Core or Esplora, reorgs, restarts) and serves the read-only API,
+written from [`API.md`](API.md) alone: neither `indexer/bin/follow.js` nor the vault or the explorer that call it
+were opened. `API.md` names every route and most fields, and says how values are encoded. It does not say what
+several fields hold, and one route this task asked for is not in it. Nothing below changes a digest: these are
+questions of presentation, but a client written against one indexer breaks on the other wherever the two chose
+differently. **Each row is a guess to check against the reference**, and the place to settle it is `API.md`.
+
+| # | Point | Chosen in `indexer-rs` |
+| --- | --- | --- |
+| A1 | **`GET /block/:height` is not in `API.md`.** The vault and the explorer are said to use it. | One block by its height, any block applied (with SH-20 activity or not), as the object of `/blocks`; 404 below `A` or above the tip. |
+| A2 | **`events` and `rejected` in a block of `/blocks`**: counts, names or objects? | Lists of objects. An event is `{ type, txid, … }` (A3); a refusal is `{ txid, reason }`, with `envelope` in a batch. `eventsH` is added: the byte string of SPEC-WIRE §6, the one form of the events two indexers must agree on byte for byte. |
+| A3 | **An event as JSON** (in `/blocks`, `/block`, `/tx`) has no description. | `type` is the name of the vectors (`MINT`, `TEAM_UNLOCK`, …); `txid` except for GENESIS and TEAM_UNLOCK; then the fields of the event's record in §6 under the names of the spec: `ticker`, `v`, `vPub`, `amount`, `price`, `pre`, `pos` (a number, or three for a spend), `nullifiers` (two), `listTxid`, `outcome` (`SOLD`, `CANCELLED`), and for GENESIS `max`, `lim`, `deployBurn`, `anchorWindow`, `anchorMinDepth`, `deployMaturity`. In a batch, `envelope`. |
+| A4 | **`/tx/:txid`.** Is `event` an object or a name? What does a transaction give that closes a listing (CLOSED) besides its envelope, or with no envelope at all, or while its envelope is refused? Is a transaction with no SH-20 effect a 404? | `event` is the event of the transaction's envelope (the object of A3) and `rejected` the reason (a string): the verdict on the envelope, both `null` in a batch. CLOSED is never a verdict: it is in `events` only, so a transaction that only spends a lock has `event: null`, `rejected: null` and one event, and a refused one that spends a lock has a reason and one event (block 13 of the vectors has two). `rejections`: `[{ reason }]`, with `envelope` in a batch. A transaction with no event and no refusal: 404. |
+| A5 | **`/status`**: the values of `network`, `genesis`, `tokens` and `verifier` are not described, nor what `height` is before the first block. `anchorMinDepth` (`K_min`) is not in the list, though it is a profile constant and in the GENESIS record. | `network`: `--network`, else what the node calls its chain (`getblockchaininfo.chain`: `signet`, `main`, …), else `unknown` (Esplora does not say). `genesis`: the object of the vectors (`ticker`, `max`, `lim`, `pre`, `price`, `payMode`). `tokens`, `leaves`, `nullifiers`: counts. `verifier`: `reject` or `test`, the name given on the command line. Before the first block: `height: null`, `digest` is `digest_{A−1}`, `root` the empty root. Added: `anchorMinDepth`, `hash` (the tip's block hash) and `implementation`. |
+| A6 | **A listing as JSON** (`/listings`, `/listing/:txid`) has no description. | `{ txid, height, ticker, amount, price, payScript, lockVout, lockKey, state }`: the LIST transaction and its block, the fields of the LIST, and the state under the name the query uses. In LIST order. An unknown `state`: 400. |
+| A7 | **A token**: is `genesis` present on the other tokens? What is `deployHeight` for the genesis token? How is `payScript` written? | `genesis: true` on SH20 only (absent elsewhere); its `deployHeight` is `A`; `payScript` is hex, empty with payMode 0 or 1. `start`, `end`, `unlock`, `payMode` are numbers, the rest decimal strings. The team opening and `teamUnlocked` are not served (not in the list), so a buyer cannot read from the API alone whether the team note is out. |
+| A8 | **Notes.** "Every note has … `txid`", but no transaction creates a TEAM note. How are `npk`, `pkEph` and `ct` written? What does `limit` above 5000 do? | A TEAM note has `txid: null`. `npk` is a field element, so big-endian hex like the leaf; `pkEph` and `ct` are opaque bytes, hex as on the wire. `limit` above the maximum is brought down to it, not refused; `from` beyond the last leaf gives an empty list. |
+| A9 | **`/path/:pos`**: the order of `siblings`, and which `height`. | From the leaf's level up to the root's children; the bits of `pos`, lowest first, say on which side each one goes. `height` is the tip, whose root the path leads to. A position with no leaf: 404. |
+| A10 | **`/roots`**: "default from `height − 100` (the anchor window)": the number 100, or `W` of the profile? What of a `from` below `A`? | `W` of the profile (the vectors run with `W = 12`). The list starts at `A` at the lowest (no block below it has a root) and runs to the tip. |
+| A11 | **`/nullifiers`**: the default `from`, and the order. | From `A` (everything). In the order spent: block by block, in a block in the order of the events, `nf0` before `nf1`. `height` is the tip. |
+| A12 | **`/blocks`**: is `before=H` exclusive? What is "SH-20 activity"? | Blocks below `H`, `H` excluded, so that the height of the last block of a page is the `before` of the next. A block has activity when it has an event or a refusal. `limit` above 200 is brought down to 200. |
+| A13 | **Errors**: no status code or body is given for a bad parameter, an unknown route or another method. | `400` for a value that does not parse (`limit=x`, a txid that is not 64 hex characters), `404` for what does not exist, `405` for anything but GET, each with `{ "error": "…" }`. A parameter a route does not know is ignored. `OPTIONS` answers a browser's preflight (204). |
+| A14 | **`/digest/:height` at `A − 1`**: `digest_{A−1}` is defined (§6). | 404: only applied blocks have an entry. `/status` gives it before the first block. |
+| A15 | **Where the API listens** is not said, and two indexers on one machine must not share a port. | `--listen`, `127.0.0.1:8621` by default: local only unless asked otherwise. |
+| A16 | **A reader during a reorg.** "Rolls back to the common block and replays": while it does, the API serves each tip on the way. A wallet that pages `/notes` across a reorg gets leaves of two branches and nothing in the answers says so (`/notes` carries no tip). | Nothing more than the text asks. `/status` gives `hash` beside `height`, and `/nullifiers` its `height`: a careful client reads `/status` before and after and starts again if `hash` or `digest` moved. |
+
+Two points are not gaps of the text but decide whether the two indexers can be compared on the signet:
+
+- **The proof verifier.** `/status` names the verifier, and `indexer-rs` has only two: `reject` (every spend is
+  refused) and the vectors' `test` rule. The PLONK verifier lives in `circuit/`, outside what this clean room reads.
+  Until one is wired in behind `SpendVerifier`, `indexer-rs` agrees with a reference indexer run without a verifier
+  and leaves it at the first valid spend (a TRANSFER, a BURN, a LIST, or a DEPLOY, which burns `D`).
+- **The same profile.** `A`, `D`, `W`, `K_min` and `N` come from the command line on both sides; `D`, `W`, `K_min`
+  and `N` are in the GENESIS record, so a difference shows in the digest of block `A`. Only `A` is not committed to:
+  two indexers started at different heights agree on nothing and no digest says why. `follow` asks for `A` and `D`
+  and assumes neither.
+
 The sections below are the record of the first pass, before the resolution. They are left as written.
 
 ## Result
