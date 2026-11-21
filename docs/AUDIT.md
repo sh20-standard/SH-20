@@ -6,9 +6,13 @@ are tested, how to rebuild everything, and where its author would look first.
 Status: draft v0.3, nothing is activated on any network. The code in scope was written in November
 2026, largely by an AI coding agent working under the maintainer (the "circuit session" of
 [`CLAUDE.md`](../CLAUDE.md)). **Nobody else has reviewed it.** Line numbers, gate counts and test
-names below are those of the tree this file is in. They were last checked on 2026-11-19, with the
-change that added the on-curve checks of §6.4 and the tests of §6.2 and §6.3; that change moved
-the verifying key.
+names below are those of the tree this file is in. The CI runs
+[`docs/tools/check-audit-refs.py`](tools/check-audit-refs.py) on every change: it fails when a line
+this file cites no longer holds the text it held, when a test it names is gone, or when a link leads
+nowhere. It does not check that the sentence about a line is still true. Gate counts, file sizes and
+test counts are outside it; they were last checked on 2026-11-21. The gates are those of 2026-11-19,
+when the on-curve checks of §6.4 and the tests of §6.2 and §6.3 were added and the verifying key
+moved.
 
 Background, in this order: [`DESIGN.md`](DESIGN.md) (why), [`SPEC-WIRE.md`](SPEC-WIRE.md) (bytes and
 rules, normative for indexers), [`SPEC-NOTES.md`](SPEC-NOTES.md) (keys, addresses and sealing,
@@ -30,7 +34,7 @@ contract and no operator.
 
 | Path | Lines | What it is | Why it matters |
 | --- | ---: | --- | --- |
-| [`circuit/src/gadgets.rs`](../circuit/src/gadgets.rs) | 281 | Poseidon, bit decompositions, BabyJubJub addition and multiplication, EdDSA-Poseidon, the Merkle path, as PLONK gates | every gate of the relation is emitted here or in `cs.rs` |
+| [`circuit/src/gadgets.rs`](../circuit/src/gadgets.rs) | 297 | Poseidon, bit decompositions, BabyJubJub addition and multiplication, EdDSA-Poseidon, the Merkle path, as PLONK gates | every gate of the relation is emitted here or in `cs.rs` |
 | [`circuit/src/spend.rs`](../circuit/src/spend.rs) | 116 | the spend relation: which gadget is applied to which variable, and the nine public inputs | the statement itself |
 | [`circuit/src/plonk/verifier.rs`](../circuit/src/plonk/verifier.rs) | 71 | the PLONK verifier | consensus: every indexer runs it |
 | [`indexer/src/adapters/plonk.js`](../indexer/src/adapters/plonk.js) | 49 | loads the verifier (WebAssembly), checks the verifying-key digest, orders the public inputs | the only bridge between the rules and the proof |
@@ -49,7 +53,7 @@ Not listed by the maintainer, but a finding in any of them is a finding in scope
 | [`circuit/src/plonk/srs.rs`](../circuit/src/plonk/srs.rs) | reads the Hermez file, pins its BLAKE2b, checks the powers are consistent |
 | [`circuit/src/ffi.rs`](../circuit/src/ffi.rs) `sh20_verify` (l. 129) and [`lib.rs`](../circuit/src/lib.rs) `verify`, `load_key` | what the indexer calls; the pinned digests |
 | [`circuit/src/model.rs`](../circuit/src/model.rs), [`poseidon.rs`](../circuit/src/poseidon.rs) | the reference the gadgets are compared with; Poseidon constants from the Grain LFSR |
-| [`indexer/src/indexer.js`](../indexer/src/indexer.js) `_checkSpend` (l. 247) and its callers, [`codec.js`](../indexer/src/codec.js) | the rules around a proof: anchors, nullifiers, public amounts, the turnstile; canonical parsing |
+| [`indexer/src/indexer.js`](../indexer/src/indexer.js) `_checkSpend` (l. 267) and its callers, [`codec.js`](../indexer/src/codec.js) | the rules around a proof: anchors, nullifiers, public amounts, the turnstile; canonical parsing |
 | [`circuit/circom/spend.circom`](../circuit/circom/spend.circom) | the same relation with circomlib, used only as a cross-check |
 
 ### Out of scope here
@@ -99,7 +103,7 @@ of `sh20-circuit info`; the circuit has 86,248, on a domain of 2^17 rows.
 | C5 | `0 ≤ index_i < 2^32` and `(Root(leaf_i, index_i, path_i) − root)·(1 − [v_i = 0]) = 0` | l. 69–77 | `to_bits`, `merkle_root` (l. 285), `Cs::is_zero` (`cs.rs` l. 192) | 20,131 each |
 | C6 | `nf_i = H_3(nk_i, leaf_i, index_i)` | l. 79–81 | `poseidon_vars`, `Cs::assert_eq` | 1,017 each |
 | C7 | EdDSA under `Ak_i` over `m`: `Ak_i ∈ E` and `R8_i ∈ E`; `0 ≤ S_i < l`; `h_i = H_5(R8_i.x, R8_i.y, Ak_i.x, Ak_i.y, m)` taken as its integer below `r`; `(4·Ak_i).x ≠ 0`; `S_i·B8 = R8_i + h_i·(8·Ak_i)` | l. 83–86 | `eddsa_verify` (l. 261): `assert_on_curve` (l. 173), `scalar_bits`, `fixed_mul`, `canonical_bits_254` (l. 145), `ec_add` (l. 184), `var_mul` (l. 243) | 11,712 each |
-| C8 | `0 ≤ v'_k < 2^64` and `leaf'_k = H(H(head, v'_k), H(npk'_k, rho'_k))` | l. 92–102 | `range`, `note_leaf` | 1,997 each |
+| C8 | `0 ≤ v'_k < 2^64` and `leaf'_k = H(H(head, v'_k), H(npk'_k, rho'_k))` | l. 93–100 | `range`, `note_leaf` | 1,997 each |
 | C9 | `0 ≤ vPub < 2^64` and `vPub·(t − tPub) = 0` | l. 104–108 | `range`, `Cs::assert_mul_zero` | 129 |
 | C10 | `v_0 + v_1 = v'_0 + v'_1 + v'_2 + vPub` in `F` | l. 110–113 | `Cs::add`, `Cs::lc`, `Cs::assert_eq` | 5 |
 
@@ -138,16 +142,16 @@ A proof alone does not make a spend valid. [`indexer/src/indexer.js`](../indexer
 
 | # | Rule | Where |
 | --- | --- | --- |
-| R1 | field elements on the wire are below `r`, envelopes re-serialise to the same bytes, no trailing byte | `codec.js` `fr()` l. 62; `sh20_verify` refuses a public input that is not canonical (`ffi.rs` l. 133) |
-| R2 | `H − 100 ≤ anchorHeight ≤ H − 1`; `root` is the root after that block, or the empty root before activation | `_checkSpend` l. 248–252 |
-| R3 | nullifiers non-zero, different from each other, never seen; then recorded | l. 253–256, `_commitSpend` l. 269 |
-| R4 | output leaves non-zero; room for three leaves | l. 257–259 |
-| R5 | `m` is computed by the indexer from the bytes before the proof | l. 260 |
-| R6 | `(vPub, tPub)` come from the envelope type: TRANSFER `(0, 0)`, BURN `(vPub, t(ticker))`, LIST `(amount, t(ticker))`, DEPLOY with `D > 0` `(D, t("SH20"))` | l. 207, 366, 380, 324 |
-| R7 | turnstile: a spend with `vPub > pool[ticker]` is rejected before its proof is looked at | `_outOfPool` l. 301, called at l. 323, 365, 379 |
+| R1 | field elements on the wire are below `r`, envelopes re-serialise to the same bytes, no trailing byte | `codec.js` `fr()` l. 63; `sh20_verify` refuses a public input that is not canonical (`ffi.rs` l. 133) |
+| R2 | `H − 100 ≤ anchorHeight ≤ H − 1`; `root` is the root after that block, or the empty root before activation | `_checkSpend` l. 268–272 |
+| R3 | nullifiers non-zero, different from each other, never seen; then recorded | l. 273–276, `_commitSpend` l. 289 |
+| R4 | output leaves non-zero; room for three leaves | l. 277–279 |
+| R5 | `m` is computed by the indexer from the bytes before the proof | l. 280 |
+| R6 | `(vPub, tPub)` come from the envelope type: TRANSFER `(0, 0)`, BURN `(vPub, t(ticker))`, LIST `(amount, t(ticker))`, DEPLOY with `D > 0` `(D, t("SH20"))` | l. 227, 395, 410, 353 |
+| R7 | turnstile: a spend with `vPub > pool[ticker]` is rejected before its proof is looked at | `_outOfPool` l. 321, called at l. 352, 394, 409 |
 | R8 | the verifying key must hash to the pinned digest | `adapters/plonk.js` l. 26–27 |
-| R9 | one envelope per transaction; the default verifier rejects every spend | `carrier.js`; `rejectAllVerifier` l. 22 |
-| R10 | the lock of a LIST is the output `OP_1 <lockKey>`, for the `lockKey` its body names (PR #20, §6.1) | `_list` l. 377; `codec.js` l. 231 |
+| R9 | one envelope per transaction, or a batch: several in the witness, all of them TRANSFERs, each accepted or refused alone (`SPEC-WIRE.md` §3); the default verifier rejects every spend | `carrier.js`; `rejectAllVerifier` l. 22 |
+| R10 | the lock of a LIST is the output `OP_1 <lockKey>`, for the `lockKey` its body names (PR #20, §6.1) | `_list` l. 407; `codec.js` l. 234 |
 
 ### The proof system
 
@@ -239,7 +243,7 @@ would tell the indexer which notes are its own. None of this is cryptographicall
 | sealing and scanning | `T/notes.rs` (7 tests) and `J/notes.test.js`, on vectors written by the Rust model; each JavaScript test runs on `node:crypto` and on WebCrypto; `scanning refuses anything altered`, `a note whose plaintext lies about its leaf is ignored` | X25519, HKDF and AES-GCM are the platform's; Safari and Firefox not run |
 | the wallet's spend values | `J/vectors.test.js`, `J/reference.test.js`; `the_wallet_vectors_are_the_ones_the_model_writes` | — |
 
-Counts: `cargo test --release` 35, `indexer` 57 (those of `plonk.test.js` are skipped without the
+Counts: `cargo test --release` 35, `indexer` 61 (those of `plonk.test.js` are skipped without the
 verifier module), `circuit/js` 48.
 
 ## 5. Reproducing everything from zero
@@ -269,7 +273,7 @@ The three digests are constants of `circuit/src/lib.rs` (`SRS_SHA256`, `VK_DIGES
 ```sh
 cd circuit && cargo test --release           # 35 tests
 ./build-wasm.sh                              # needs the targets wasm32-unknown-unknown and wasm32-wasip1-threads
-cd ../indexer && npm test                    # 57 tests; those of plonk.test.js need the module just built
+cd ../indexer && npm test                    # 61 tests; those of plonk.test.js need the module just built
 cd ../circuit/js && npm test                 # 48 tests
 npm run test:browser                         # the WebCrypto primitives in headless Chrome
 ```
@@ -321,7 +325,7 @@ is kept here in full so that the fix can be checked against it.
 controlled by a Bitcoin output, the lock: output `lockVout` of the transaction that carries the
 envelope. Whoever spends the lock decides: a TAKE that pays is a sale, a TAKE that does not pay is a
 cancellation, and in both cases the tokens go to the opening the TAKE names (`_take`, `indexer.js`
-l. 393).
+l. 423).
 
 The envelope held the index `lockVout`, not the lock's key. The proof signs the envelope body, and
 none of its nine public inputs depends on the transaction's outputs. So the same envelope was valid
@@ -339,10 +343,10 @@ was accepted with the copier's key, and the cancelling TAKE gave the copier the 
 the threat model (transaction order, copied envelopes) and broke G3.
 
 **The fix.** The LIST body now carries `lockKey`, the 32-byte x-only output key of the lock, after
-`lockVout` (`SPEC-WIRE.md` §4; `codec.js` l. 231 and l. 295), so the body hash the proof signs
+`lockVout` (`SPEC-WIRE.md` §4; `codec.js` l. 234 and l. 298), so the body hash the proof signs
 covers it. `_list` rejects the envelope unless output `lockVout` is exactly `OP_1 <lockKey>`
-(`indexer.js` l. 377), and records the key from the envelope, not from the transaction (l. 386). A
-CLAIM is verified against that recorded key (`_claim`, l. 410). A LIST is 32 bytes longer.
+(`indexer.js` l. 407), and records the key from the envelope, not from the transaction (l. 416). A
+CLAIM is verified against that recorded key (`_claim`, l. 440). A LIST is 32 bytes longer.
 
 The same experiment against PR #20: the copy is rejected with "lock output must be P2TR to lockKey"
 and the seller's LIST is accepted under the seller's key.
@@ -481,8 +485,12 @@ exercised by every spend and by the two tests of §6.2.
 
 ### 6.10 Order of transactions, beyond 6.1
 
-- DEPLOY: the first valid one wins, so a ticker seen in the mempool can be taken by someone else
-  with their own parameters. With `D = 0` this costs a fee only.
+- DEPLOY: the first valid one wins. A ticker seen in the mempool could be taken by someone else with
+  their own parameters. Since PR #29 a DEPLOY reveals, in the witness, a commit confirmed at least
+  `N = 6` blocks earlier (`_deploy`, `indexer.js` l. 336; `SPEC-WIRE.md` §5): a copier's own commit
+  is too young. Someone who guessed the ticker and committed to it in advance still deploys it
+  first. The rule is newer than this section: its author has read the check and has not looked for
+  ways around it.
 - TAKE: a buyer's transaction can be outrun by another buyer who pays the same price.
 - A spend delayed more than 100 blocks past its anchor is rejected after paying its fee.
 - A block can hold about 3,000 envelopes of 830 bytes with invalid proofs; the WebAssembly verifier
@@ -518,7 +526,7 @@ nullifier and the signature of a spend; the prover's seed; the `sh20offer1` offe
 of the stored state and the backup. **Nothing was changed in `vault/`**: the findings are for the
 vault's own maintainers to fix. It is a reading, with two experiments, and not an audit.
 
-**Where the lines point (updated at `main` `2c3ad9c`, with #40 for `circuit/js`).** Since `f0cb20e`,
+**Where the lines point (updated at `main` `08fec3c`, after #38 and #40).** Since `f0cb20e`,
 `app.js` was split into `src/ui/` (#32) and #33 fixed 8.1 to 8.6. The descriptions of 8.1 to 8.6
 keep the files and line numbers of `f0cb20e` (`git show f0cb20e:vault/src/app.js`): they describe
 code that has changed. Everything else names the code as it is now: the "Fixed" paragraphs, the open
@@ -610,8 +618,8 @@ CLOSED.
 Fixed in #33 (commit `ecfcbb4`): `listingCheck`: an indexer that answers "unknown" refuses the
 listing, and a TAKE needs two indexers that agree (`TAKE_QUORUM`).
 
-Checked: `listingCheck` (`consensus.js` l. 112) and `TAKE_QUORUM = 2` (l. 102), used by
-`checkedListing` (`ui/market-panel.js` l. 59) and again just before the TAKE is built (l. 180).
+Checked: `listingCheck` (`consensus.js` l. 155) and `TAKE_QUORUM = 2` (l. 145), used by
+`checkedListing` (`ui/market-panel.js` l. 59) and again just before the TAKE is built (l. 181).
 Test "8.3 an indexer that answers and does not know the listing refuses it". This closes the
 finding as proposed. Left: the quorum counts answers, so two indexers run by one party count as two.
 
@@ -656,10 +664,14 @@ Fixed in #33 (commits `f242de1`, `1d7766f`): after every sync the other indexers
 tree's root (against the root rebuilt from the leaves) and on the digest at the synced block, and
 the count is shown next to the balance.
 
-Checked: `digestAgreement` (`consensus.js` l. 147), called at every sync (`ui/notes-panel.js`
-l. 91). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
-refuse. A balance is still shown when the indexers disagree, with the count marked as an error;
-only a mint (`crossCheck`) and a TAKE (`listingCheck`) are stopped by a disagreement.
+Checked: `digestAgreement` (`consensus.js` l. 190), called at every sync (`ui/notes-panel.js`
+l. 120). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
+refuse. A balance is still shown when the indexers disagree, with the count marked as an error. What
+a disagreement stops is a mint (`crossCheck`), a TAKE (`listingCheck`) and, since #38, giving back
+the notes of a spend that looks refused (`refusalAgreed`, `consensus.js` l. 61). #38 also has the
+vault start no DEPLOY, spend, TAKE, cancel or CLAIM while an indexer reports another profile than
+its own (`requireProfile`, `ui/context.js` l. 78): that compares the profile's constants, not what
+the indexers say of the chain.
 
 **8.6 `scanOutput` turns every failure into "not ours".** Low.
 [`notekeys.js`](../vault/src/notekeys.js) l. 34 catches whatever `scan` throws. `scan` returns
@@ -731,14 +743,14 @@ from an older backup: their commit outputs (a fee and some dust) cannot be taken
 | note keys, address, sealing, scanning and the EdDSA nonce go through `circuit/js/webcrypto.js`; the `node:crypto` stand-in implements SHA-256 only and throws for the rest | `sh20.js`; `shim/node-crypto.js` |
 | lock keys are separated from note keys: HMAC-SHA512 under the tag "sh20/vault/lock" over `m ‖ index`, reduced into `[1, n − 1]`, then the BIP86 tweak | `keys.js` l. 327; `taproot.js` l. 126 |
 | a sealed output is recorded only if it opens, has a value and hashes to its leaf; a note is identified by its position; before spending, each input is checked again against its leaf | `keys.js` l. 307; `spend.js` l. 85 |
-| the payer's checks on an address are made by `decodeAddress`; each output is sealed with 32 fresh random bytes; the three outputs are shuffled | `send.js` l. 52, l. 23; `spend.js` l. 99 |
+| the payer's checks on an address are made by `decodeAddress`; each output is sealed with 32 fresh random bytes; the three outputs are shuffled | `send.js` l. 54, l. 23; `spend.js` l. 99 |
 | nullifier = `Poseidon(nsk + τn mod l, leaf, position)`; spent notes are found in the full list of nullifiers, never by asking about one | `notekeys.js` l. 46; `sync.js` |
 | an unused input is a note of 0 with fresh random keys and randomness, so its nullifier is new and unlinkable (§6.8) | `spend.js` l. 40 |
-| the body signed is every envelope byte before the proof; each signature is verified, and the proof is verified against its public inputs, before anything is sent | `spend.js` l. 113–117; `send.js` l. 83 |
+| the body signed is every envelope byte before the proof; each signature is verified, and the proof is verified against its public inputs, before anything is sent | `spend.js` l. 113–117; `send.js` l. 85 |
 | the prover's seed is 32 bytes from `crypto.getRandomValues` for each proof, drawn in the worker, never stored or derived, with a test (§6.6) | `prover-worker.js` l. 19; `test/prover-seed.test.js` |
 | the proving key is checked by the module against its pinned hash, and the verifying key it yields against the pinned digest | `prover.js` l. 69 |
 | the BIP341 signature message, read against the specification for the two modes used (default, and `SINGLE \| ANYONECANPAY`), key path and script path | `taproot.js` l. 92 |
-| an offer's signature commits to the lock's outpoint, amount, script and sequence, to the version and locktime, and to the output paying the price; a buyer checks it under the key of the lock output, which the txid does cover | `market.js` l. 86–117, l. 136 |
+| an offer's signature commits to the lock's outpoint, amount, script and sequence, to the version and locktime, and to the output paying the price; a buyer checks it under the key of the lock output, which the txid does cover | `market.js` l. 86–116, l. 136 |
 | the BIP340 nonce is derived as specified, with fresh auxiliary randomness at every signature | `indexer/src/schnorr.js` l. 78; `taproot.js` l. 137, l. 196 |
 | the state is AES-256-GCM under the passphrase key with a fresh 12-byte nonce at every save; a wrong passphrase fails the tag | `keys.js` l. 27, l. 204 |
-| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 16, l. 48; `ui/context.js` l. 29; `ui/spends.js` l. 29 and `ui/tokens-panel.js` l. 176 |
+| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 16, l. 48; `ui/context.js` l. 30; `ui/spends.js` l. 30 and `ui/tokens-panel.js` l. 175 |

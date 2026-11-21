@@ -5,6 +5,16 @@ permissions:
   contents: read
 
 jobs:
+  docs:
+    name: docs/AUDIT.md (the lines and tests it names)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # A change that moves a line docs/AUDIT.md cites, or renames a test it quotes, fails here until
+      # the document follows. The script's header says what to do (--fix for lines that only moved).
+      - name: every line, test and link docs/AUDIT.md names is there
+        run: python3 docs/tools/check-audit-refs.py
+
   indexer:
     name: indexer, vectors, explorer
     runs-on: ubuntu-latest
