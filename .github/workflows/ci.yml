@@ -58,6 +58,25 @@ jobs:
         run: cargo clippy --release --all-targets -- -D warnings
       - working-directory: indexer-rs
         run: cargo test --release
+      - working-directory: indexer-rs
+        run: cargo build --release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Random chains through both indexers, compared block by block (indexer/bin/fuzz.js): a fixed seed, then one that
+      # changes with every run. A divergence prints the seed that replays it and keeps the chain.
+      - name: differential fuzzing, fixed seed
+        working-directory: indexer
+        run: node bin/fuzz.js --rs ../indexer-rs/target/release/sh20-indexer-rs --seed ci --chains 30 --blocks 40 --keep ../fuzz-failures
+      - name: differential fuzzing, a new seed each run
+        working-directory: indexer
+        run: node bin/fuzz.js --rs ../indexer-rs/target/release/sh20-indexer-rs --seed run-${{ github.run_id }} --chains 30 --blocks 40 --keep ../fuzz-failures
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failures
+          path: fuzz-failures
+          if-no-files-found: ignore
 
   circuit:
     name: circuit (Rust prover and verifier)
