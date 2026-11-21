@@ -518,7 +518,7 @@ nullifier and the signature of a spend; the prover's seed; the `sh20offer1` offe
 of the stored state and the backup. **Nothing was changed in `vault/`**: the findings are for the
 vault's own maintainers to fix. It is a reading, with two experiments, and not an audit.
 
-**Where the lines point (updated at `main` `2c3ad9c`, with #40 for `circuit/js`).** Since `f0cb20e`,
+**Where the lines point (updated at `main` `08fec3c`, after #38 and #40).** Since `f0cb20e`,
 `app.js` was split into `src/ui/` (#32) and #33 fixed 8.1 to 8.6. The descriptions of 8.1 to 8.6
 keep the files and line numbers of `f0cb20e` (`git show f0cb20e:vault/src/app.js`): they describe
 code that has changed. Everything else names the code as it is now: the "Fixed" paragraphs, the open
@@ -610,8 +610,8 @@ CLOSED.
 Fixed in #33 (commit `ecfcbb4`): `listingCheck`: an indexer that answers "unknown" refuses the
 listing, and a TAKE needs two indexers that agree (`TAKE_QUORUM`).
 
-Checked: `listingCheck` (`consensus.js` l. 112) and `TAKE_QUORUM = 2` (l. 102), used by
-`checkedListing` (`ui/market-panel.js` l. 59) and again just before the TAKE is built (l. 180).
+Checked: `listingCheck` (`consensus.js` l. 155) and `TAKE_QUORUM = 2` (l. 145), used by
+`checkedListing` (`ui/market-panel.js` l. 59) and again just before the TAKE is built (l. 181).
 Test "8.3 an indexer that answers and does not know the listing refuses it". This closes the
 finding as proposed. Left: the quorum counts answers, so two indexers run by one party count as two.
 
@@ -656,8 +656,8 @@ Fixed in #33 (commits `f242de1`, `1d7766f`): after every sync the other indexers
 tree's root (against the root rebuilt from the leaves) and on the digest at the synced block, and
 the count is shown next to the balance.
 
-Checked: `digestAgreement` (`consensus.js` l. 147), called at every sync (`ui/notes-panel.js`
-l. 91). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
+Checked: `digestAgreement` (`consensus.js` l. 190), called at every sync (`ui/notes-panel.js`
+l. 120). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
 refuse. A balance is still shown when the indexers disagree, with the count marked as an error;
 only a mint (`crossCheck`) and a TAKE (`listingCheck`) are stopped by a disagreement.
 
@@ -731,14 +731,14 @@ from an older backup: their commit outputs (a fee and some dust) cannot be taken
 | note keys, address, sealing, scanning and the EdDSA nonce go through `circuit/js/webcrypto.js`; the `node:crypto` stand-in implements SHA-256 only and throws for the rest | `sh20.js`; `shim/node-crypto.js` |
 | lock keys are separated from note keys: HMAC-SHA512 under the tag "sh20/vault/lock" over `m ‖ index`, reduced into `[1, n − 1]`, then the BIP86 tweak | `keys.js` l. 327; `taproot.js` l. 126 |
 | a sealed output is recorded only if it opens, has a value and hashes to its leaf; a note is identified by its position; before spending, each input is checked again against its leaf | `keys.js` l. 307; `spend.js` l. 85 |
-| the payer's checks on an address are made by `decodeAddress`; each output is sealed with 32 fresh random bytes; the three outputs are shuffled | `send.js` l. 52, l. 23; `spend.js` l. 99 |
+| the payer's checks on an address are made by `decodeAddress`; each output is sealed with 32 fresh random bytes; the three outputs are shuffled | `send.js` l. 54, l. 23; `spend.js` l. 99 |
 | nullifier = `Poseidon(nsk + τn mod l, leaf, position)`; spent notes are found in the full list of nullifiers, never by asking about one | `notekeys.js` l. 46; `sync.js` |
 | an unused input is a note of 0 with fresh random keys and randomness, so its nullifier is new and unlinkable (§6.8) | `spend.js` l. 40 |
-| the body signed is every envelope byte before the proof; each signature is verified, and the proof is verified against its public inputs, before anything is sent | `spend.js` l. 113–117; `send.js` l. 83 |
+| the body signed is every envelope byte before the proof; each signature is verified, and the proof is verified against its public inputs, before anything is sent | `spend.js` l. 113–117; `send.js` l. 85 |
 | the prover's seed is 32 bytes from `crypto.getRandomValues` for each proof, drawn in the worker, never stored or derived, with a test (§6.6) | `prover-worker.js` l. 19; `test/prover-seed.test.js` |
 | the proving key is checked by the module against its pinned hash, and the verifying key it yields against the pinned digest | `prover.js` l. 69 |
 | the BIP341 signature message, read against the specification for the two modes used (default, and `SINGLE \| ANYONECANPAY`), key path and script path | `taproot.js` l. 92 |
 | an offer's signature commits to the lock's outpoint, amount, script and sequence, to the version and locktime, and to the output paying the price; a buyer checks it under the key of the lock output, which the txid does cover | `market.js` l. 86–117, l. 136 |
 | the BIP340 nonce is derived as specified, with fresh auxiliary randomness at every signature | `indexer/src/schnorr.js` l. 78; `taproot.js` l. 137, l. 196 |
 | the state is AES-256-GCM under the passphrase key with a fresh 12-byte nonce at every save; a wrong passphrase fails the tag | `keys.js` l. 27, l. 204 |
-| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 16, l. 48; `ui/context.js` l. 29; `ui/spends.js` l. 29 and `ui/tokens-panel.js` l. 176 |
+| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 16, l. 48; `ui/context.js` l. 30; `ui/spends.js` l. 30 and `ui/tokens-panel.js` l. 175 |
