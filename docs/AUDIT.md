@@ -658,8 +658,12 @@ the count is shown next to the balance.
 
 Checked: `digestAgreement` (`consensus.js` l. 190), called at every sync (`ui/notes-panel.js`
 l. 120). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
-refuse. A balance is still shown when the indexers disagree, with the count marked as an error;
-only a mint (`crossCheck`) and a TAKE (`listingCheck`) are stopped by a disagreement.
+refuse. A balance is still shown when the indexers disagree, with the count marked as an error. What
+a disagreement stops is a mint (`crossCheck`), a TAKE (`listingCheck`) and, since #38, giving back
+the notes of a spend that looks refused (`refusalAgreed`, `consensus.js` l. 61). #38 also has the
+vault start no DEPLOY, spend, TAKE, cancel or CLAIM while an indexer reports another profile than
+its own (`requireProfile`, `ui/context.js` l. 78): that compares the profile's constants, not what
+the indexers say of the chain.
 
 **8.6 `scanOutput` turns every failure into "not ours".** Low.
 [`notekeys.js`](../vault/src/notekeys.js) l. 34 catches whatever `scan` throws. `scan` returns
