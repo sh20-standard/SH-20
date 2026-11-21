@@ -9,8 +9,13 @@
 //   circuit/artifacts/spend.pk, vault/prover/*.wasm → the proving key and the two prover builds
 //   LICENSE
 //
-// `npm run build` writes it to vault/dist/ from the working tree (development).
-// `npm run release` builds the same file set from a git commit (release.js).
+// `npm run build` writes it to vault/dist/ from the working tree (development), on the test profile;
+// `node build.js --signet` on the signet profile. `npm run release` builds the same file set from a
+// git commit (release.js), always on the signet profile.
+//
+// The profile is the one file that differs: vault/src/profile-name.js says 'test' in the source tree,
+// and a signet build replaces it with SIGNET_NAME_MODULE. It refuses while vault/src/profile.js has
+// no signet activation height (SIGNET_ACTIVATION_HEIGHT = null).
 // Zero dependencies; the same inputs always give the same bytes.
 
 import { mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -30,6 +35,18 @@ export const CIRCUIT_WEB = ['host.js', 'thread-worker.js'];
 export const PROVING_KEY = 'circuit/artifacts/spend.pk';
 export const PROVER = ['sh20_circuit.wasm', 'sh20_circuit_threads.wasm']; // vault/prover/, tools/prover.sh
 
+export const PROFILE_NAME_MODULE = 'vault/src/profile-name.js';
+export const SIGNET_NAME_MODULE = `// Which profile of profile.js this page follows: a release, on the signet profile (build.js).
+export const PROFILE_NAME = 'signet';
+`;
+
+/** The signet activation height in vault/src/profile.js as `reader` has it, or null while it is not fixed. */
+export function signetActivation(reader) {
+  const m = reader.read('vault/src/profile.js').toString('utf8').match(/^export const SIGNET_ACTIVATION_HEIGHT = (null|0|[1-9]\d*);$/m);
+  if (!m) throw new Error('vault/src/profile.js: no SIGNET_ACTIVATION_HEIGHT line');
+  return m[1] === 'null' ? null : Number(m[1]);
+}
+
 const REDIRECT = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=vault/"><title>SH-20 Vault</title><a href="vault/">SH-20 Vault</a>\n';
 
 /**
@@ -37,10 +54,15 @@ const REDIRECT = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh
  *   list(dir) → repository paths of every file under dir (posix)
  *   read(path) → Buffer
  */
-export function site(reader) {
+export function site(reader, { signet = false } = {}) {
   const files = new Map();
   for (const p of ['vault/index.html', 'vault/style.css', ...reader.list('vault/src'), ...INDEXER.map((f) => `indexer/src/${f}`), ...CIRCUIT_JS.map((f) => `circuit/js/${f}`), ...CIRCUIT_WEB.map((f) => `circuit/web/${f}`), PROVING_KEY, ...PROVER.map((f) => `vault/prover/${f}`), 'LICENSE']) {
     files.set(p, reader.read(p));
+  }
+  if (signet) {
+    if (signetActivation(reader) === null) throw new Error('no signet build: the signet activation height is not fixed (vault/src/profile.js SIGNET_ACTIVATION_HEIGHT; vault/RELEASES.md)');
+    if (!/^export const PROFILE_NAME = 'test';$/m.test(files.get(PROFILE_NAME_MODULE).toString('utf8'))) throw new Error(`${PROFILE_NAME_MODULE}: not the source tree's`);
+    files.set(PROFILE_NAME_MODULE, Buffer.from(SIGNET_NAME_MODULE));
   }
   files.set('index.html', Buffer.from(REDIRECT));
   // the isolation service worker at the root, so that its scope covers circuit/web/ too (src/isolation.js)
@@ -85,7 +107,8 @@ export function writeSite(entries, dir) {
 export const sha256 = (b) => createHash('sha256').update(b).digest('hex');
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const entries = site(fsReader());
+  const signet = process.argv.includes('--signet');
+  const entries = site(fsReader(), { signet });
   const dist = join(here, 'dist');
   writeSite(entries, dist);
   let total = 0;
@@ -93,5 +116,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     total += b.length;
     console.log(`${sha256(b)}  ${p}`);
   }
-  console.log(`\n${entries.length} files, ${(total / 1024).toFixed(1)} KiB in vault/dist (working tree; use npm run release for a release)`);
+  console.log(`\n${entries.length} files, ${(total / 1024).toFixed(1)} KiB in vault/dist (working tree, ${signet ? 'signet' : 'test'} profile; use npm run release for a release)`);
 }

@@ -1,0 +1,33 @@
+# The vault's release, rebuilt by a GitHub runner from the commit it is run on (vault/RELEASES.md,
+# "How to release"). Run by hand: Actions → release → Run workflow, on the release's commit.
+# It fails unless the bytes are those vault/RELEASES.md records for this version; its artifact holds
+# the package and the CAR, which a pinning service takes. No secret, no third-party action.
+name: release
+on: workflow_dispatch
+permissions:
+  contents: read
+
+jobs:
+  vault:
+    name: vault release, on the signet profile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: the tests
+        working-directory: vault
+        run: npm test
+      # from the git objects of this commit; refuses while the signet's activation height is unset,
+      # and when vault/RELEASES.md has other bytes for this version
+      - name: the release
+        working-directory: vault
+        run: node release.js && git diff --exit-code RELEASES.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sh20-vault-release
+          path: |
+            vault/release/*.tar
+            vault/release/*.car
+          if-no-files-found: error

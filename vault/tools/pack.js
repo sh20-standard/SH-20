@@ -88,32 +88,39 @@ const MAX_LINKS = 174; // kubo's balanced layout: links per node
  * leaves of 256 KiB under one dag-pb node { Links: [{ Hash, Name: "", Tsize }], Data: UnixFS
  * { Type: File, filesize, blocksizes } } (one level: up to 174 leaves, about 45 MB). Returns { cid, tsize }.
  */
-function fileNode(b) {
-  if (b.length <= CHUNK) return { cid: cidBytes(RAW, b), tsize: b.length };
+function fileNode(b, put) {
+  if (b.length <= CHUNK) return { cid: put(cidBytes(RAW, b), b), tsize: b.length };
   const leaves = [];
   for (let o = 0; o < b.length; o += CHUNK) leaves.push(b.subarray(o, o + CHUNK));
+  for (const l of leaves) put(cidBytes(RAW, l), l);
   if (leaves.length > MAX_LINKS) throw new Error('file too large for one level of the balanced layout');
   const unixfs = Buffer.concat([Buffer.from([0x08, 0x02]), varint(3 << 3), varint(b.length), ...leaves.map((l) => Buffer.concat([varint(4 << 3), varint(l.length)]))]);
   const node = Buffer.concat([
     ...leaves.map((l) => field(2, Buffer.concat([field(1, cidBytes(RAW, l)), field(2, Buffer.alloc(0)), varint(3 << 3), varint(l.length)]))),
     field(1, unixfs),
   ]);
-  return { cid: cidBytes(DAG_PB, node), tsize: node.length + b.length };
+  return { cid: put(cidBytes(DAG_PB, node), node), tsize: node.length + b.length };
 }
 
 /** A directory node from [{ name, cid, tsize }]; returns { cid, tsize }. */
-function dirNode(links) {
+function dirNode(links, put) {
   const sorted = [...links].sort((a, b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name)));
   const node = Buffer.concat([
     ...sorted.map((l) => field(2, Buffer.concat([field(1, l.cid), field(2, Buffer.from(l.name)), varint(3 << 3), varint(l.tsize)]))),
     field(1, UNIXFS_DIR),
   ]);
   if (node.length > CHUNK) throw new Error('directory too large: kubo would shard it');
-  return { cid: cidBytes(DAG_PB, node), tsize: node.length + sorted.reduce((s, l) => s + l.tsize, 0) };
+  return { cid: put(cidBytes(DAG_PB, node), node), tsize: node.length + sorted.reduce((s, l) => s + l.tsize, 0) };
 }
 
-/** CIDv1 of the folder holding `entries` ([path, bytes]), as `ipfs add -r --cid-version=1` prints it. */
-export function ipfsCid(entries) {
+/** The folder holding `entries` ([path, bytes]) as UnixFS: its root CID and every block, once each. */
+function unixfs(entries) {
+  const blocks = new Map(); // CID hex -> [cid, bytes], in the order they are made (leaves first, the root last)
+  const put = (cid, bytes) => {
+    const k = cid.toString('hex');
+    if (!blocks.has(k)) blocks.set(k, [cid, bytes]);
+    return cid;
+  };
   const tree = { files: new Map(), dirs: new Map() };
   for (const [p, b] of entries) {
     const parts = p.split('/');
@@ -125,8 +132,29 @@ export function ipfsCid(entries) {
     d.files.set(parts.at(-1), b);
   }
   const build = (d) => dirNode([
-    ...[...d.files].map(([name, b]) => ({ name, ...fileNode(b) })),
+    ...[...d.files].map(([name, b]) => ({ name, ...fileNode(b, put) })),
     ...[...d.dirs].map(([name, sub]) => ({ name, ...build(sub) })),
+  ], put);
+  return { root: build(tree).cid, blocks: [...blocks.values()] };
+}
+
+/** CIDv1 of the folder holding `entries` ([path, bytes]), as `ipfs add -r --cid-version=1` prints it. */
+export function ipfsCid(entries) {
+  return cidString(unixfs(entries).root);
+}
+
+/**
+ * The same folder as a CAR file (CARv1): what `ipfs dag import` and pinning services take, so that
+ * what they serve has this CID, whatever their own chunking. Header { roots: [root], version: 1 } in
+ * DAG-CBOR, then each block as varint(length) ‖ CID ‖ bytes, the root first.
+ */
+export function car(entries) {
+  const { root, blocks } = unixfs(entries);
+  const link = Buffer.concat([Buffer.from([0x00]), root]); // a CID in DAG-CBOR: tag 42 over 0x00 ‖ CID
+  const header = Buffer.concat([
+    Buffer.from([0xa2, 0x65]), Buffer.from('roots'), Buffer.from([0x81, 0xd8, 0x2a, 0x58, link.length]), link,
+    Buffer.from([0x67]), Buffer.from('version'), Buffer.from([0x01]),
   ]);
-  return cidString(build(tree).cid);
+  const ordered = [blocks.at(-1), ...blocks.slice(0, -1)];
+  return Buffer.concat([varint(header.length), header, ...ordered.flatMap(([cid, b]) => [varint(cid.length + b.length), cid, b])]);
 }

@@ -29,17 +29,33 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 91 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
-npm run build            # vault/dist/ from the working tree (development)
-npm run release          # a verifiable release from the current commit (below)
+npm test                 # 128 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm run build            # vault/dist/ from the working tree (development, the test profile)
+node build.js --signet   # the same on the signet profile (once its activation height is fixed)
+npm run release          # a verifiable release from the current commit, on the signet profile (below)
 ```
 
-Development (serves the repository root, a mock indexer API and a mock Esplora):
+The whole flow on Bitcoin Core regtest (what the CI runs, job `vault-regtest`):
+
+```sh
+node dev/regtest.js --isolate   # bitcoind (tools/bitcoind.sh: a pinned release, SHA-256 checked), two indexers, the page
+node dev/e2e.js                 # headless Chrome: mint, TRANSFER, DEPLOY, BURN, LIST, TAKE, cancel, CLAIM, restore
+```
+
+`dev/regtest.js` runs Bitcoin Core on a regtest chain of its own (in a temporary folder) with the
+network's relay policy (`-acceptnonstdtxn=0`), two reference indexers that each follow it over RPC as
+`indexer/bin/follow.js` does, with the real PLONK verifier, and an Esplora API over the RPC that
+mines every broadcast in a block of its own. The page's wallet is `dev/test-wallet.js`: one taproot
+key that signs for real (BIP341), so Bitcoin Core checks every transaction the page and the wallet
+sign: the commits, the reveals by script path, the offers signed `SIGHASH_SINGLE | ANYONECANPAY`, the
+TAKE, the cancel and the CLAIM. No real wallet, no signet coins.
+
+The demo chain (a mock Esplora that takes any transaction), for the variants:
 
 ```sh
 node dev/serve.js        # http://localhost:8000/vault/, API on :8020 (not isolated: the prover runs on one thread)
 node dev/serve.js --isolate                   # with COOP/COEP: shared memory, the prover's thread pool
-node dev/e2e.js          # headless Chrome: mint, TRANSFER, DEPLOY, BURN, LIST, TAKE, cancel, restore from the words
+node dev/e2e.js          # the same flow as on regtest, on the demo chain
 E2E_PATH=/vault/dist/vault/ node dev/e2e.js   # the same flow on the IPFS build
 E2E_HOST=<cid>.ipfs.localhost node dev/e2e.js # a subdomain gateway: the page isolates itself (service worker)
 E2E_PATH=/ipfs/<cid>/vault/ node dev/e2e.js   # a path gateway: the page refuses to run and names its subdomain address
@@ -59,7 +75,8 @@ a ticker that burns 1,000 SH20 with a proof (the commit, a countdown, a reload o
 middle of the wait, then the reveal once the commit is 6 blocks deep: `POST /esplora/mine?n=` makes
 the mock chain advance), finds the 300 left, burns 100, lists 150 for 5,000
 sats, copies the offer, checks it and buys it back (the listing is SOLD and a public note of 150
-appears), lists 50 and cancels it, then erases the vault, restores it from the 12 words alone and
+appears), lists 50 and cancels it, lists 40 and has the offer completed without its TAKE (the
+seller is paid, the listing CLOSED), claims the 40 back, then erases the vault, restores it from the 12 words alone and
 requires the same address, the same notes and the same listings. Measured in headless Chrome on a
 laptop: 26 s per proof on one thread, 4.7 s on the thread pool. `serve.js` answers under
 `/ipfs/<cid>/…` like a path gateway, and Chrome resolves `<cid>.ipfs.localhost` to this machine,
@@ -79,8 +96,13 @@ folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
 - **The CID is the fingerprint.** `tools/pack.js` computes it the way `ipfs add -r --cid-version=1`
   does (raw leaves, sha2-256, sorted dag-pb directories; checked against kubo 0.32.1), so the CID
   is known before publishing and anyone can recompute it from the commit.
-- **Publish:** `ipfs add -r --cid-version=1 --pin release/sh20-vault-<version>` must print the
-  recorded CID. Pin it on several nodes or pinning services; nobody needs to keep a server for it.
+- **On the signet profile:** a release replaces `src/profile-name.js` with `'signet'`, the one file
+  that differs from `npm run build` (`build.js`), and refuses while `src/profile.js` has no signet
+  activation height (`test/signet.test.js`).
+- **Publish, never from your own machine:** an IPFS node announces its IP address for every block it
+  provides. `release/sh20-vault-<version>.car` holds the blocks of the CID (CARv1, imported by kubo
+  0.32.1 with the same root); a pinning service takes it from the `release` workflow's artifact.
+  [`RELEASES.md`](RELEASES.md) has the whole procedure.
 - **Open:** `https://<cid>.ipfs.dweb.link/vault/` (subdomain gateway: one origin per CID), or a
   local node at `http://<cid>.ipfs.localhost:8080/vault/`. A public gateway is trusted to serve the
   right bytes; a local IPFS node checks every block against the CID.
@@ -171,7 +193,15 @@ vout n  change to the payer                                     only if above du
   the page with what differs, and while it is configured the vault does nothing. It mints, deploys,
   reveals, burns, lists, transfers, buys, cancels and claims nothing, and asks every indexer again just
   before each of these. Several indexers that agree with each other but not with the vault are all refused.
-  `A` is `DEFAULT_PROFILE`'s until the activation height is fixed there.
+- **Two profiles, one rule set.** `PROFILES.test` is `DEFAULT_PROFILE` as it is (`A` = 0: the dev
+  servers, the tests, the CI); `PROFILES.signet` is the same with the public signet's activation
+  height, `SIGNET_ACTIVATION_HEIGHT`, the only parameter, fixed at launch (`RELEASES.md`). The page
+  follows the one `src/profile-name.js` names: `test` in the source tree, with a warning on screen;
+  `signet` in a release. Its signet indexers run `follow.js --activation <that height>`.
+- **Default servers** (`src/servers.js`), for the profile the page follows: on signet, an indexer on
+  your own machine (`follow.js`, port 8020) and mempool.space's signet Esplora; on the test profile,
+  the two dev indexers and their Esplora. None is run by the SH-20 contributors, and
+  `test/signet.test.js` names every host a URL in the site may use. Settings replaces them.
 - For every other token the vault does not take the mint terms from the indexer alone: it fetches `deployTxid` from Esplora,
   checks its txid and confirmation height, decodes the DEPLOY with the indexer's own `carrier.js`
   and `codec.js`, and refuses the mint if `ticker`, `max`, `lim`, `pre`, `start`, `end`, `price`,
@@ -489,7 +519,8 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | `src/sync.js`, `src/cache.js` | private sync: the local tree (the indexer's `NoteTree`), paths, spends, IndexedDB cache |
 | `src/mint.js` | MINT pre-flight checks, coin selection, transaction and PSBT |
 | `src/deploy.js` | checks the indexer's mint terms against the DEPLOY transaction, or SH20's against the profile |
-| `src/profile.js` | the profile the vault follows (`DEFAULT_PROFILE`: A, D, N, W, K_min, the genesis token), never taken from an indexer |
+| `src/profile.js`, `src/profile-name.js` | the test and signet profiles (`DEFAULT_PROFILE`: A, D, N, W, K_min, the genesis token), never taken from an indexer; which one the page follows |
+| `src/servers.js` | the default indexers and Esplora of each profile |
 | `src/deploy-plan.js` | the deploy screen: DEPLOY rules, envelope size, the burn of `D` SH20 |
 | `src/consensus.js` | cross-checks several indexers: before a mint, before a TAKE, and the state after every sync |
 | `src/btc.js` | addresses, transactions, PSBT v0, finalization, size estimates |
@@ -498,19 +529,21 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | `src/hash.js`, `src/bytes.js`, `src/fr.js` | SHA-256 and RIPEMD-160 (public data), bytes, field elements |
 | `src/sh20.js`, `src/shim/` | the reused indexer and `circuit/js` modules and their browser shims |
 | `build.js` | the site's file set; `npm run build` writes `dist/` |
-| `release.js`, `tools/pack.js` | reproducible release: tar, SHA-256, IPFS CID, `RELEASES.md` |
-| `dev/` | dev server (real indexer API, mock Esplora) and the headless-Chrome end-to-end run |
+| `release.js`, `tools/pack.js` | reproducible release: tar, CAR, SHA-256, IPFS CID, `RELEASES.md` |
+| `dev/regtest.js`, `tools/bitcoind.sh` | the vault on Bitcoin Core regtest: two indexers over RPC, an Esplora API, a pinned bitcoind |
+| `dev/serve.js`, `dev/static.js` | the demo chain (real indexer API, mock Esplora) and the static server |
+| `dev/e2e.js`, `dev/test-wallet.js` | the headless-Chrome end-to-end run and its wallet (a test key that signs for real) |
 
 ## Not tested yet
 
 - Live extensions: the adapters follow the providers' current source and docs (checked in
-  November 2026), and the flow is tested with a fake UniSat only. A first signet mint with each
-  real wallet is the next step.
-- A real signet broadcast, and the vault against `follow.js` on a live chain.
+  November 2026), and the flow is tested with a UniSat stand-in only, whose key signs for real on
+  regtest. A first signet mint with each real wallet is the next step.
+- A real signet broadcast. On regtest, Bitcoin Core accepts every transaction of the flow.
 - A real phone: the prover was measured in headless Chrome on a laptop only (26 s on one thread,
   4.7 s on the pool); it needs about 230 MB.
-- Real wallets signing a commit or a TAKE: tested with the fake UniSat, which signs the inputs it is
-  asked to. Whether a wallet extension still injects its provider into a page isolated by the
+- Real wallets signing a commit or a TAKE: tested with the UniSat stand-in, which signs the inputs
+  it is asked to. Whether a wallet extension still injects its provider into a page isolated by the
   service worker (COEP `require-corp`) was not tried with the real extensions.
 
 ## License
