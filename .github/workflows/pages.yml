@@ -1,0 +1,53 @@
+name: pages
+
+# Publishes the vault and the explorer as one static site on GitHub Pages, from main: no server to rent, and the
+# site is built from the commit anyone can read. Off until the repository variable PAGES is set to "on" (Settings >
+# Secrets and variables > Actions > Variables), with Pages set to "GitHub Actions" (Settings > Pages).
+#
+#   /            → redirects to vault/
+#   /vault/      → the vault (vault/build.js)
+#   /explorer/   → the explorer (explorer/index.html)
+#
+# GitHub Pages sends no cross-origin isolation headers: the vault isolates itself with its service worker (sw.js at the
+# site's root) and proves on several threads all the same. The origin, <owner>.github.io, is shared only with the other
+# Pages sites of the same account: keep that account for SH-20 alone (docs/AUDIT.md 8.1 says why an origin matters).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: vars.PAGES == 'on'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node vault/build.js
+      - name: the explorer beside the vault
+        run: mkdir -p vault/dist/explorer && cp explorer/index.html vault/dist/explorer/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: vault/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
