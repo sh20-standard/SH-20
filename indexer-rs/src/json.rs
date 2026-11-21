@@ -1,8 +1,8 @@
-//! Blocks from JSON: `bitcoin-cli getblock <hash> 2`, and the scenario of the vectors.
+//! Blocks from JSON: `bitcoin-cli getblock <hash> 3`, and the scenario of the vectors.
 
 use crate::chain::{Block, Tx, TxIn, TxOut};
-use crate::field::{unhex, unhex32};
-use serde_json::Value;
+use crate::field::{hex, unhex, unhex32};
+use serde_json::{json, Value};
 
 type Res<T> = Result<T, String>;
 
@@ -57,11 +57,16 @@ pub fn block_from_getblock(text: &str) -> Res<Block> {
         Some(r) if r.is_object() => r,
         _ => &root,
     };
+    block_from_getblock_value(b)
+}
+
+/// The same, from the parsed `getblock` object.
+pub fn block_from_getblock_value(b: &Value) -> Res<Block> {
     let height = u32_of(b, "height")?;
     let mut txs = Vec::new();
     for t in array_of(b, "tx")? {
         if !t.is_object() {
-            return Err("transactions are not decoded: use `getblock <hash> 2`".into());
+            return Err("transactions are not decoded: use `getblock <hash> 3`".into());
         }
         let txid = txid_of(str_of(t, "txid")?)?;
         let mut vin = Vec::new();
@@ -130,6 +135,32 @@ pub fn tx_from_vector(t: &Value) -> Res<Tx> {
     Ok(Tx { txid, vin, vout })
 }
 
+/// A transaction in the form `tx_from_vector` reads, with what the indexer reads of it and no
+/// more: the witness of input 0 only, and none for a coinbase.
+pub fn tx_to_vector(tx: &Tx) -> Value {
+    let vin: Vec<Value> = tx
+        .vin
+        .iter()
+        .enumerate()
+        .map(|(n, i)| {
+            let Some((txid, vout)) = i.prevout.filter(|_| !i.coinbase) else {
+                return json!({ "coinbase": true });
+            };
+            let mut o = json!({ "txid": hex(&txid), "vout": vout });
+            if n == 0 && !i.witness.is_empty() {
+                o["witness"] = i.witness.iter().map(|w| Value::String(hex(w))).collect();
+            }
+            if let Some(h) = i.prev_height {
+                o["prevHeight"] = json!(h);
+            }
+            o
+        })
+        .collect();
+    let vout: Vec<Value> =
+        tx.vout.iter().map(|o| json!({ "value": o.value.to_string(), "script": hex(&o.script) })).collect();
+    json!({ "txid": hex(&tx.txid), "vin": vin, "vout": vout })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,5 +198,11 @@ mod tests {
         assert_eq!(b.txs[1].vin[0].witness, vec![vec![0xaa], vec![0xbb]]);
         assert_eq!(b.txs[1].vout[0].value, 330);
         assert!(block_from_getblock(r#"{"height":1,"tx":["abcd"]}"#).is_err());
+
+        // written back and read again: the same transactions, less the witness nobody reads
+        let again: Vec<Tx> = b.txs.iter().map(|t| tx_from_vector(&tx_to_vector(t)).unwrap()).collect();
+        let mut want = b.txs.clone();
+        want[0].vin[0].witness.clear();
+        assert_eq!(again, want);
     }
 }

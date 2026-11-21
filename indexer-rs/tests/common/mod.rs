@@ -1,6 +1,8 @@
 //! Builders shared by the tests: transactions, carriers, spends.
 #![allow(dead_code)]
 
+pub mod fake;
+
 use sh20_indexer::chain::{Block, Tx, TxIn, TxOut};
 use sh20_indexer::envelope::{Deploy, Envelope, Spend, SpendOutput, Ticker, CT_LEN};
 use sh20_indexer::field::sha256;
