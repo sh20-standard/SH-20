@@ -69,6 +69,9 @@ explorer's demo data regenerate byte for byte, and holds `indexer-rs` and `circu
 `vault/prover/*.wasm` in the same pull request. The script builds as from an x86_64 Linux host on every machine
 (`vault/tools/rustc-host.sh` says why the host triple would otherwise change the bytes).
 
+Any pull request that moves a line `docs/AUDIT.md` cites, or renames a test it quotes, updates `docs/AUDIT.md` with it: the CI checks it
+(`docs/tools/check-audit-refs.py`; `--fix` rewrites the numbers of lines that only moved).
+
 ## Status (draft v0.3)
 
 Done in `indexer/`:

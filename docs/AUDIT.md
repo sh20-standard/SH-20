@@ -6,9 +6,13 @@ are tested, how to rebuild everything, and where its author would look first.
 Status: draft v0.3, nothing is activated on any network. The code in scope was written in November
 2026, largely by an AI coding agent working under the maintainer (the "circuit session" of
 [`CLAUDE.md`](../CLAUDE.md)). **Nobody else has reviewed it.** Line numbers, gate counts and test
-names below are those of the tree this file is in. They were last checked on 2026-11-19, with the
-change that added the on-curve checks of §6.4 and the tests of §6.2 and §6.3; that change moved
-the verifying key.
+names below are those of the tree this file is in. The CI runs
+[`docs/tools/check-audit-refs.py`](tools/check-audit-refs.py) on every change: it fails when a line
+this file cites no longer holds the text it held, when a test it names is gone, or when a link leads
+nowhere. It does not check that the sentence about a line is still true. Gate counts, file sizes and
+test counts are outside it; they were last checked on 2026-11-21. The gates are those of 2026-11-19,
+when the on-curve checks of §6.4 and the tests of §6.2 and §6.3 were added and the verifying key
+moved.
 
 Background, in this order: [`DESIGN.md`](DESIGN.md) (why), [`SPEC-WIRE.md`](SPEC-WIRE.md) (bytes and
 rules, normative for indexers), [`SPEC-NOTES.md`](SPEC-NOTES.md) (keys, addresses and sealing,
