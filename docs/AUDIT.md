@@ -670,7 +670,7 @@ refuse. A balance is still shown when the indexers disagree, with the count mark
 a disagreement stops is a mint (`crossCheck`), a TAKE (`listingCheck`) and, since #38, giving back
 the notes of a spend that looks refused (`refusalAgreed`, `consensus.js` l. 61). #38 also has the
 vault start no DEPLOY, spend, TAKE, cancel or CLAIM while an indexer reports another profile than
-its own (`requireProfile`, `ui/context.js` l. 78): that compares the profile's constants, not what
+its own (`requireProfile`, `ui/context.js` l. 81): that compares the profile's constants, not what
 the indexers say of the chain.
 
 **8.6 `scanOutput` turns every failure into "not ours".** Low.
@@ -753,4 +753,4 @@ from an older backup: their commit outputs (a fee and some dust) cannot be taken
 | an offer's signature commits to the lock's outpoint, amount, script and sequence, to the version and locktime, and to the output paying the price; a buyer checks it under the key of the lock output, which the txid does cover | `market.js` l. 86–116, l. 136 |
 | the BIP340 nonce is derived as specified, with fresh auxiliary randomness at every signature | `indexer/src/schnorr.js` l. 78; `taproot.js` l. 137, l. 196 |
 | the state is AES-256-GCM under the passphrase key with a fresh 12-byte nonce at every save; a wrong passphrase fails the tag | `keys.js` l. 27, l. 204 |
-| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 16, l. 48; `ui/context.js` l. 30; `ui/spends.js` l. 30 and `ui/tokens-panel.js` l. 175 |
+| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 16, l. 48; `ui/context.js` l. 33; `ui/spends.js` l. 30 and `ui/tokens-panel.js` l. 177 |

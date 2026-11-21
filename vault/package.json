@@ -1,8 +1,8 @@
 {
   "name": "sh20-vault",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
-  "description": "SH-20 browser vault: static page, keys on the device, PSBTs signed by Xverse / UniSat / Leather (spec draft v0.2, signet)",
+  "description": "SH-20 browser vault: static page, keys on the device, PSBTs signed by Xverse / UniSat / Leather (spec draft v0.3, signet)",
   "type": "module",
   "license": "MIT",
   "scripts": {

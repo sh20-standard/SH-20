@@ -4,12 +4,15 @@
 
 import { Esplora, IndexerApi } from '../api.js';
 import { profileCheck } from '../consensus.js';
+import { PROFILE, PROFILE_NAME } from '../profile.js';
+import { defaultSettings } from '../servers.js';
 
 // ---- settings -----------------------------------------------------------------
 
 export const SETTINGS_KEY = 'sh20.vault.settings';
 // `indexer` holds one or more URLs (one per line, or comma-separated); the first is the primary.
-const DEFAULTS = { indexer: 'http://127.0.0.1:8020', esplora: 'https://mempool.space/signet/api' }; // 8020: indexer/bin/follow.js
+// The defaults are those of the profile this page follows (servers.js): none is a server of ours.
+const DEFAULTS = defaultSettings(PROFILE_NAME);
 export const urlList = (s) => [...new Set(s.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean))];
 
 // Servers given in the URL (?indexer=…&esplora=…) are never applied silently: a
@@ -135,6 +138,7 @@ export function staticWarnings() {
   if (urlServers) {
     w.push(`Using servers from the link, not your saved settings: ${Object.entries(urlServers).map(([k, v]) => `${k} ${v}`).join(', ')}. Check the price and outputs before signing.`);
   }
+  if (PROFILE_NAME !== 'signet') w.push(`This page follows the ${PROFILE_NAME} profile (activation at block ${PROFILE.activationHeight}), for development: a release follows the signet profile.`);
   if (!window.isSecureContext) w.push('Not a secure context: passphrase encryption is unavailable. Use https or localhost.');
   w.push('Note keys and sealing follow docs/SPEC-NOTES.md, draft v0.3, not audited yet: signet only.');
   fill('warnings', w.map((t) => h('div', { class: 'warn' }, t)));
