@@ -150,7 +150,7 @@ A proof alone does not make a spend valid. [`indexer/src/indexer.js`](../indexer
 | R6 | `(vPub, tPub)` come from the envelope type: TRANSFER `(0, 0)`, BURN `(vPub, t(ticker))`, LIST `(amount, t(ticker))`, DEPLOY with `D > 0` `(D, t("SH20"))` | l. 227, 395, 410, 353 |
 | R7 | turnstile: a spend with `vPub > pool[ticker]` is rejected before its proof is looked at | `_outOfPool` l. 321, called at l. 352, 394, 409 |
 | R8 | the verifying key must hash to the pinned digest | `adapters/plonk.js` l. 26–27 |
-| R9 | one envelope per transaction; the default verifier rejects every spend | `carrier.js`; `rejectAllVerifier` l. 22 |
+| R9 | one envelope per transaction, or a batch: several in the witness, all of them TRANSFERs, each accepted or refused alone (`SPEC-WIRE.md` §3); the default verifier rejects every spend | `carrier.js`; `rejectAllVerifier` l. 22 |
 | R10 | the lock of a LIST is the output `OP_1 <lockKey>`, for the `lockKey` its body names (PR #20, §6.1) | `_list` l. 407; `codec.js` l. 234 |
 
 ### The proof system
@@ -485,8 +485,12 @@ exercised by every spend and by the two tests of §6.2.
 
 ### 6.10 Order of transactions, beyond 6.1
 
-- DEPLOY: the first valid one wins, so a ticker seen in the mempool can be taken by someone else
-  with their own parameters. With `D = 0` this costs a fee only.
+- DEPLOY: the first valid one wins. A ticker seen in the mempool could be taken by someone else with
+  their own parameters. Since PR #29 a DEPLOY reveals, in the witness, a commit confirmed at least
+  `N = 6` blocks earlier (`_deploy`, `indexer.js` l. 336; `SPEC-WIRE.md` §5): a copier's own commit
+  is too young. Someone who guessed the ticker and committed to it in advance still deploys it
+  first. The rule is newer than this section: its author has read the check and has not looked for
+  ways around it.
 - TAKE: a buyer's transaction can be outrun by another buyer who pays the same price.
 - A spend delayed more than 100 blocks past its anchor is rejected after paying its fee.
 - A block can hold about 3,000 envelopes of 830 bytes with invalid proofs; the WebAssembly verifier

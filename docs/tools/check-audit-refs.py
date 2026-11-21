@@ -116,6 +116,8 @@ CITES = [
     ("`spend.rs` l. {}: the gate that waives", (SPEND, "cs.gate(diff, dummy,")),
     ("(`gadgets.rs` l. {}–{}; four gates each", (GADGETS, "assert_on_curve(cs, a);"), (GADGETS, "assert_on_curve(cs, r8);")),
     ("`sh20_prove` (`ffi.rs` l. {})", (FFI, "fn sh20_prove(")),
+    # §6.10
+    ("(`_deploy`, `indexer.js` l. {};", (INDEXER, "DEPLOY commit confirmed less than")),
     # §8, the "Checked" paragraphs and the open findings
     ("Checked: `app.js` l. {} stops", (V + "app.js", "gatewayKind() === 'path'")),
     ("`refuseSharedOrigin` (`keys.js` l. {})", (V + "keys.js", "function refuseSharedOrigin")),
