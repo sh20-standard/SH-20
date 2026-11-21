@@ -5,7 +5,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createCipheriv, createHash, createHmac, hkdfSync } from 'node:crypto';
+import nodeCrypto, { createCipheriv, createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, hkdfSync } from 'node:crypto';
+import { syncBuiltinESMExports } from 'node:module';
 import { readFileSync } from 'node:fs';
 import * as node from '../index.js';
 import * as web from '../webcrypto.js';
@@ -66,6 +67,179 @@ test('X25519: both back ends agree, on ordinary points and on every odd encoding
     assert.equal(toHex(await web.x25519(a, u)), toHex(node.x25519(a, u)));
     assert.equal(toHex(await web.x25519Public(a)), toHex(node.x25519Public(a)));
   }
+});
+
+// ── X25519 and the points of low order ──
+
+const topBit = (u) => Uint8Array.from(u, (b, i) => (i === 31 ? b | 0x80 : b));
+/** The seven encodings of subtle-kat.js, and the same seven with bit 255 set (which RFC 7748 ignores). */
+const LOW = [...KAT.lowOrder, ...KAT.lowOrder.map(topBit)];
+
+// OpenSSL asked directly, through neither entry point
+const rawNode = (k, u) =>
+  diffieHellman({
+    privateKey: createPrivateKey({ key: Buffer.concat([Buffer.from('302e020100300506032b656e04220420', 'hex'), k]), format: 'der', type: 'pkcs8' }),
+    publicKey: createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b656e032100', 'hex'), u]), format: 'der', type: 'spki' }),
+  });
+async function rawWeb(k, u) {
+  const s = globalThis.crypto.subtle;
+  const priv = await s.importKey('pkcs8', Buffer.concat([Buffer.from('302e020100300506032b656e04220420', 'hex'), k]), { name: 'X25519' }, false, ['deriveBits']);
+  const pub = await s.importKey('raw', u, { name: 'X25519' }, true, []);
+  return new Uint8Array(await s.deriveBits({ name: 'X25519', public: pub }, priv, 256));
+}
+
+// The same question put to arithmetic. On y² = x³ + 486662x² + x over p = 2^255 − 19, the x of 2P is
+// (x² − 1)² / 4x(x² + 486662x + 1), and (0, 0) is the point of order 2 of the curve and of its twist:
+// u has an order of 2, 4 or 8 when at most two doublings lead to x = 0.
+const P25519 = 2n ** 255n - 19n;
+function lowOrderByArithmetic(u) {
+  const inverse = (a) => {
+    let [r, b] = [1n, a % P25519];
+    for (let e = P25519 - 2n; e > 0n; e >>= 1n, b = (b * b) % P25519) if (e & 1n) r = (r * b) % P25519;
+    return r;
+  };
+  let x = (BigInt(`0x${toHex(Uint8Array.from(u).reverse())}`) & ((1n << 255n) - 1n)) % P25519;
+  for (let doublings = 0; doublings < 3; doublings++) {
+    if (x === 0n) return true;
+    x = ((x * x - 1n) ** 2n * inverse(4n * x * (x * x + 486662n * x + 1n))) % P25519;
+  }
+  return false;
+}
+
+test('X25519: the points of low order are the seven listed, by arithmetic and by what OpenSSL refuses', async () => {
+  const k = bytes('low/k');
+  for (const u of LOW) {
+    assert.equal(subtle.isLowOrder(u), true, toHex(u));
+    assert.equal(lowOrderByArithmetic(u), true, toHex(u));
+    assert.throws(() => rawNode(k, u), toHex(u));
+    await assert.rejects(() => rawWeb(k, u), { name: 'OperationError' }, toHex(u));
+  }
+  const fromInt = (x) => Buffer.from(x.toString(16).padStart(64, '0'), 'hex').reverse();
+  const others = [
+    // next to each of the seven: the same bytes with the second one raised by one
+    ...KAT.lowOrder.map((u) => Uint8Array.from(u, (b, i) => (i === 1 ? (b + 1) & 0xff : b))),
+    // 2 to 20, and every value from the field size to 2^255 − 1 that is not p or p + 1 (they are 2 to 18)
+    ...Array.from({ length: 19 }, (_, i) => fromInt(BigInt(i + 2))),
+    ...Array.from({ length: 17 }, (_, i) => fromInt(P25519 + BigInt(i + 2))),
+    // just below p − 1, and the neighbours of the two points of order 8
+    fromInt(P25519 - 2n),
+    ...[2, 3].flatMap((i) => [-1n, 1n].map((d) => fromInt(BigInt(`0x${toHex(Uint8Array.from(KAT.lowOrder[i]).reverse())}`) + d))),
+    Buffer.alloc(32, 0xff),
+    ...Array.from({ length: 200 }, (_, i) => bytes(`low/u/${i}`)),
+  ];
+  for (const u of others) {
+    assert.equal(subtle.isLowOrder(u), false, toHex(u));
+    assert.equal(lowOrderByArithmetic(u), false, toHex(u));
+    const z = rawNode(k, u);
+    assert.ok(z.some((b) => b !== 0), toHex(u));
+    assert.equal(toHex(await rawWeb(k, u)), toHex(z), toHex(u));
+    assert.equal(toHex(await web.x25519(k, u)), toHex(z), toHex(u));
+  }
+  assert.throws(() => subtle.isLowOrder(new Uint8Array(31)), RangeError);
+  assert.throws(() => subtle.isLowOrder('00'.repeat(32)), RangeError);
+});
+
+/** Runs `fn` with `crypto.subtle[name]` replaced for X25519 alone (HKDF also goes through deriveBits). */
+async function withX25519(name, replacement, fn) {
+  const s = globalThis.crypto.subtle;
+  const original = s[name];
+  let asked = 0;
+  s[name] = function (...args) {
+    const algorithm = name === 'importKey' ? args[2] : args[0];
+    if ((algorithm?.name ?? algorithm) !== 'X25519') return original.apply(this, args);
+    asked++;
+    return replacement ? replacement(...args) : original.apply(this, args);
+  };
+  try {
+    return await fn(() => asked);
+  } finally {
+    delete s[name];
+  }
+}
+
+test('X25519: a point of low order is decided without the platform', async () => {
+  const k = bytes('low/k');
+  const keys = await web.walletKeys(bytes('low/m'));
+  const out = await web.seal(keys.address, 'GENE', 1n, bytes('low/e'));
+  for (const name of ['importKey', 'deriveBits']) {
+    await withX25519(name, null, async (asked) => {
+      for (const u of LOW) assert.ok((await web.x25519(k, u)).every((b) => b === 0), toHex(u));
+      for (const u of LOW) assert.equal(await web.scan(keys.ivk, keys.address, { ...out, pkEph: u }), null, toHex(u));
+      for (const u of LOW) await assert.rejects(() => web.decodeAddress('sh20', web.encodeAddress('sh20', { ...keys.address, ivkPub: u })), /low-order/, toHex(u));
+      assert.equal(asked(), 0, `${name} was called for a point of low order`);
+      // the count does see an ordinary point
+      assert.equal((await web.scan(keys.ivk, keys.address, out)).v, 1n);
+      assert.ok(asked() > 0);
+      // seal asks the platform for pk_eph = X25519(e, 9), then refuses the address
+      for (const u of LOW) await assert.rejects(() => web.seal({ ...keys.address, ivkPub: u }, 'GENE', 1n, bytes('low/e')), /low-order/, toHex(u));
+    });
+  }
+});
+
+test('X25519: a failure of the platform is thrown, never read as a point of low order', async () => {
+  const k = bytes('failing/k');
+  const keys = await web.walletKeys(bytes('failing/m'));
+  const out = await web.seal(keys.address, 'GENE', 1n, bytes('failing/e'));
+  const address = web.encodeAddress('sh20', keys.address);
+  const reject = (name) => () => Promise.reject(new DOMException('The operation failed for an operation-specific reason', name));
+  const failures = [
+    // the error a platform gives for a low-order point is also the one it gives for a failure of its own
+    ['deriveBits', reject('OperationError'), { name: 'OperationError' }],
+    ['deriveBits', reject('DataError'), { name: 'DataError' }],
+    ['importKey', (format, ...rest) => (format === 'raw' ? reject('DataError')() : globalThis.crypto.subtle.constructor.prototype.importKey.call(globalThis.crypto.subtle, format, ...rest)), { name: 'DataError' }],
+    // 32 zero bytes for a point that is not of low order: no X25519 gives that
+    ['deriveBits', async () => new ArrayBuffer(32), /not of low order/],
+  ];
+  for (const [name, replacement, error] of failures) {
+    await withX25519(name, replacement, async () => {
+      await assert.rejects(() => web.x25519(k, keys.address.ivkPub), error);
+      await assert.rejects(() => web.scan(keys.ivk, keys.address, out), error); // was null: "not ours"
+      await assert.rejects(() => web.seal(keys.address, 'GENE', 1n, bytes('failing/e')), error); // was "IVK is a low-order point"
+      await assert.rejects(() => web.decodeAddress('sh20', address), error); // the same
+      // what is true of the point itself still needs no platform
+      assert.equal(await web.scan(keys.ivk, keys.address, { ...out, pkEph: KAT.lowOrder[2] }), null);
+      await assert.rejects(() => web.decodeAddress('sh20', web.encodeAddress('sh20', { ...keys.address, ivkPub: KAT.lowOrder[3] })), /low-order/);
+    });
+  }
+  assert.equal((await web.scan(keys.ivk, keys.address, out)).v, 1n);
+});
+
+test('X25519 on node:crypto: the same rule, a failure of OpenSSL is thrown', () => {
+  const k = bytes('failing/k');
+  const keys = node.walletKeys(bytes('failing/m'));
+  const out = node.seal(keys.address, 'GENE', 1n, bytes('failing/e'));
+  const address = node.encodeAddress('sh20', keys.address);
+  const original = nodeCrypto.diffieHellman;
+  let asked = 0;
+  // address.js imports diffieHellman by name: the binding follows the module once it is synchronised
+  const replace = (fn) => {
+    nodeCrypto.diffieHellman = fn;
+    syncBuiltinESMExports();
+  };
+  try {
+    replace((...args) => (asked++, original(...args)));
+    for (const u of LOW) assert.ok(node.x25519(k, u).every((b) => b === 0), toHex(u));
+    for (const u of LOW) assert.equal(node.scan(keys.ivk, keys.address, { ...out, pkEph: Buffer.from(u) }), null, toHex(u));
+    for (const u of LOW) assert.throws(() => node.decodeAddress('sh20', node.encodeAddress('sh20', { ...keys.address, ivkPub: Buffer.from(u) })), /low-order/, toHex(u));
+    assert.equal(asked, 0, 'OpenSSL was asked about a point of low order');
+    assert.equal(node.scan(keys.ivk, keys.address, out).v, 1n);
+    assert.equal(asked, 1);
+
+    replace(() => {
+      throw new Error('error:1C8000A6:Provider routines::failed during derivation');
+    });
+    assert.throws(() => node.x25519(k, keys.address.ivkPub), /failed during derivation/);
+    assert.throws(() => node.scan(keys.ivk, keys.address, out), /failed during derivation/); // was null: "not ours"
+    assert.throws(() => node.seal(keys.address, 'GENE', 1n, bytes('failing/e')), /failed during derivation/); // was "IVK is a low-order point"
+    assert.throws(() => node.decodeAddress('sh20', address), /failed during derivation/);
+    assert.equal(node.scan(keys.ivk, keys.address, { ...out, pkEph: Buffer.from(KAT.lowOrder[2]) }), null);
+
+    replace(() => Buffer.alloc(32));
+    assert.throws(() => node.scan(keys.ivk, keys.address, out), /not of low order/);
+  } finally {
+    replace(original);
+  }
+  assert.equal(node.scan(keys.ivk, keys.address, out).v, 1n);
 });
 
 test('signatures: the vectors of the Rust model, and the same nonce as index.js', async () => {

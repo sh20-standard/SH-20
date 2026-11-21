@@ -43,7 +43,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
 | `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
 | `circuit/` | the spend circuit: PLONK prover and verifier in Rust, WebAssembly build, measurements ([`circuit/README.md`](circuit/README.md)) |
-| `circuit/js/` | what a wallet computes, in dependency-free JavaScript: the witness of a spend, and the addresses, sealing and scanning of `SPEC-NOTES.md`. Two entry points with the same names and the same vectors: `index.js` (synchronous, `node:crypto`) and `webcrypto.js` (asynchronous, WebCrypto, for browsers). Checked against vectors written by the Rust models (`cd circuit/js && npm test`, 44 tests) |
+| `circuit/js/` | what a wallet computes, in dependency-free JavaScript: the witness of a spend, and the addresses, sealing and scanning of `SPEC-NOTES.md`. Two entry points with the same names and the same vectors: `index.js` (synchronous, `node:crypto`) and `webcrypto.js` (asynchronous, WebCrypto, for browsers). Checked against vectors written by the Rust models (`cd circuit/js && npm test`, 48 tests) |
 | `circuit/circom/` | the same relation in circom, used only to cross-check the Rust circuit |
 | `circuit/web/` | the phone test page, and the host side of the threaded WebAssembly prover |
 
@@ -68,6 +68,9 @@ explorer's demo data regenerate byte for byte, and holds `indexer-rs` and `circu
 (`vault/tools/prover.sh --check`): it fails unless they are the committed bytes, so a change to `circuit/` goes with rebuilt
 `vault/prover/*.wasm` in the same pull request. The script builds as from an x86_64 Linux host on every machine
 (`vault/tools/rustc-host.sh` says why the host triple would otherwise change the bytes).
+
+Any pull request that moves a line `docs/AUDIT.md` cites, or renames a test it quotes, updates `docs/AUDIT.md` with it: the CI checks it
+(`docs/tools/check-audit-refs.py`; `--fix` rewrites the numbers of lines that only moved).
 
 ## Status (draft v0.3)
 
@@ -122,8 +125,9 @@ Done since: a second indexer in Rust (`indexer-rs/`), written from `SPEC-WIRE.md
 `indexer/`; it reproduces every vector, and the 28 points it found open (`docs/SPEC-GAPS.md`) are settled in the spec
 (2026-11-19). The vault proves transfers, burns, listings and DEPLOY burns, buys, cancels and claims (`vault/`).
 The audit dossier is `docs/AUDIT.md`. Its §8 (2026-11-19) lists what a reading of the vault's cryptography found, most
-serious first, all open: the vault only warns on a path gateway; after a restore an offer signs the terms the servers give;
-a buyer's check ignores an indexer that does not know the listing; a vault without a passphrase keeps its secrets in clear.
+serious first. 8.1 to 8.6 are fixed (#33; #40 for what 8.6 left in `circuit/js`), and each fix is followed by what its
+author's reading checked and what it leaves. Open, all low: lock keys sign with code that is not constant-time; secrets
+stay in memory and the vault never locks itself; an old backup reuses indices.
 
 Not done: an audit; a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the
 circuit session; its reference code and vectors are in `circuit/js`); a real wallet signing in the vault; a relayer; the

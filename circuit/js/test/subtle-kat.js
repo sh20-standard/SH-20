@@ -77,6 +77,15 @@ export async function knownAnswers(s) {
   for (const [i, k] of KAT.x25519.entries()) await check(`X25519 #${i + 1}`, k.want, async () => hex(await s.x25519(k.k, k.u)));
   await check('X25519 public key', KAT.x25519Public.want, async () => hex(await s.x25519Public(KAT.x25519Public.k)));
   for (const u of KAT.lowOrder) await check(`X25519 with the low-order point ${hex(u).slice(0, 8)}… is all zeros`, '00'.repeat(32), async () => hex(await s.x25519(KAT.x25519[0].k, u)));
+  for (const u of KAT.lowOrder) await check(`the same with bit 255 set (${hex(u).slice(0, 8)}…)`, '00'.repeat(32), async () => hex(await s.x25519(KAT.x25519[0].k, u.map((b, i) => (i === 31 ? b | 0x80 : b)))));
+  // Odd encodings that are not of low order go to the platform, and a platform that refused one would
+  // now be an error: RFC 7748 §5 has it ignore bit 255 of u and take a u at or above p modulo p.
+  const { k, u, want } = KAT.x25519[0];
+  await check('X25519 ignores bit 255 of u', want, async () => hex(await s.x25519(k, u.map((b, i) => (i === 31 ? b ^ 0x80 : b)))));
+  await check('X25519 takes a u above the field size modulo p (p + 2 is 2)', 'true', async () => {
+    const [two, above] = [Uint8Array.of(2, ...new Uint8Array(31)), Uint8Array.of(0xef, ...fill(30, 0xff), 0x7f)];
+    return String(hex(await s.x25519(k, above)) === hex(await s.x25519(k, two)));
+  });
   await check('X25519 refuses a 31-byte key', 'RangeError', async () => s.x25519(KAT.x25519[0].k.subarray(1), KAT.x25519[0].u).then(() => 'no error', (e) => e.name));
   for (const [i, k] of KAT.aesGcm.entries()) {
     const sealed = h(k.want);

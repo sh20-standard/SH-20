@@ -125,6 +125,16 @@ const envs = {
     type: 'DEPLOY', ticker: 'BADP', max: 1000n, lim: 100n, pre: 0n, start: 16, end: 0, unlock: 16,
     price: 100n, payMode: 2, payScript: Buffer.from('6a0453483230', 'hex'), spend: spend('deploy-badp', 14),
   },
+  // P1 and P2 of SPEC-GAPS: the rule looks at the first byte only (`6a` alone is refused, `51 6a` is not), and a DEPLOY
+  // the codec refuses needs no commit height (the first gives none; an indexer must refuse it and go on).
+  deployPay6a: {
+    type: 'DEPLOY', ticker: 'BAD6', max: 1000n, lim: 100n, pre: 0n, start: 16, end: 0, unlock: 16,
+    price: 100n, payMode: 2, payScript: Buffer.from('6a', 'hex'), spend: spend('deploy-bad6', 14),
+  },
+  deployPay516a: {
+    type: 'DEPLOY', ticker: 'OK6A', max: 1000n, lim: 100n, pre: 0n, start: 16, end: 0, unlock: 16,
+    price: 100n, payMode: 2, payScript: Buffer.from('516a', 'hex'), spend: spend('deploy-ok6a', 14),
+  },
   listOpReturnPay: { type: 'LIST', ticker: 'PAY2', amount: 100n, price: 1000n, lockVout: 0, lockKey: lockKeyN(9), payScript: Buffer.from('6a0453483230', 'hex'), spend: spend('list9', 15) },
   list8: { type: 'LIST', ticker: 'PAY2', amount: 1000n, price: 1000n, lockVout: 0, lockKey: lockKeyN(8), payScript: pay, spend: spend('list8', 15) },
   // Block 17, more batches: a member refused for its proof, then one that reuses its nullifier (accepted: a refused
@@ -199,6 +209,8 @@ const txs = [
     { txid: txid('deploy-pay2-tx'), vin: [{ txid: txid('fj'), vout: 0, witness: witness(ser.deployPay2), prevHeight: 12 }], vout: [] },
     { txid: txid('deploy-beta-tx'), vin: [{ txid: txid('fk'), vout: 0, witness: witness(ser.deployBeta), prevHeight: 5 }], vout: [] },
     { txid: txid('deploy-badp-tx'), vin: [{ txid: txid('fk2'), vout: 0, witness: witness(ser.deployOpReturnPay), prevHeight: 5 }], vout: [] },
+    { txid: txid('deploy-bad6-tx'), vin: [{ txid: txid('fk3'), vout: 0, witness: witness(ser.deployPay6a) }], vout: [] },
+    { txid: txid('deploy-ok6a-tx'), vin: [{ txid: txid('fk4'), vout: 0, witness: witness(ser.deployPay516a), prevHeight: 5 }], vout: [] },
   ],
   [
     // payMode 2 counts the outputs to payScript only: paid, paid in an OP_RETURN (refused), one sat short (refused),
@@ -282,6 +294,7 @@ const expected = [
   { height: 14, txid: txid('nfSpentInBlock-tx'), reason: 'nullifier already spent' },
   { height: 14, txid: txid('nfTwice-tx'), reason: 'duplicate nullifier' },
   { height: 15, txid: txid('deploy-badp-tx'), reason: 'payScript must not be an OP_RETURN' },
+  { height: 15, txid: txid('deploy-bad6-tx'), reason: 'payScript must not be an OP_RETURN' },
   { height: 16, txid: txid('mint-pay2-opreturn'), reason: 'mint not paid' },
   { height: 16, txid: txid('mint-pay2-short'), reason: 'mint not paid' },
   { height: 16, txid: txid('list9-tx'), reason: 'payScript must not be an OP_RETURN' },
@@ -386,7 +399,7 @@ const out = {
   version: 'SH-20 draft v0.3',
   notes: 'Field elements are hex, big-endian here for readability; on the wire they are 32-byte little-endian. The scenario uses a test verifier that accepts exactly one 480-byte proof: \"valid-proof\" padded with zeros. eventsH is the byte string of SPEC-WIRE §6 whose SHA-256 enters the digest. rejected lists the envelopes an indexer must refuse; the reason is informative, only the refusal is normative.',
   sections: {
-    envelopes: 'Each envelope of the scenario and of the reorg: its bytes, and for a spend its bodyHash (SPEC-WIRE §4: SHA256("sh20/v0/body" ‖ body) mod r, body from "SH20" up to the proof). Only envelopes that decode are listed: the two with an OP_RETURN payScript are only in block 15 and 16.',
+    envelopes: 'Each envelope of the scenario and of the reorg: its bytes, and for a spend its bodyHash (SPEC-WIRE §4: SHA256("sh20/v0/body" ‖ body) mod r, body from "SH20" up to the proof). Only envelopes that decode are listed: the three with an OP_RETURN payScript are only in blocks 15 and 16.',
     claim: 'One CLAIM: the message SHA256("sh20/v0/claim" ‖ listTxid ‖ npk) and its BIP340 signature by lockKey, with 32 zero bytes of auxiliary randomness.',
     preActivation: 'digest_{A-1}: the digest an indexer starts from at block A.',
     carriers: 'One transaction each, and what SPEC-WIRE §3 finds in it. expect is the hex of the one counted envelope, "none" when no envelope is counted (an envelope of another version alone is "none"), a list of hex when they are a batch (two or more TRANSFERs, all in the witness: each applies alone), or "many" when two or more are counted otherwise (the transaction is refused). Inputs give their witness only; their outpoints play no part. {"coinbase": true} is the input of a coinbase; its witness, when given, is not read.',

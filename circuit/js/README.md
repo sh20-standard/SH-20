@@ -28,7 +28,7 @@ is a `RangeError`, never silently reduced: `nk + l` is the same point as `nk` bu
 nullifier, and the circuit refuses it.
 
 ```sh
-npm test                # 44 tests, Node 20 or newer
+npm test                # 48 tests, Node 20 or newer
 npm run test:browser    # the WebCrypto primitives in headless Chrome
 ```
 
@@ -64,7 +64,10 @@ What a browser needs for it:
 - **A secure context** (https, or localhost): browsers give `crypto.subtle` to nothing else.
 - **X25519 in WebCrypto**: Safari 17, Firefox 130, Chrome 133 by their compatibility tables.
   `available()` checks it with a known answer and is what a wallet should go by. Without X25519 the
-  functions reject; they never return "not found" for a note they could not try to open.
+  functions reject; they never return "not found" for a note they could not try to open. The same
+  holds for every other failure of the platform: a point of low order, the one case where the secret
+  is all zeros, is recognised from its bytes (`isLowOrder` in `subtle.js`) and the platform is not
+  asked, so an `OperationError` is never read as one. `index.js` follows the same rule with OpenSSL.
 - **A stand-in for `node:crypto`**, by an import map. The modules `webcrypto.js` shares with
   `index.js` import it by name: the indexer's constants hash their public tags with
   `createHash('sha256')` when they load, and `address.js` and `seal.js` import what their
@@ -74,8 +77,9 @@ What a browser needs for it:
   throw. A global `Buffer` is needed for the same shared modules.
 
 `subtle.js` alone has no import and needs none of that: `test/subtle.html` runs its known answers
-(RFC 7748, RFC 5869, RFC 4231, the GCM specification, the seven low-order points) in any browser.
-Checked in Chrome 157; not yet in Safari or Firefox.
+(RFC 7748, RFC 5869, RFC 4231, the GCM specification, the seven low-order points, and two odd
+encodings a platform must accept: bit 255 set, a value above the field size) in any browser.
+Checked in Chrome 158; not yet in Safari or Firefox.
 
 ## The vectors
 
