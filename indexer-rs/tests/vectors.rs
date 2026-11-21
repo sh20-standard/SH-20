@@ -246,12 +246,12 @@ fn scenario() {
 
     // the refusals: exactly the ones listed, with the index of the envelope in a batch
     let want_rejected = wanted_refusals(&sc["rejected"]);
-    assert_eq!(want_rejected.len(), 19);
+    assert_eq!(want_rejected.len(), 20);
     assert_eq!(replay.rejected, want_rejected);
 
     // the verifier: the same calls, in the same order, each with the same nine inputs
     let want_calls = sc["verifierCalls"].as_array().unwrap();
-    assert_eq!(want_calls.len(), 25);
+    assert_eq!(want_calls.len(), 26);
     check_calls(&replay.calls, want_calls, blocks);
     // the proof is checked last, and one proof of the scenario is not the valid one (a member
     // of a batch of block 17): the calls are the accepted spends and that one, no more
@@ -462,6 +462,7 @@ fn scenario_carries_the_listed_envelopes() {
     let mut carried: Vec<Vec<u8>> = Vec::new();
     let (mut bare, mut batches, mut refused_whole) = (0, 0, 0);
     let mut deploys_in_op_return = 0;
+    let mut heightless_refused = 0;
     let mut unlisted: Vec<(u32, u8)> = Vec::new();
     let all_blocks = v["scenario"]["blocks"].as_array().unwrap().iter().chain(v["reorg"]["blocks"].as_array().unwrap());
     for b in all_blocks {
@@ -469,11 +470,16 @@ fn scenario_carries_the_listed_envelopes() {
         for tx in block.txs {
             let found = sh20_indexer::chain::counted(&tx);
             assert_eq!(counted_envelopes(&tx), envelopes(&tx), "no envelope of another version in the scenario");
-            // a height is given for input 0 of every DEPLOY in a witness (by its type byte: the
-            // one that does not decode has it too, though §5 does not need it), and nowhere else
+            // a height is given for input 0 of every DEPLOY in a witness (by its type byte), and nowhere
+            // else, except one DEPLOY the decoder refuses (block 15, P2): §5 needs no height for it
             let is_deploy = |c: &sh20_indexer::chain::Carried| c.bytes.get(5) == Some(&TYPE_DEPLOY);
             let witness_deploy = matches!(found.as_slice(), [one] if one.carrier == Carrier::Witness && is_deploy(one));
-            assert_eq!(tx.vin[0].prev_height.is_some(), witness_deploy);
+            let decodes = matches!(found.as_slice(), [one] if Envelope::decode(&one.bytes).is_ok());
+            if witness_deploy && !decodes && tx.vin[0].prev_height.is_none() {
+                heightless_refused += 1;
+            } else {
+                assert_eq!(tx.vin[0].prev_height.is_some(), witness_deploy);
+            }
             assert!(tx.vin[1..].iter().all(|i| i.prev_height.is_none()));
             deploys_in_op_return += found.iter().filter(|c| c.carrier == Carrier::OpReturn && is_deploy(c)).count();
             match found.len() {
@@ -492,18 +498,21 @@ fn scenario_carries_the_listed_envelopes() {
                 // decoder for its payScript and for nothing else
                 assert!(tx.vin[0].witness.len() == 3 && c.carrier == Carrier::Witness);
                 assert_eq!(Envelope::decode(&c.bytes), Err(DecodeError::Rejected("payScript starts with OP_RETURN")));
-                let at = c.bytes.windows(OP_RETURN_SH20.len()).position(|w| w == OP_RETURN_SH20).unwrap();
-                // one byte away from an envelope that decodes: the first of the payScript
-                let mut mended = c.bytes.clone();
-                mended[at + 1] = 0x51;
-                assert!(Envelope::decode(&mended).is_ok());
+                // `OP_RETURN <"SH20">`: one byte away from an envelope that decodes, the first of the
+                // payScript (the third, P1, pays `6a` alone)
+                if let Some(at) = c.bytes.windows(OP_RETURN_SH20.len()).position(|w| w == OP_RETURN_SH20) {
+                    let mut mended = c.bytes.clone();
+                    mended[at + 1] = 0x51;
+                    assert!(Envelope::decode(&mended).is_ok());
+                }
                 unlisted.push((block.height, c.bytes[5]));
             }
         }
     }
     assert_eq!((bare, batches, refused_whole), (1, 4, 1));
     assert_eq!(deploys_in_op_return, 1);
-    assert_eq!(unlisted, [(15, TYPE_DEPLOY), (16, TYPE_LIST)]);
+    assert_eq!(unlisted, [(15, TYPE_DEPLOY), (15, TYPE_DEPLOY), (16, TYPE_LIST)]);
+    assert_eq!(heightless_refused, 1);
     assert!(listed.iter().all(|e| carried.contains(e)));
 }
 
@@ -525,7 +534,7 @@ fn body_hashes() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 33);
+    assert_eq!(checked, 34);
 }
 
 /// What §3 finds in a transaction, in the words of the vectors' `expect`.

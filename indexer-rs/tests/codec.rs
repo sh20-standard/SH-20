@@ -34,7 +34,7 @@ const R_LE: &str = "010000f093f5e1439170b97948e833285d588181b64550b829a031e1724e
 fn every_vector_envelope_round_trips() {
     let v = vectors();
     let names: Vec<&String> = v["envelopes"].as_object().unwrap().keys().collect();
-    assert_eq!(names.len(), 50);
+    assert_eq!(names.len(), 51);
     for name in names {
         vector_envelope(&v, name);
     }

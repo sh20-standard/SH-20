@@ -159,7 +159,7 @@ What the text leaves open on batches:
 | B2 | **What `envelope` counts.** `sections` calls it "the index of the envelope in the transaction". With an envelope of another version between two TRANSFERs, is the second one index 1 or 2? | The index among the counted envelopes, from 0, in the order of the tapscript: the envelope of another version takes none. | block 17 gives 0, 1, 2 with nothing in between |
 | B3 | **A batch that spends a lock.** §6 puts the listings a transaction closes after "the accepted envelopes of a batch". Clear, but with no vector. | The batch's events in order, then one CLOSED per lock. | silent |
 
-**Settled (2026-11-21):** the reference indexer chose the same on all three, and `SPEC-WIRE.md` §3 now states B1 and
+**Settled (2026-11-20):** the reference indexer chose the same on all three, and `SPEC-WIRE.md` §3 now states B1 and
 B2. Three carrier cases pin them: a `0x03` envelope that does not decode stays in its batch, `SH20` with no type byte
 beside a TRANSFER is refused whole, and an envelope of another version between two TRANSFERs takes no index. B3 has a
 vector since (block 17: a batch whose transaction spends the lock of `list8`, then CLOSED), with three more from the
@@ -199,7 +199,11 @@ The text leaves nothing open here. Two points are pinned less than the text says
 | P2 | **The refused DEPLOY and the height of its commit.** §5: an envelope that does not decode needs no height, so an indexer without the height refuses this DEPLOY and goes on. | As the text says: refused, no stop. | the refused DEPLOY of block 15 gives `prevHeight`: silent on an indexer that lacks it |
 
 P1 can change a digest. P2 cannot (an indexer that stops has no digest for the block); it decides whether two
-indexers given the same incomplete data both go on. Both have a test in this crate (`tests/rules.rs`,
+indexers given the same incomplete data both go on.
+
+**Pinned (2026-11-21):** block 15 now has a DEPLOY paying `6a` alone, refused and given no commit height (P1 and P2:
+an indexer must refuse it and go on), and one paying `51 6a`, accepted (P1). `indexer-rs` replayed both with its code
+unchanged; only the counts its tests pin moved (51 envelopes, 34 body hashes, 20 refusals, 26 verifier calls). Both have a test in this crate (`tests/rules.rs`,
 `pay_script_must_not_be_an_op_return`).
 
 Pinned by the vectors since this round, where the batch section above said "silent" or had only this crate's tests:
