@@ -249,6 +249,18 @@ differently. **Each row is a guess to check against the reference**, and the pla
 | A15 | **Where the API listens** is not said, and two indexers on one machine must not share a port. | `--listen`, `127.0.0.1:8621` by default: local only unless asked otherwise. |
 | A16 | **A reader during a reorg.** "Rolls back to the common block and replays": while it does, the API serves each tip on the way. A wallet that pages `/notes` across a reorg gets leaves of two branches and nothing in the answers says so (`/notes` carries no tip). | Nothing more than the text asks. `/status` gives `hash` beside `height`, and `/nullifiers` its `height`: a careful client reads `/status` before and after and starts again if `hash` or `digest` moved. |
 
+**Settled (2026-11-21) in [`API.md`](API.md),** checked by `indexer/bin/api-diff.js`: a random chain served as an
+Esplora API, followed by both indexers, every route asked of both and the JSON compared field by field (only the free
+text of errors and refusal reasons is left out). The first run found 18 kinds of difference over 226 requests. Most are
+now the reference's to change, and it has: A1 `/block/:height` exists; A2 and A3 events take the spec's names (`pos`,
+`vPub`, `pre`, `nullifiers` flat, no `listTxid` in a LIST) and blocks carry `eventsH`; A4 `event` is the envelope's verdict,
+never CLOSED, and `rejections` hold `{ reason }`; A5 `/status` gains `hash`, `anchorMinDepth` and `implementation`;
+A6 an unknown `state` is 400; A11 `/nullifiers` starts at `A`; A13 a malformed id in a path is 400. Three stay for
+`indexer-rs`, because the vault and the explorer read them as the reference writes them: `genesis` in `/status` is the
+ticker (`"SH20"`), a listing is `{ listTxid, …, lock: "txid:vout", …, takeTxid, closedBy }`, and the verifier that
+refuses every spend is named `reject-all`. A7 to A10, A12 and A14 to A16 were already alike or are now written down as
+chosen here; A15 (the port) is each implementation's own.
+
 Two points are not gaps of the text but decide whether the two indexers can be compared on the signet:
 
 - **The proof verifier.** `/status` names the verifier, and `indexer-rs` has only two: `reject` (every spend is

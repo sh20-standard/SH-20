@@ -22,7 +22,7 @@ const opt = (name, def) => {
 
 const activationHeight = Number(opt('activation', NaN));
 if (!Number.isInteger(activationHeight)) {
-  console.error('usage: node bin/follow.js (--rpc URL [--rpcuser U --rpcpass P] | --esplora URL) --activation HEIGHT [--port 8020] [--host 127.0.0.1] [--network signet] [--confirmations 0] [--interval 15] [--verifier sh20_circuit.wasm [--vk spend.vk]]');
+  console.error('usage: node bin/follow.js (--rpc URL [--rpcuser U --rpcpass P] | --esplora URL) --activation HEIGHT [--deploy-burn D] [--window W] [--min-depth K] [--maturity N] [--port 8020] [--host 127.0.0.1] [--network signet] [--confirmations 0] [--interval 15] [--verifier sh20_circuit.wasm [--vk spend.vk] | --verifier test]');
   process.exit(1);
 }
 
@@ -34,9 +34,19 @@ else {
   process.exit(1);
 }
 
-const network = opt('network', 'signet');
-const verifier = opt('verifier') ? plonkVerifier({ wasm: opt('verifier'), vk: opt('vk') }) : undefined;
-const indexer = new Indexer({ profile: { activationHeight, network }, verifier });
+// What /status reports: --network, else the node's own chain name (Bitcoin Core), else "unknown" (Esplora does not say).
+const network = opt('network') ?? (opt('rpc') ? (await source.rpc('getblockchaininfo').catch(() => null))?.chain : undefined) ?? 'unknown';
+// --verifier test: the rule of the vectors (one proof, "valid-proof" padded with zeros, is valid), for differential runs
+const TEST_PROOF = Buffer.concat([Buffer.from('valid-proof'), Buffer.alloc(480 - 11)]);
+const verifier = opt('verifier') === 'test'
+  ? { name: 'test', verifySpend: (a) => Buffer.from(a.proof).equals(TEST_PROOF) }
+  : opt('verifier') ? plonkVerifier({ wasm: opt('verifier'), vk: opt('vk') }) : undefined;
+// The rest of the profile, by the names indexer-rs takes: every indexer of a network must be given the same.
+const profile = { activationHeight, network };
+for (const [flag, key, big] of [['deploy-burn', 'deployBurn', true], ['window', 'anchorWindow'], ['min-depth', 'anchorMinDepth'], ['maturity', 'deployMaturity']]) {
+  if (opt(flag) !== undefined) profile[key] = big ? BigInt(opt(flag)) : Number(opt(flag));
+}
+const indexer = new Indexer({ profile, verifier });
 const follower = new Follower({
   indexer,
   source,
