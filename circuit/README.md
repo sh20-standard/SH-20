@@ -156,6 +156,118 @@ What was done to get there, measured in Node and in headless Chrome on the lapto
 `web/README.md` explains how to put the page in front of a phone and what to send back. Tacit publishes
 12–15 s for its single-thread Halo2 prover in a browser, with proofs 4.3 times larger.
 
+## Batches and the 150 vB target
+
+The cost budget asks for 150 vB or less per transfer when a relayer publishes several in one
+transaction (`docs/SPEC-WIRE.md` §3). A batch of ten costs 222.9 vB each today, because every
+TRANSFER carries its own 480-byte proof. This section measures what could bring that down. Nothing
+in it is a rule: the envelopes and circuits compared exist only in `bench/batch-vsize.mjs` (sizes)
+and `examples/batch_cost.rs` (proofs, on the powers of the pinned Hermez file). Same laptop as
+above, 2026-11-21.
+
+**What the target leaves.** A reveal that carries `n` envelopes weighs
+`(515 + Σ (envelope + 10)) / 4` vB. At ten, 150 vB each leaves 540 bytes for an envelope: 6 of
+header, 480 of proof, and 54 for the spend, whose two nullifiers and three leaves alone are 160. So
+nothing done to the body reaches the target while every transfer brings a proof: with no ciphertext
+on chain at all, a transfer still costs 177.7 vB. The target takes fewer proofs than transfers, and
+at least three transfers under each proof: two give 161.2 vB at ten, three give 148.7.
+
+| Lead | Envelope bytes per transfer, at ten | vB per transfer, at ten | Proving on the phone | Hard requirements | What it costs |
+| --- | ---: | ---: | --- | --- | --- |
+| **Today**: a proof for each TRANSFER | 830 | 222.9 | 5.7 s on six threads, 15.5 s on one | kept | |
+| **Grouped verification**: the indexer checks the proofs of a batch in one pairing equation | 830 | 222.9 | unchanged | kept: nothing on the wire changes | saves indexer time and no byte: ten proofs in 4.0 ms instead of 17.2 |
+| **Shared openings**: the senders prove under common challenges, and the batch carries one pair of opening points for all | 772 | 208.3 | unchanged, plus four exchanges with every sender online at once | **4 is not**: snarkjs draws the challenges of a proof from that proof alone, and cannot check these | a sender who stops voids the batch; one bad proof refuses every transfer, where each is judged alone today |
+| **One ephemeral key** for the three outputs of a transfer | 766 | 206.7 | unchanged | kept | a change of bytes and of `SPEC-NOTES.md` §3, where each output draws its own key: the derivation must then tell the three outputs apart |
+| **The relayer's output as a leaf alone**, without key or ciphertext | 770 | 207.7 | unchanged | kept | the sender gives the relayer the opening, and the relayer must keep it: nothing on chain gives it back |
+| The two above together | 738 | 199.7 | unchanged | kept | |
+| **Two outputs** instead of three | 738 | 199.7 | unchanged | kept | decided against on 2026-11-18: the third output pays the relayer |
+| **Three transfers under one proof**, proved by one wallet | 538 | 148.7 | about 11 s on six threads and 31 s on one, about 500 MB: projected, not run on a phone | kept: the largest circuit `pot18` allows | only for three transfers of one wallet, which the last row serves better |
+| **Three transfers under one proof**, proved by the relayer | 538 | 148.7 | none: the phone signs and hands over its witness | kept | the relayer sees each transfer whole, and the amount its payee receives (below) |
+| **The ten under one proof**, proved by the relayer | 393 | 111.8 | none | **4 is not**: a domain of 2^20, and `pot18` stops at 2^18 | the same, for ten |
+| **Recursion**: the relayer proves that it holds ten valid proofs | 393 | 111.8 | unchanged for each sender | **4 is not**: far beyond `pot18` | not built; an estimate below |
+| **A Groth16 proof** for each transfer (128 bytes) | 478 | 134.2 | not measured | **4 is not**: a ceremony for this circuit, run by someone | the setup the project chose not to have |
+| **One transfer that pays ten people** (2 inputs, 11 outputs) | 157 for each person paid | 52.4 | unchanged: the same domain | kept | another use, one payer and several payees; a second relation, with its own key and its own audit |
+
+**The proofs.** Each circuit below is the spend relation with other counts, built by
+`examples/batch_cost.rs` from the gadgets of `src/`; with two inputs and three outputs it emits
+exactly the gates of `src/spend.rs`, and the run checks it. Every proof is 480 bytes and verifies
+in about 2 ms. Times are on one thread, the circuits proved in turn and the best pass kept: the
+laptop was busy that day, and one thread is what stayed steady (today's circuit: 9.9 s, 9.6 s in
+the table at the top). The last two rows are from a second run, compared with today's circuit in
+that run (9.7 s). Memory is the peak of the whole process, key generation included, on one thread;
+on ten threads for the last two rows.
+
+| Circuit | Gates | Domain | Powers of tau | Proving, one thread | Against today | Peak memory |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| today: one spend, 2 inputs, 3 outputs | 86,248 | 2^17 | 131,078 | 9.9 s | 1 | 247 MB |
+| one spend, 2 inputs, 11 outputs | 102,240 | 2^17 | 131,078 | 9.9 s | 1.00 | |
+| one spend, 2 inputs, 25 outputs | 130,226 | 2^17 | 131,078 | 9.8 s | 0.99 | 260 MB |
+| two spends | 172,496 | 2^18 | 262,150 | 19.3 s | 1.96 | |
+| three spends | 258,744 | 2^18 | 262,150 | 19.5 s | 1.98 | 543 MB |
+| four spends | 344,992 | 2^19 | 524,294 | 36.8 s | 3.8 | 1.3 GB |
+| ten spends | 862,480 | 2^20 | 1,048,582 | 74.3 s | 7.6 | 2.4 GB |
+
+- **The time follows the domain, not the gates.** Eleven or 25 outputs prove as fast as three; a
+  26th output, or a sixth beside a third input, goes to the next domain and doubles the time.
+- **`pot18` stops at three spends.** The file holds 524,287 powers. A domain of 2^18 needs 262,150
+  of them; a domain of 2^19 needs 524,294, seven more than there are. The rows of four and ten
+  spends were proved on powers of a throwaway tau, for the time and the memory only: on ten threads
+  the ten spends take 15.4 s, which is what a relayer's machine would spend on them. Four spends in
+  2^18 would take a spend of 65,536 gates, the limit that item 3 of "Next" expects to miss by about
+  a thousand.
+- **The phone column is a projection.** It takes the phone's own figures for today's circuit and
+  the laptop's ratio: 1.98 for the time, 2.2 for the memory. The test page proves the spend circuit
+  only, so no phone has run a domain of 2^18: 500 MB in a browser tab is the first thing to check.
+- **Grouped verification.** Each proof's pairing equation is multiplied by a number the verifier
+  draws, and the equations are added: ten proofs take 4.0 ms instead of 17.2, a hundred take 18 ms
+  instead of 155 (one thread, native; the WebAssembly verifier is about nine times slower either
+  way). A batch with one bad proof fails as a whole and is then checked proof by proof, since each
+  transfer is accepted or refused alone. So it speeds up honest batches and nothing else, and an
+  indexer can do it on its own: no byte and no rule changes.
+
+**Why a shared proof needs someone who sees everything.** A proof covers the witnesses its prover
+holds. Three people's transfers under one proof means one party with the three witnesses: for each
+input note its amount, its ticker and its position (so which earlier output is being spent), for
+each output its amount and its key, the payee's included, and `nsk + τn` for each input, which
+`SPEC-NOTES.md` §6 counts as sensitive as `nsk`: together with the sender of that note it gives
+`nsk`. That party cannot spend, since the signatures it is handed are over the body, and it does
+not learn the payee's address. A relayer is there to hide who pays the fees; one that proves also
+learns the token, the amounts and which notes are spent.
+
+Two ways keep the witnesses with the senders, and neither fits requirement 4. Recursion is one:
+the relayer proves, in a circuit, that it holds ten proofs that verify. That circuit does
+BN254 arithmetic over a field that is not its own, at least nine multiplications of a point by a
+scalar for each proof. One published figure gives the scale: a single ECDSA verification on
+secp256k1, two such multiplications, is 1,508,136 constraints in circom-ecdsa. Ten proofs would be
+on the order of 10^8 gates, a domain near 2^27, five hundred times what `pot18` holds. This is an
+estimate, not a measurement. The other is a scheme that folds many PLONK proofs into one of
+logarithmic size (aPlonK, ePrint 2022/1352): it comes with a verifier of its own, which snarkjs
+does not have. It was not measured.
+
+**Recommendation.**
+
+1. **Keep one proof for each relayed transfer.** The target as written, 150 vB for a transfer in a
+   relayer's batch, cannot be met under requirement 4 while senders keep their witnesses. It takes
+   a relayer that sees the transfers, a ceremony (Groth16), or a recursion far beyond `pot18`. If
+   the maintainer accepts the first for senders who choose it, three transfers under one proof is
+   within `pot18` and measured here: 148.7 vB, nothing to prove on the phone, 4 s on the relayer's
+   laptop for three.
+2. **What a relayed transfer can cost instead is about 200 vB.** One ephemeral key for a transfer
+   and a bare leaf for the relayer's output take 92 bytes off each (222.9 to 199.7 vB at ten). Both
+   are changes of bytes, for a later version of the wire; the first also changes
+   `SPEC-NOTES.md` §3, which has not had its outside review. The line of the budget would then read
+   "about 200 vB".
+3. **The target is met, with room, where one payer pays several people.** Two inputs and up to 25
+   outputs fit the present domain and prove in the same time on the phone: 52.4 vB for each person
+   paid at ten, 35.3 at 24. Three inputs and five outputs fit as well (129,995 gates). That is a
+   withdrawal run of an exchange, a payroll, an airdrop, or a relayer paying out. It is also a
+   second relation: an extension type, its own key from the same powers, its own audit. Worth a
+   design after the signet, and not before the first relation is audited.
+4. **Not worth building**: shared openings (15 vB, against requirement 4, and one sender can stop
+   the batch) and several spends under one proof for a single wallet (item 3 does more in half the
+   time and memory).
+5. **Grouped verification** is free for an indexer whenever volume asks for it.
+
 ## How the result is checked
 
 - `cargo test --release`: 35 tests. Model against the indexer's constants; 34 adversarial witnesses
@@ -219,6 +331,8 @@ npx snarkjs plonk setup build/o1/spend.r1cs pot18.ptau build/o1/spend_plonk.zkey
 node bench/prove-snarkjs.mjs plonk build/o1/spend_plonk.zkey build/o1/spend_js/spend.wasm 3 [--single]
 node bench/prove-snarkjs.mjs fflonk <zkey made with powersOfTau28_hez_final_21.ptau> build/o1/spend_js/spend.wasm 3
 node bench/tx-vsize.mjs
+node bench/batch-vsize.mjs                                                # the sizes of "Batches and the 150 vB target"
+RAYON_NUM_THREADS=1 cargo run --release --example batch_cost -- pot18.ptau 1x2:3 1x2:11 1x2:25 2x2:3 3x2:3 verify:10
 (cd bench/halo2-shape && cargo run --release -- vanilla 17 && cargo run --release -- narrow 14)
 ```
 
@@ -260,6 +374,8 @@ node bench/tx-vsize.mjs
    be found without changing a rule. Each change moves the verifying-key digest. On hold (maintainer,
    2026-11-19).
 4. An audit ([`docs/AUDIT.md`](../docs/AUDIT.md) is the dossier for the auditor), then the freeze of the digest.
+5. **Batches**: the choice left by "Batches and the 150 vB target" is the maintainer's. A transfer
+   with more outputs, if wanted, is a second relation to design, key and audit.
 
 ## Licence
 
