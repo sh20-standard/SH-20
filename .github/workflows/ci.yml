@@ -71,10 +71,13 @@ jobs:
       - name: differential fuzzing, a new seed each run
         working-directory: indexer
         run: node bin/fuzz.js --rs ../indexer-rs/target/release/sh20-indexer-rs --seed run-${{ github.run_id }} --chains 30 --blocks 40 --keep ../fuzz-failures
-      # Both indexers follow one random chain served as an Esplora API; every route of docs/API.md must answer alike.
-      - name: the two APIs, route by route
+      # Both indexers follow one random chain served as an Esplora API; every route of docs/API.md must answer alike,
+      # then again after a reorg that lengthens the chain, and after one that does not.
+      - name: the two APIs, route by route, through a reorg
         working-directory: indexer
-        run: node bin/api-diff.js --rs ../indexer-rs/target/release/sh20-indexer-rs --seed ci --blocks 40
+        run: |
+          node bin/api-diff.js --rs ../indexer-rs/target/release/sh20-indexer-rs --seed ci --blocks 40 --reorg 3,2
+          node bin/api-diff.js --rs ../indexer-rs/target/release/sh20-indexer-rs --seed run-${{ github.run_id }} --blocks 40 --reorg 2,0
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
