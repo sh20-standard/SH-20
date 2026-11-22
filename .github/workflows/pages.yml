@@ -7,6 +7,7 @@ name: pages
 #   /            → redirects to vault/
 #   /vault/      → the vault (vault/build.js)
 #   /explorer/   → the explorer (explorer/index.html)
+#   /phone/      → the phone test page (circuit/web), for testers' measurements
 #
 # GitHub Pages sends no cross-origin isolation headers: the vault isolates itself with its service worker (sw.js at the
 # site's root) and proves on several threads all the same. The origin, <owner>.github.io, is shared only with the other
@@ -35,9 +36,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node vault/build.js
+      # the signet profile: the build stops while vault/src/profile.js has no activation height, so
+      # nothing is published before the launch fixes it (docs/SIGNET.md)
+      - run: node vault/build.js --signet
       - name: the explorer beside the vault
         run: mkdir -p vault/dist/explorer && cp explorer/index.html vault/dist/explorer/index.html
+      # testers measure their phones here (circuit/web/README.md), with the WebAssembly modules the vault
+      # ships: the CI checks they are what circuit/ builds (vault/tools/prover.sh --check)
+      - name: the phone test page beside them
+        run: |
+          mkdir -p vault/dist/phone
+          (cd circuit/web && cp index.html app.js host.js prover-worker.js thread-worker.js sw.js ../../vault/dist/phone/)
+          cp vault/prover/sh20_circuit.wasm vault/prover/sh20_circuit_threads.wasm circuit/artifacts/spend.pk vault/dist/phone/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: vault/dist

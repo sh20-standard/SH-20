@@ -7,7 +7,7 @@
 // URL of ours would make us one: everyone would ask it first, and it would see who uses the vault.
 // The signet defaults are your own indexers (indexer/bin/follow.js --activation A, on your own
 // signet node, docs/API.md) and a public Esplora. Indexers run by others can be added at launch
-// (vault/RELEASES.md); test/servers.test.js names every host a default may use.
+// (vault/RELEASES.md); test/signet.test.js names every host a default may use.
 
 export const SERVERS = Object.freeze({
   // dev/serve.js (a demo chain) and dev/regtest.js (Bitcoin Core): two indexers and their Esplora, on this machine
