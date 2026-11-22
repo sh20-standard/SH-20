@@ -366,9 +366,12 @@ async function main() {
   const listing = await (await fetch(`http://127.0.0.1:8020/listing/${listTxid}`)).json();
   const lockVout = Number(listing.lock.split(':')[1]);
   const lockOut = parseTx(fromHex(await (await fetch(`${ESPLORA}/tx/${listTxid}/hex`)).text())).vout[lockVout];
-  const [coin] = await (await fetch(`${ESPLORA}/address/${WALLET.address}/utxo`)).json();
   const price = BigInt(listing.price);
   const fee = 1000n;
+  // the wallet's largest coin: its first one may be too small to pay the price, the fee and a change above dust
+  const coins = await (await fetch(`${ESPLORA}/address/${WALLET.address}/utxo`)).json();
+  const coin = coins.filter((u) => BigInt(u.value) >= price + fee + 546n).sort((x, y) => y.value - x.value)[0];
+  if (!coin) throw new Error(`no coin of the wallet pays ${price + fee + 546n} sats: ${coins.map((u) => u.value).join(', ')}`);
   const closing = {
     version: 2, locktime: 0, // what the offer signs (market.js offerSkeleton)
     vin: [
