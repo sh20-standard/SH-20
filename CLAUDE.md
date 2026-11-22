@@ -39,6 +39,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `indexer-rs/` | a second indexer in Rust, written from the spec alone (clean room): `cargo test --release` replays the vectors |
 | `docs/SPEC-GAPS.md` | what the clean-room indexer found open in the spec, and where each point is now settled |
 | `docs/AUDIT.md` | the dossier for an external zero-knowledge auditor: scope, the relation constraint by constraint, threat model, open doubts; §8 is a first reading of the vault's cryptography, with its findings |
+| `docs/SIGNET.md` | the public signet, step by step: what must be true first, the launch, what testers do, when the run stops |
 | `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` and `indexer-rs follow` (for the vault, the explorer and relayers): one JSON shape for both, checked by `indexer/bin/api-diff.js` |
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
 | `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
@@ -70,9 +71,10 @@ explorer's demo data regenerate byte for byte, and holds `indexer-rs` and `circu
 `vault/prover/*.wasm` in the same pull request. The script builds as from an x86_64 Linux host on every machine
 (`vault/tools/rustc-host.sh` says why the host triple would otherwise change the bytes).
 
-`.github/workflows/pages.yml` publishes the vault (`/vault/`) and the explorer (`/explorer/`) as one static site on GitHub
-Pages from `main`, once the repository variable `PAGES` is `on`: no server to rent for the signet's pages. The vault isolates
-itself with its service worker there (Pages sends no isolation headers).
+`.github/workflows/pages.yml` publishes the vault (`/vault/`, on the signet profile), the explorer (`/explorer/`) and the
+phone test page (`/phone/`) as one static site on GitHub Pages from `main`, once the repository variable `PAGES` is `on`: no
+server to rent for the signet's pages. It stops while the signet's `A` is unset. The vault and the phone page isolate
+themselves with their service worker there (Pages sends no isolation headers). The launch, step by step: `docs/SIGNET.md`.
 
 Any pull request that moves a line `docs/AUDIT.md` cites, or renames a test it quotes, updates `docs/AUDIT.md` with it: the CI checks it
 (`docs/tools/check-audit-refs.py`; `--fix` rewrites the numbers of lines that only moved).
