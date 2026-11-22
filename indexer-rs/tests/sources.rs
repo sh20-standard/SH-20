@@ -315,6 +315,24 @@ fn follow_command_over_esplora() {
     assert_eq!(http_get(&format!("{}/listings?state=CLOSED", running.url)).1.as_array().unwrap().len(), 4);
 }
 
+/// `docs/API.md`: the verifier that refuses every spend is `reject-all` in `/status`, whether
+/// it is the default or asked for under either of its names.
+#[test]
+fn follow_command_names_its_verifier() {
+    let v = vectors();
+    let api = http_server(esplora(Chain::new(scenario(&v, true))));
+    for verifier in [&[][..], &["--verifier", "reject-all"][..], &["--verifier", "reject"][..]] {
+        let mut args = vec!["--esplora", api.as_str(), "--activation", "1", "--deploy-burn", "1000"];
+        args.extend_from_slice(verifier);
+        let running = start(&args);
+        let s = wait_for(&running, "block 17", |s| s["height"] == 17);
+        assert_eq!((&s["verifier"], &s["genesis"]), (&json!("reject-all"), &json!("SH20")), "{verifier:?}");
+        // every spend refused: no nullifier, and not the digest of the vectors
+        assert_eq!(s["nullifiers"], 0);
+        assert_ne!(s["digest"], last_digest(&v, "scenario"));
+    }
+}
+
 /// What the command refuses to start with, and how it ends when it must stop.
 #[test]
 fn follow_command_errors() {

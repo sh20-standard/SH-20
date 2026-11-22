@@ -126,6 +126,36 @@ fn reorg_to_a_shorter_chain() {
     assert_eq!(dump(&store), full);
 }
 
+/// The scenario undone one block at a time: after each block undone, every route answers as
+/// it did when that block had not come yet. A listing sold, cancelled or closed by a block
+/// that leaves the chain is ACTIVE again, with no `takeTxid` and no `closedBy`.
+#[test]
+fn every_block_undone_leaves_what_was_before() {
+    let v = vectors();
+    let blocks = scenario(&v, false);
+    let chain = Chain::default();
+    let (mut f, store) = follower(&v, chain.clone());
+    let mut before = vec![dump(&store)];
+    for k in 1..=blocks.len() {
+        chain.set(blocks[..k].to_vec());
+        assert_eq!(follow(&mut f), [Step::Applied(k as u32)]);
+        before.push(dump(&store));
+    }
+    // the scenario does end listings in a block after the one that listed them
+    let ended = |name: &str| {
+        let listings = get(&store, "/listings");
+        let ended = listings.as_array().unwrap().iter().filter(|l| l.get(name).is_some());
+        ended.filter(|l| get(&store, &format!("/tx/{}", l[name].as_str().unwrap()))["height"] != l["height"]).count()
+    };
+    assert!(ended("takeTxid") > 0 && ended("closedBy") > 0);
+
+    for k in (0..blocks.len()).rev() {
+        chain.set(blocks[..k].to_vec());
+        assert_eq!(follow(&mut f), [Step::RolledBack(k as u32 + 1)]);
+        assert_eq!(dump(&store), before[k], "after block {} is undone", k + 1);
+    }
+}
+
 /// A reorg below the activation block undoes everything, the genesis token included.
 #[test]
 fn reorg_of_the_activation_block() {

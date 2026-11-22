@@ -76,6 +76,22 @@ test('a reorg rolls back to the common block and replays the new branch', async 
   assert.equal(ix.notes.length, ix.tree.size);
 });
 
+test('a fork of the same height, or a shorter one, is followed too', async () => {
+  const { a } = scenario();
+  const same = [...a.slice(0, 3), ...blocks([[mint()], []], { start: 4, salt: 'c', parent: a[2].hash })];
+  const shorter = [...a.slice(0, 3), ...blocks([[mint(), mint()]], { start: 4, salt: 'd', parent: a[2].hash })];
+  for (const fork of [same, shorter]) {
+    const ix = make();
+    const src = new MemorySource(a);
+    const f = new Follower({ indexer: ix, source: src, startHeight: 1 });
+    await f.step();
+    src.set(fork);
+    await f.step();
+    assert.equal(ix.height, fork.length);
+    assert.equal(ix.digest.toString('hex'), replay(fork));
+  }
+});
+
 test('a reorg deeper than the kept history is refused, not silently wrong', async () => {
   const { a, b } = scenario();
   const ix = make();

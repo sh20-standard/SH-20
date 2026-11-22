@@ -116,6 +116,13 @@ export class Follower {
   /** Applies every block up to the tip. Returns how many blocks were applied. */
   async step() {
     const tip = (await this.source.tipHeight()) - this.confirmations;
+    // A reorg that does not lengthen the chain (a fork of the same height, or a shorter one) shows only at our own
+    // tip: the next block, which the check below compares, may never come. Found by bin/api-diff.js --reorg 2,0.
+    const ours = this.indexer.height;
+    if (ours !== null && ours >= this.startHeight) {
+      const h = Math.min(ours, tip);
+      if (h < ours || (await this.source.blockHash(h)) !== this.hashes.get(h)) await this._reorg(h);
+    }
     let applied = 0;
     for (;;) {
       const next = this.indexer.height === null ? this.startHeight : this.indexer.height + 1;

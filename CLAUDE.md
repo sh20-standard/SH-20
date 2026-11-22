@@ -39,7 +39,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `indexer-rs/` | a second indexer in Rust, written from the spec alone (clean room): `cargo test --release` replays the vectors |
 | `docs/SPEC-GAPS.md` | what the clean-room indexer found open in the spec, and where each point is now settled |
 | `docs/AUDIT.md` | the dossier for an external zero-knowledge auditor: scope, the relation constraint by constraint, threat model, open doubts; §8 is a first reading of the vault's cryptography, with its findings |
-| `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` (for the vault and relayers) |
+| `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` and `indexer-rs follow` (for the vault, the explorer and relayers): one JSON shape for both, checked by `indexer/bin/api-diff.js` |
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
 | `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
 | `circuit/` | the spend circuit: PLONK prover and verifier in Rust, WebAssembly build, measurements ([`circuit/README.md`](circuit/README.md)) |
@@ -161,8 +161,10 @@ claims exist. What is left before people can try it, in order (review of 2026-11
      nullifiers, anchors at and past the window, DEPLOY commits old enough or not, missing heights), applies them in the
      reference and through `indexer-rs replay --json`, and compares every block's root, digest and refusals. The CI runs
      30 chains of 40 blocks on a fixed seed and 30 on a new seed each run; a divergence keeps the chain and prints the
-     command that replays it. First long run: 200 chains, 7,883 blocks, no divergence. Still to add: reorgs (the Rust replay reads a straight chain;
-     its follow mode will take them).
+     command that replays it. First long run: 200 chains, 7,883 blocks, no divergence. Reorgs: `indexer/bin/api-diff.js`
+     serves a random chain as an Esplora API to both followers, then a fork (longer, or of the same height), and compares
+     every route of the API before and after, and the end against a reference that only saw the fork. Its first run
+     with a fork of the same height found that the reference follower stayed on the old tip (fixed, with a test).
    - **Scale.** The note tree is no longer the limit (2026-11-19: an append hashes only the subtrees it completes,
      129 µs on average, a path is O(depth); a million leaves in about 2 minutes, was about 1.5 hours). What is left:
      the indexer keeps its whole state in memory and replays from `A` on every restart; `/nullifiers`, `/roots` and

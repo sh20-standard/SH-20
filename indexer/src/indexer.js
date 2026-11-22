@@ -57,6 +57,7 @@ export class Indexer {
     this.history = new Map(); // height -> { height, hash, digest, root, events, rejected }
     this.txIndex = new Map(); // txid -> height
     this.digests = new Map(); // height -> digest hex, every block: lets anyone compare indexers at one height
+    this.blocks = new Map(); // height -> { hash, leaves }, every block from A on: /block/:height and the tip's hash
   }
 
   /** Appends a leaf to the tree and records its metadata for wallets. */
@@ -127,6 +128,7 @@ export class Indexer {
       h.writeUInt32LE(block.height);
       this.digest = sha256(this.digest, h, frToBytes(this.tree.root), delta);
       this._set(this.digests, block.height, this.digest.toString('hex'));
+      this._set(this.blocks, block.height, { hash: block.hash ?? null, leaves: this.tree.size });
     }
     if (events.length || rejected.length) {
       this._set(this.history, block.height, {
