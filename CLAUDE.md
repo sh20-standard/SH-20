@@ -61,7 +61,7 @@ bench/cross-check.sh    # snarkjs against our verifier, both ways (hard requirem
 web/build.sh            # the phone test page, in web/dist/ (see circuit/web/README.md)
 ```
 
-`.github/workflows/ci.yml` runs the tests of `indexer`, `indexer-rs`, `circuit`, `circuit/js` and `vault` on each push and pull request, checks that the vectors and the
+`.github/workflows/ci.yml` runs the tests of `indexer`, `indexer-rs`, `circuit`, `circuit/js` and `vault` on each pull request and on `main` (once per commit, a newer commit cancels the older run), checks that the vectors and the
 explorer's demo data regenerate byte for byte, and holds `indexer-rs` and `circuit` to `cargo fmt` and `clippy -D warnings`
 (`circuit/rustfmt.toml`: lines of 160, so that formatting moves no line `docs/AUDIT.md` cites). Both crates pin their Rust in
 `rust-toolchain.toml` (1.95.0, with rustfmt and clippy): the CI and every machine use the same compiler and the same lints.
