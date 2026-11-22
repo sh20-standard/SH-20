@@ -215,8 +215,14 @@ Keep only what the protocol needs; add nothing that costs bytes without a clear 
 | TRANSFER, in a relayer batch | allowed (`SPEC-WIRE.md` §3): `(515 + 840 n) / 4` vB for `n` transfers, about 223 vB each at `n = 10`, plus a share of the commit | ≤ ~150 vB per transfer |
 
 Sizes are computed from serialized envelopes by `circuit/bench/tx-vsize.mjs` (a P2TR payment comes out at 154 vB by the same
-count); nothing has been broadcast yet. The batch target is out of reach of lever 1 alone: a spend section is 824 bytes, 206 vB
-of witness even when every other byte is shared, so it needs lever 5 and probably one proof for several transfers.
+count); nothing has been broadcast yet.
+
+The batch target was measured on 2026-11-21 (`circuit/README.md`, "Batches and the 150 vB target"): with a proof for each
+transfer it is out of reach whatever is done to the rest, since 150 vB leaves 54 bytes for a spend whose nullifiers and leaves
+are 160. It takes three transfers under one proof. `pot18` allows that (a domain of 2^18) and no more, and only someone who
+holds the three witnesses can make the proof: a relayer that sees its users' transfers. Within the requirements: about 200 vB
+for a relayed transfer (92 bytes off its body), and 52 vB for each person paid when one payer pays ten (a transfer with more
+outputs, in the same domain and the same proving time).
 
 Levers, biggest first. Measure each one and keep every hard requirement above:
 1. **Proof size.** Done: PLONK with KZG on the same public Hermez setup, 480 bytes, against Tacit's 2,080
@@ -256,7 +262,11 @@ private part that already proves and verifies, in open code.
 
 ## Open decisions (ask the maintainer)
 
-None open on 2026-11-20. Still to fix before the signet: the profile constants (activation height `A`).
+Open since 2026-11-21: the batch target of the cost budget (≤ ~150 vB per transfer). `circuit/README.md` ("Batches and the 150
+vB target") recommends one proof for each relayed transfer, a target of about 200 vB for it, and the design of a transfer with
+more outputs after the signet. The maintainer decides.
+
+Still to fix before the signet: the profile constants (activation height `A`).
 
 Decided (2026-11-20): the name stays **SH-20** and the magic `SH20`; tickers are 4 characters only; `D = 1000` SH20
 burned per DEPLOY, so at most 21,000 tokens can ever be deployed (21,000,000 / `D`); several TRANSFER envelopes per
