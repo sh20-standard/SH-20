@@ -71,15 +71,21 @@ async function main() {
   profile = mkdtempSync(join(tmpdir(), 'sh20-e2e-'));
   if (!CHROME) throw new Error('no Chrome found: give its path');
   // in CI, Chrome runs without its sandbox (the runner's kernel may not let it create one), on the test page alone
-  chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`, '--no-first-run', ...(process.env.CI ? ['--no-sandbox'] : []), 'about:blank'], { stdio: 'ignore' });
+  // In CI, Chrome also leaves /dev/shm alone (small on a runner) and draws nothing on a GPU. Its own output is kept, so
+  // that a Chrome that does not start says why; a runner busy with Bitcoin Core may need far more than ten seconds.
+  const said = [];
+  chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`, '--no-first-run', ...(process.env.CI ? ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] : []), 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  chrome.stderr.on('data', (d) => said.push(String(d)));
+  let exited = null;
+  chrome.on('exit', (code, signal) => (exited = signal ?? code));
   let target;
-  for (let i = 0; i < 50 && !target; i++) {
+  for (let i = 0; i < 300 && !target && exited === null; i++) {
     await sleep(200);
     try {
       target = (await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()).find((t) => t.type === 'page');
     } catch {}
   }
-  if (!target) throw new Error('Chrome did not start');
+  if (!target) throw new Error(`Chrome did not start${exited !== null ? ` (it exited: ${exited})` : ' in 60 s'}; it said:\n${said.join('').split('\n').slice(-20).join('\n')}`);
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((r) => ws.addEventListener('open', r));
   let id = 0;
