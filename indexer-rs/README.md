@@ -19,7 +19,7 @@ beside the reference indexer and be compared with it block by block (`follow`, b
 
 ```sh
 cd indexer-rs
-cargo test --release      # 102 tests
+cargo test --release      # 104 tests
 cargo run --release -- replay <folder of `bitcoin-cli getblock <hash> 3` JSON files> [options]
 cargo run --release -- follow --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS --activation A --deploy-burn D
 ```
@@ -28,7 +28,7 @@ cargo run --release -- follow --rpc http://127.0.0.1:38332 --rpcuser USER --rpcp
 
 ```
 sh20-indexer-rs replay <folder> [--activation <A>] [--deploy-burn <D>] [--window <W>] [--min-depth <K_min>]
-                                [--maturity <N>] [--verifier reject|test] [--json]
+                                [--maturity <N>] [--verifier reject-all|test] [--json]
 ```
 
 Reads every `.json` file of the folder (one block each, bare or inside a JSON-RPC `result`), orders them by the
@@ -51,7 +51,7 @@ revealed in a witness: there the replay stops with an error that names the block
 no digest for that block. It never guesses, and never refuses the DEPLOY for lack of a height. Esplora gives the
 same height as the spent transaction's `status.block_height`; this command reads `getblock` files only.
 
-`--verifier reject` (default) refuses every spend. `--verifier test` accepts the one proof the vectors use
+`--verifier reject-all` (default; `reject` is the same) refuses every spend. `--verifier test` accepts the one proof the vectors use
 (`"valid-proof"` padded with zeros to 480 bytes). The PLONK verifier of `circuit/` is not wired in: it implements
 the `SpendVerifier` trait when someone adds it.
 
@@ -63,7 +63,7 @@ the digests. The first block where they differ holds the event to look at; `--js
 ```
 sh20-indexer-rs follow (--rpc <url> [--rpcuser <user> --rpcpass <password> | --rpccookie <file>] | --esplora <url>)
                        --activation <A> --deploy-burn <D> [--window <W>] [--min-depth <K_min>] [--maturity <N>]
-                       [--verifier reject|test] [--listen <address>] [--data <folder>] [--poll <seconds>]
+                       [--verifier reject-all|test] [--listen <address>] [--data <folder>] [--poll <seconds>]
                        [--network <name>]
 ```
 
@@ -89,8 +89,8 @@ Follows the best chain from the activation block and serves the API of `docs/API
   height. Without `--data`, a restart reads the chain again from `A`.
 - **A missing commit height** (a node that gives no `prevout.height`) stops the command at the first DEPLOY
   revealed, with the block and the transaction named (SPEC-WIRE §5: stop, do not guess).
-- **Proofs.** As for `replay`: `--verifier reject` refuses every spend and `test` is the vectors' rule. There is no
-  PLONK verifier here yet. See "Beside the reference indexer" for what that means on a chain with real spends.
+- **Proofs.** As for `replay`: `--verifier reject-all` refuses every spend and `test` is the vectors' rule; `/status`
+  gives that name. There is no PLONK verifier here yet (`plonk-bn254-hermez` in the reference's `/status`). See "Beside the reference indexer" for what that means on a chain with real spends.
 
 Standard error gets the profile, `listening on http://<address>`, a line per block (`block <height> <digest>`; one
 every few seconds while catching up), `reorg: block <height> undone`, and `source: …; trying again`.
@@ -104,11 +104,20 @@ Every route of `docs/API.md`, GET only, JSON, `Access-Control-Allow-Origin: *`, 
 `/nullifiers?from=H` `/listings?state=ACTIVE` `/listing/:txid` `/digest/:height` `/blocks?before=H&limit=20`
 `/tx/:txid`, and `/block/:height`, which `docs/API.md` does not list (one block, as an entry of `/blocks`).
 
-Encodings are those of `docs/API.md`: amounts as decimal strings; field elements, hashes and nullifiers as
-64-character big-endian hex; txids in display order. Where it does not say what a field holds (an event or a
-listing as JSON, `genesis` and `network` in `/status`, a block's `events`), this indexer had to choose:
-`docs/SPEC-GAPS.md` ("The HTTP API") lists the sixteen choices. Until the reference is checked against that list,
-compare the two indexers on the values that are normative, which both must give alike:
+Encodings and shapes are those of `docs/API.md`: amounts as decimal strings; field elements, hashes and nullifiers
+as 64-character big-endian hex; txids in display order; an event under the names of SPEC-WIRE §6; a listing as
+`{ listTxid, ticker, amount, price, payScript, lock, lockKey, state, height }` with `lock` as `txid:vout`, `takeTxid`
+once sold or cancelled and `closedBy` once closed. The document first left sixteen of these open (`docs/SPEC-GAPS.md`,
+"The HTTP API"); they are settled there now, and `indexer/bin/api-diff.js` has both indexers follow one random chain,
+through a reorg, and compares every route field by field:
+
+```sh
+cargo build --release
+node ../indexer/bin/api-diff.js --rs target/release/sh20-indexer-rs --reorg 3,2
+```
+
+Only `implementation` and the free text of errors and refusal reasons may differ. On a live network, these are the
+values to watch, which two indexers must give alike:
 
 | Route | Compare |
 | --- | --- |
@@ -127,7 +136,7 @@ Both read the same node (or the same Esplora), each on its own port, with the sa
 
 ```sh
 # the reference, as docs/API.md gives it
-cd indexer && node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS --activation A
+cd indexer && node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS --activation A --deploy-burn D
 
 # this one
 cd indexer-rs && cargo run --release -- follow --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS \
@@ -138,8 +147,8 @@ cd indexer-rs && cargo run --release -- follow --rpc http://127.0.0.1:38332 --rp
    `deployMaturity`) and give this one the same `--activation`, `--deploy-burn`, `--window` and `--maturity`
    (and `--min-depth` if the reference does not use `K_min = 1`). `D`, `W`, `K_min` and `N` are in the GENESIS
    record: with a different one, the digests differ from block `A` on. `A` is in no digest: check it by eye.
-2. **The same verifier.** This indexer refuses every spend. It agrees with a reference started without
-   `--verifier <wasm>`, and with one started with it up to the first valid proof on the chain (a TRANSFER, a BURN,
+2. **The same verifier.** This indexer refuses every spend (`verifier: "reject-all"` in `/status`). It agrees with a
+   reference started without `--verifier <wasm>` (`reject-all` too), and with one started with it up to the first valid proof on the chain (a TRANSFER, a BURN,
    a LIST, or a DEPLOY, which burns `D`): from that block on the reference accepts what this one refuses and the
    digests part for good. Mints and proof-less envelopes (MINT, TAKE, CLAIM) are compared in full either way.
    A PLONK verifier behind the `SpendVerifier` trait is what a signet with real spends needs.
@@ -182,7 +191,7 @@ cd indexer-rs && cargo run --release -- follow --rpc http://127.0.0.1:38332 --rp
 | `tests/codec.rs` | every envelope of the vectors and of the §4 table, byte for byte; the note leaf; what the decoder refuses |
 | `tests/rules.rs` | what the vectors do not cover: carriers at their edges, batches at their edges, mint window and payment, DEPLOY conditions and maturity, the `payScript` rule, anchors, nullifiers, CANCELLED, CLOSED, CLAIM, team unlocks, reorgs |
 | `tests/replay_cli.rs` | the `replay` command over the scenario written as `getblock` files |
-| `tests/follow.rs` | the follower over a chain in memory: the scenario block after block, among transactions that carry nothing; the vectors' reorg and back; a shorter chain; a reorg of the activation block; one deeper than the undo history; a failure at every call to the source; a missing commit height; restarts from the block file, and a damaged file |
+| `tests/follow.rs` | the follower over a chain in memory: the scenario block after block, among transactions that carry nothing; the vectors' reorg and back; a shorter chain; the scenario undone block by block; a reorg of the activation block; one deeper than the undo history; a failure at every call to the source; a missing commit height; restarts from the block file, and a damaged file |
 | `tests/api.rs` | every route over the scenario: roots, digests, `eventsH`, refusals, nullifiers, listings and token counters against the vectors; public leaves recomputed from their openings; Merkle paths folded up to the root; batches in `/tx`; pages, bad parameters, 404s |
 | `tests/sources.rs` | over real sockets on local ports: the scenario served as Bitcoin Core's RPC (credentials, a busy node, no `prevout.height`) and as an Esplora API (pages, commit heights, 429), and the `follow` command from its first block through a reorg, a stop and a restart with the node down |
 

@@ -213,7 +213,7 @@ pub fn dump(store: &RwLock<Store>) -> Value {
         take(format!("/nullifier/{}", n["nullifier"].as_str().unwrap()));
     }
     for l in take("/listings".into()).as_array().unwrap() {
-        take(format!("/listing/{}", l["txid"].as_str().unwrap()));
+        take(format!("/listing/{}", l["listTxid"].as_str().unwrap()));
     }
     for state in ["ACTIVE", "SOLD", "CANCELLED", "CLOSED", "CLAIMED"] {
         take(format!("/listings?state={state}"));

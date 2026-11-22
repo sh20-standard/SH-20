@@ -32,7 +32,7 @@ options:
   --window <W>            anchor window (default: 100)
   --min-depth <K_min>     anchor minimum depth (default: 1)
   --maturity <N>          blocks a DEPLOY commit must have behind it (default: 6)
-  --verifier <name>       reject (default: every spend is refused) or
+  --verifier <name>       reject-all (default: every spend is refused; `reject` is the same) or
                           test (accepts the proof \"valid-proof\" padded with zeros to 480 bytes)
   --json                  one JSON object per block: height, root, events, eventsH, digest, rejected
 
@@ -93,7 +93,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         window: 100,
         min_depth: 1,
         maturity: sh20_indexer::state::DEPLOY_MATURITY,
-        verifier: "reject".into(),
+        verifier: "reject-all".into(),
         listen: "127.0.0.1:8621".into(),
         poll: 10,
         ..Options::default()
@@ -148,11 +148,12 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
     Ok(o)
 }
 
-fn verifier_of(name: &str) -> Result<Box<dyn SpendVerifier>, String> {
+/// The verifier, and its name as `/status` gives it (`docs/API.md`).
+fn verifier_of(name: &str) -> Result<(Box<dyn SpendVerifier>, &'static str), String> {
     match name {
-        "reject" => Ok(Box::new(RejectAll)),
-        "test" => Ok(Box::new(TestVerifier)),
-        other => Err(format!("unknown verifier \"{other}\" (reject or test)")),
+        "reject-all" | "reject" => Ok((Box::new(RejectAll), "reject-all")),
+        "test" => Ok((Box::new(TestVerifier), "test")),
+        other => Err(format!("unknown verifier \"{other}\" (reject-all or test)")),
     }
 }
 
@@ -172,9 +173,10 @@ fn follow(o: &Options) -> Result<(), String> {
         anchor_min_depth: o.min_depth,
         deploy_maturity: o.maturity,
     };
-    let indexer = Indexer::new(profile, verifier_of(&o.verifier)?);
+    let (verifier, verifier_name) = verifier_of(&o.verifier)?;
+    let indexer = Indexer::new(profile, verifier);
     let network = o.network.clone().unwrap_or_else(|| "unknown".into());
-    let store = Arc::new(RwLock::new(Store::new(profile, &network, &o.verifier)));
+    let store = Arc::new(RwLock::new(Store::new(profile, &network, verifier_name)));
     let file = match &o.data {
         Some(dir) => Some(BlockFile::open(Path::new(dir), profile.activation_height)?),
         None => None,
@@ -182,8 +184,8 @@ fn follow(o: &Options) -> Result<(), String> {
     // the address first: a port already taken should not cost a replay of the block file
     let listener = TcpListener::bind(&o.listen).map_err(|e| format!("--listen {}: {e}", o.listen))?;
     let address = listener.local_addr().map_err(|e| e.to_string())?;
-    eprintln!("{}", profile_line(&profile, &o.verifier));
-    if o.verifier == "reject" {
+    eprintln!("{}", profile_line(&profile, verifier_name));
+    if verifier_name == "reject-all" {
         eprintln!("note: no proof verifier, so every spend is refused (TRANSFER, BURN, LIST, a DEPLOY that burns)");
     }
 
@@ -271,7 +273,7 @@ fn run(o: &Options) -> Result<(), String> {
     if first > activation {
         return Err(format!("the folder starts at block {first}, after the activation block {activation}"));
     }
-    let verifier = verifier_of(&o.verifier)?;
+    let (verifier, verifier_name) = verifier_of(&o.verifier)?;
     let profile = Profile {
         activation_height: activation,
         deploy_burn: o.deploy_burn.unwrap_or(0),
@@ -279,7 +281,7 @@ fn run(o: &Options) -> Result<(), String> {
         anchor_min_depth: o.min_depth,
         deploy_maturity: o.maturity,
     };
-    eprintln!("{}", profile_line(&profile, &o.verifier));
+    eprintln!("{}", profile_line(&profile, verifier_name));
 
     let mut indexer = Indexer::new(profile, verifier);
     for block in blocks.iter().filter(|b| b.height >= activation) {

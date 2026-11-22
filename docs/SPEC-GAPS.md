@@ -261,6 +261,11 @@ ticker (`"SH20"`), a listing is `{ listTxid, …, lock: "txid:vout", …, takeTx
 refuses every spend is named `reject-all`. A7 to A10, A12 and A14 to A16 were already alike or are now written down as
 chosen here; A15 (the port) is each implementation's own.
 
+**Done in `indexer-rs` (2026-11-22):** the three are as `API.md` writes them, so the "chosen here" column of A5 and A6
+above is history for `genesis`, the listing and the verifier's name. `api-diff.js --reorg 3,2` finds no difference
+(591 requests in 54 shapes), nor through forks of 2 blocks into 2, 2 into 4 and 1 into 5. The tool was run, not read:
+`indexer/bin/` stays outside the clean room, and these changes come from `API.md` alone.
+
 Two points are not gaps of the text but decide whether the two indexers can be compared on the signet:
 
 - **The proof verifier.** `/status` names the verifier, and `indexer-rs` has only two: `reject` (every spend is

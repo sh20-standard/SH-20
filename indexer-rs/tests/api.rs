@@ -62,10 +62,9 @@ fn status() {
     for key in ["activationHeight", "deployBurn", "anchorWindow", "anchorMinDepth", "deployMaturity"] {
         assert_eq!(s[key], p[key], "{key}");
     }
-    // the genesis token, as the vectors describe it
-    for key in ["ticker", "max", "lim", "pre", "price", "payMode"] {
-        assert_eq!(s["genesis"][key], v["genesis"][key], "genesis.{key}");
-    }
+    // the genesis ticker, as the vectors name it
+    assert_eq!(s["genesis"], v["genesis"]["ticker"]);
+    assert_eq!(s["genesis"], "SH20");
 
     // before the first block: no height, the digest an indexer starts from, the empty root
     let empty = follower(&v, Chain::default()).1;
@@ -285,8 +284,29 @@ fn listings() {
     assert_eq!(list(&all).len(), want.len());
     let mut last_height = 0;
     for l in list(&all) {
-        let txid = text(&l["txid"]);
+        let txid = text(&l["listTxid"]);
         assert_eq!(l["state"], want[txid], "{txid}");
+        // who ended it, and nothing else: the TAKE of a sale or a cancellation, the
+        // transaction that spent the lock of a closed one, kept once claimed
+        let state = text(&l["state"]);
+        assert_eq!(l.get("takeTxid").is_some(), ["SOLD", "CANCELLED"].contains(&state), "{txid}");
+        assert_eq!(l.get("closedBy").is_some(), ["CLOSED", "CLAIMED"].contains(&state), "{txid}");
+        if let Some(take) = l.get("takeTxid") {
+            let e = &get(&store, &format!("/tx/{}", text(take)))["event"];
+            assert_eq!((&e["type"], &e["listTxid"], &e["outcome"]), (&json!("TAKE"), &l["listTxid"], &l["state"]));
+        }
+        if let Some(by) = l.get("closedBy") {
+            let tx = get(&store, &format!("/tx/{}", text(by)));
+            let closed: Vec<&Value> = list(&tx["events"]).iter().filter(|e| e["type"] == "CLOSED").collect();
+            assert_eq!(closed.len(), 1, "{txid}");
+            assert_eq!(closed[0]["listTxid"], l["listTxid"]);
+        }
+        // the lock is an output of the LIST itself
+        let (lock_txid, vout) = text(&l["lock"]).split_once(':').unwrap();
+        assert_eq!(lock_txid, txid);
+        assert!(vout.parse::<u8>().is_ok());
+        let keys = 9 + usize::from(l.get("takeTxid").is_some()) + usize::from(l.get("closedBy").is_some());
+        assert_eq!(l.as_object().unwrap().len(), keys, "{txid}");
         assert_eq!(get(&store, &format!("/listing/{txid}")), *l);
         // in LIST order, each one from the LIST event of its transaction
         let height = l["height"].as_u64().unwrap();
@@ -303,10 +323,8 @@ fn listings() {
     }
     // the first listing is the one whose envelope the codec test reads field by field
     let first = &list(&all)[0];
-    assert_eq!(
-        (&first["ticker"], &first["amount"], &first["price"], &first["lockVout"]),
-        (&json!("SH20"), &json!("1000"), &json!("5000"), &json!(0))
-    );
+    assert_eq!((&first["ticker"], &first["amount"], &first["price"]), (&json!("SH20"), &json!("1000"), &json!("5000")));
+    assert_eq!(first["lock"], format!("{}:0", text(&first["listTxid"])));
     assert_eq!(first["lockKey"], "abdc60eb9a25f0d97db71b0fc34b8f9fdb6bed43d241e4b2dffad16bf8d07311");
     assert_eq!(first["payScript"], "00149350872d712a127c494d7dc35e46b0bc9e62e288");
 
@@ -374,7 +392,8 @@ fn blocks_and_digests() {
     assert!(b17["events"][0].get("txid").is_none());
     let closed = list(&b17["events"]).last().unwrap();
     assert_eq!(closed["type"], "CLOSED");
-    assert_eq!(get(&store, &format!("/listing/{}", text(&closed["listTxid"])))["state"], "CLOSED");
+    let listing = get(&store, &format!("/listing/{}", text(&closed["listTxid"])));
+    assert_eq!((&listing["state"], &listing["closedBy"]), (&json!("CLOSED"), &closed["txid"]));
 
     // /blocks: newest first, 20 by default; every block of the scenario has an event or a refusal
     let newest = get(&store, "/blocks");

@@ -12,7 +12,6 @@ use crate::envelope::Ticker;
 use crate::events::{Event, Outcome, Spent};
 use crate::field::{fr_to_be, h2, hex, sha256, unhex32, Bytes32};
 use crate::state::{BlockResult, Indexer, Listing, ListingStatus, Note, NoteKind, Profile, Rejection, Token};
-use crate::state::{GENESIS_LIM, GENESIS_MAX};
 use crate::tree::DEPTH;
 use ark_bn254::Fr;
 use ark_ff::Zero;
@@ -49,6 +48,10 @@ struct ListingView {
     txid: Bytes32,
     height: u32,
     listing: Listing,
+    /// The TAKE that sold or cancelled it.
+    take: Option<Bytes32>,
+    /// The transaction that spent its lock without a TAKE.
+    closed_by: Option<Bytes32>,
 }
 
 pub struct Store {
@@ -245,17 +248,24 @@ fn token_json(v: &TokenView, activation: u32) -> Value {
 
 fn listing_json(v: &ListingView) -> Value {
     let l = &v.listing;
-    json!({
-        "txid": hex(&v.txid),
-        "height": v.height,
+    let mut o = json!({
+        "listTxid": hex(&v.txid),
         "ticker": l.ticker.as_str(),
         "amount": l.amount.to_string(),
         "price": l.price.to_string(),
         "payScript": hex(&l.pay_script),
-        "lockVout": l.lock.1,
+        "lock": format!("{}:{}", hex(&l.lock.0), l.lock.1),
         "lockKey": hex(&l.lock_key),
         "state": l.status.name(),
-    })
+        "height": v.height,
+    });
+    if let Some(txid) = &v.take {
+        o["takeTxid"] = json!(hex(txid));
+    }
+    if let Some(txid) = &v.closed_by {
+        o["closedBy"] = json!(hex(txid));
+    }
+    o
 }
 
 fn block_json(b: &BlockRecord) -> Value {
@@ -339,7 +349,24 @@ impl Store {
                 Event::List { txid, .. } => {
                     if let Some(l) = indexer.listing(txid) {
                         self.listing_index.insert(*txid, self.listings.len());
-                        self.listings.push(ListingView { txid: *txid, height: h, listing: l.clone() });
+                        let listing = l.clone();
+                        self.listings.push(ListingView {
+                            txid: *txid,
+                            height: h,
+                            listing,
+                            take: None,
+                            closed_by: None,
+                        });
+                    }
+                }
+                Event::Take { txid, list_txid, .. } => {
+                    if let Some(l) = self.listing_mut(list_txid) {
+                        l.take = Some(*txid);
+                    }
+                }
+                Event::Closed { txid, list_txid } => {
+                    if let Some(l) = self.listing_mut(list_txid) {
+                        l.closed_by = Some(*txid);
                     }
                 }
                 _ => {}
@@ -388,7 +415,28 @@ impl Store {
             let l = self.listings.pop().expect("checked");
             self.listing_index.remove(&l.txid);
         }
+        // a listing is taken once or closed once: what this block did to it is all there was
+        for (e, _) in &b.events {
+            match e {
+                Event::Take { list_txid, .. } => {
+                    if let Some(l) = self.listing_mut(list_txid) {
+                        l.take = None;
+                    }
+                }
+                Event::Closed { list_txid, .. } => {
+                    if let Some(l) = self.listing_mut(list_txid) {
+                        l.closed_by = None;
+                    }
+                }
+                _ => {}
+            }
+        }
         self.sync(indexer);
+    }
+
+    fn listing_mut(&mut self, list_txid: &Bytes32) -> Option<&mut ListingView> {
+        let i = *self.listing_index.get(list_txid)?;
+        self.listings.get_mut(i)
     }
 
     fn new_token(&mut self, indexer: &Indexer, ticker: &Ticker, deploy: Option<(Bytes32, u32)>) {
@@ -465,14 +513,7 @@ impl Store {
             "leaves": self.notes.len(),
             "nullifiers": self.nullifiers.len(),
             "tokens": self.tokens.len(),
-            "genesis": {
-                "ticker": Ticker::SH20.as_str(),
-                "max": GENESIS_MAX.to_string(),
-                "lim": GENESIS_LIM.to_string(),
-                "pre": "0",
-                "price": "0",
-                "payMode": 0,
-            },
+            "genesis": Ticker::SH20.as_str(),
             "deployBurn": p.deploy_burn.to_string(),
             "deployMaturity": p.deploy_maturity,
             "anchorWindow": p.anchor_window,
