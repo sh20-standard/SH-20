@@ -22,7 +22,7 @@ project has no account of its own.
 | Owner | Work | Done when |
 | --- | --- | --- |
 | indexer-rs | The PLONK verifier, from the `circuit/` crate only, under the name `plonk-bn254-hermez` | `indexer-rs` replays `indexer/test/fixtures/plonk-scenario.json` as the reference does |
-| coordination | `follow.js --data <folder>`: a restart goes on from the blocks it kept instead of replaying from `A` (the "Scale" item of `CLAUDE.md`) | a test restarts a follower mid-chain and gets every digest |
+| coordination | `follow.js --data <folder>`: a restart goes on from the blocks it kept instead of replaying from `A` (the "Scale" item of `CLAUDE.md`) | done (2026-11-23): `test/blockfile.test.js`, `test/follow-data.test.js` |
 | coordination | The mirror (decision 3): its static profile in `docs/API.md`, then the step of `pages.yml` that builds it | the explorer reads a mirror built from a random chain |
 | vault | Reading a mirror: no query string, the mirror of the page's own origin first in the signet defaults | the regtest flow passes against a mirror |
 | circuit | Nothing blocks on the circuit. The v0.4 transfer body (one ephemeral key, a bare leaf for the relayer: 92 bytes less) on paper, not in code | a section of `circuit/README.md` |

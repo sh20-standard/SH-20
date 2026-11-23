@@ -102,15 +102,37 @@ export class Follower {
    * @param {number} o.startHeight first block to read (the activation height)
    * @param {number} [o.confirmations] blocks to wait before applying (0 = follow the tip)
    * @param {number} [o.keepDepth] undo history kept for reorgs, in blocks
+   * @param {import('./blockfile.js').BlockFile} [o.file] keeps every block applied, and every rollback (--data)
    */
-  constructor({ indexer, source, startHeight, confirmations = 0, keepDepth = 288, log = () => {} }) {
+  constructor({ indexer, source, startHeight, confirmations = 0, keepDepth = 288, log = () => {}, file = null }) {
     this.indexer = indexer;
     this.source = source;
     this.startHeight = startHeight;
     this.confirmations = confirmations;
     this.keepDepth = keepDepth;
     this.log = log;
+    this.file = file;
     this.hashes = new Map(); // height -> hash of the applied block
+  }
+
+  /**
+   * Applies the blocks of the block file before the first step, without asking the source for them: a restart
+   * goes on from there. The next step checks the last of them against the source, as it checks every tip, so
+   * blocks a reorg replaced while the follower was stopped are undone then. Returns how many were applied.
+   */
+  restore(blocks) {
+    if (this.indexer.height !== null) throw new Error('restore() comes before the first block');
+    for (const block of blocks) this._apply(block, { keep: false });
+    return blocks.length;
+  }
+
+  _apply(block, { keep = true } = {}) {
+    const r = this.indexer.applyBlock(block);
+    this.hashes.set(block.height, block.hash);
+    this.hashes.delete(block.height - this.keepDepth - 1);
+    this.indexer.pruneFrames(this.keepDepth);
+    if (keep) this.file?.append(block);
+    return r;
   }
 
   /** Applies every block up to the tip. Returns how many blocks were applied. */
@@ -134,11 +156,7 @@ export class Follower {
         await this._reorg(next - 1);
         continue;
       }
-      const r = this.indexer.applyBlock(block);
-      this.hashes.set(next, block.hash);
-      this.hashes.delete(next - this.keepDepth - 1);
-      this.indexer.pruneFrames(this.keepDepth);
-      this.log(r);
+      this.log(this._apply(block));
       applied++;
     }
   }
@@ -149,6 +167,7 @@ export class Follower {
     const target = Math.max(h, this.startHeight - 1);
     this.log({ reorg: true, from: this.indexer.height, to: target });
     this.indexer.rollback(target);
+    this.file?.rollback(target + 1);
     for (const k of [...this.hashes.keys()]) if (k > target) this.hashes.delete(k);
   }
 
