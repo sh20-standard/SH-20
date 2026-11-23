@@ -25,7 +25,7 @@ project has no account of its own.
 | coordination | `follow.js --data <folder>`: a restart goes on from the blocks it kept instead of replaying from `A` (the "Scale" item of `CLAUDE.md`) | done (2026-11-23): `test/blockfile.test.js`, `test/follow-data.test.js` |
 | coordination | The mirror (decision 3): its static profile in `docs/API.md`, then the step of `pages.yml` that builds it | the explorer reads a mirror built from a random chain |
 | vault | Reading a mirror: no query string, the mirror of the page's own origin first in the signet defaults | the regtest flow passes against a mirror |
-| circuit | Nothing blocks on the circuit. The v0.4 transfer body (one ephemeral key, a bare leaf for the relayer: 92 bytes less) on paper, not in code | a section of `circuit/README.md` |
+| circuit | Nothing blocks on the circuit. The v0.4 transfer body (one ephemeral key, a bare leaf for the relayer: 92 bytes less) on paper, not in code | done (2026-11-23): `circuit/README.md`, "The transfer body of wire v0.4, on paper" |
 | everyone | No runner minutes until the move: run the CI's suites locally before pushing, and say which ones ran | — |
 
 ## 2. The move: one sitting

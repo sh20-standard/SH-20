@@ -268,6 +268,153 @@ does not have. It was not measured.
    time and memory).
 5. **Grouped verification** is free for an indexer whenever volume asks for it.
 
+Decided on 2026-11-23 (`docs/PLAN.md`, decision 2): one proof for each relayed transfer, about
+200 vB for it in the next version of the wire, and a transfer that pays several people after the
+signet and the first audit. The 150 vB target is dropped. The body of item 2 is the next section.
+
+## The transfer body of wire v0.4, on paper
+
+Wire v0.4 takes 92 bytes off every spend. A transfer carries one ephemeral key where it carries
+three today, and its third output, the one that pays a relayer, is a leaf with no ciphertext. This
+section is that change on paper, for whoever writes it into the specs: the bytes, what
+`docs/SPEC-WIRE.md` §3–4 and `docs/SPEC-NOTES.md` §3 would say, and what does not move. Nothing
+here is in force and nothing is coded: the signet runs wire v0.3.
+
+**The bytes.** The spend section, before and after:
+
+```
+v0.3  anchorHeight(4) ‖ nf0(32) ‖ nf1(32) ‖ 3 × [ leaf(32) ‖ pk_eph(32) ‖ ct(28) ] ‖ proof(480)                824
+v0.4  anchorHeight(4) ‖ nf0(32) ‖ nf1(32) ‖ pk_eph(32) ‖ 2 × [ leaf(32) ‖ ct(28) ] ‖ leaf2(32) ‖ proof(480)    732
+```
+
+| Offset in a TRANSFER | Field | Bytes |
+| ---: | --- | ---: |
+| 0 | header: `"SH20"`, version `0x00`, type `0x03` | 6 |
+| 6 | `anchorHeight` | 4 |
+| 10 | `nf0`, `nf1` | 64 |
+| 74 | `pk_eph`, the one X25519 key of the spend | 32 |
+| 106 | `leaf0`, `ct0` | 60 |
+| 166 | `leaf1`, `ct1` | 60 |
+| 226 | `leaf2`, alone | 32 |
+| 258 | `proof` | 480 |
+| | | 738 |
+
+| | v0.3 | v0.4 |
+| --- | ---: | ---: |
+| Spend section | 824 | 732 |
+| TRANSFER | 830 | 738 |
+| BURN | 842 | 750 |
+| LIST, before its `payScript` | 884 | 792 |
+| DEPLOY with a team opening and its burn | 912 | 820 |
+| `body` of a TRANSFER, which `bodyHash` covers | 350 | 258 |
+| Reveal of a TRANSFER alone | 339 vB | 316 vB |
+| Reveal of a batch of `n` | `(515 + 840 n) / 4` vB | `(515 + 747 n) / 4` vB |
+| Each transfer of a batch of 10 | 222.9 vB | 199.7 vB |
+| Each transfer of a batch of 50 | 212.6 vB | 189.3 vB |
+
+The vB are those of `bench/batch-vsize.mjs`, row "both of the above" (`node bench/batch-vsize.mjs 1`
+gives a transfer alone). An envelope of 738 bytes takes 747 bytes of tapscript, not 748: its
+second push is short enough for a length of one byte.
+
+**What changes in `SPEC-WIRE.md` §3.** No rule of the carriers or of a batch. In the text:
+
+- "830 bytes for a TRANSFER" becomes 738.
+- The version byte stays `0x00`. Draft v0.4 replaces v0.3 as v0.3 replaced v0.2, and a network
+  that ran v0.3 takes a new `A`: the two layouts never share a chain, so no rule has to tell them
+  apart. After a mainnet activation the same change would be a new version byte (hard requirement 2).
+- The paragraph for wallet and relayer authors gets a third consequence. The envelope no longer
+  holds what a relayer needs to read its fee: it checks `leaf2` with the `ct2` it was handed
+  (below) before it publishes. Who is paid does not depend on who publishes the envelope.
+
+**What changes in `SPEC-WIRE.md` §4.** The sizes of the table, and the spend section, which is the
+same in every envelope that carries one (TRANSFER, BURN, LIST, the burn of a DEPLOY): one layout
+to parse and to audit, and a BURN, a LIST and a DEPLOY are about 23 vB lighter too. `pk_eph` is
+one key for the three outputs of the spend; there are two `ct`; a spend section is 732 bytes and
+the `body` of a TRANSFER 258. The field elements are still `nf0`, `nf1` and the three leaves, and
+`pk_eph` and `ct` are still opaque to indexers.
+
+**What changes in `SPEC-NOTES.md` §3.** Steps 1 to 3 of sealing become, for the outputs `j` = 0, 1, 2
+of one spend, output `j` going to the address `(IVK_j, A_j, N_j)`:
+
+```
+1. Draw one fresh X25519 private key e for this spend only (never reuse it). pk_eph = X25519(e, 9).
+2. z_j = X25519(e, IVK_j). If z_j is 32 zero bytes, address j is invalid: stop.
+3. s_j = HKDF-SHA256(salt = "sh20/v0/note", ikm = z_j, info = pk_eph ‖ IVK_j ‖ j, L = 32)
+   (info is 65 bytes: j is one byte, 0x00, 0x01 or 0x02)
+```
+
+Steps 4 to 7 are as today, from `s_j`: the tweaks, `rho`, the note keys, the leaf, the AES-GCM key
+and nonce, `ct_j`. The wire carries `pk_eph` once, `leaf0 ‖ ct0`, `leaf1 ‖ ct1`, and `leaf2`.
+
+- **Why `j` is in the derivation.** Two outputs of a spend to one address share `z`. Without `j`
+  they would share `s`, so `npk` and `rho`, and with equal amounts they would be one leaf written
+  twice, in plain sight. That is every BURN and LIST, and every transfer with neither change nor
+  relayer: two of their outputs are unused and go to the sender with `v = 0`. The info is one byte
+  longer than in v0.3, so no `s` of one version is an `s` of the other.
+- **The third output.** It is sealed like the other two, with `j = 2`, and its `ct` is not
+  published. When it pays a relayer, the sender seals it to the relayer's address and hands `ct2`
+  over with the envelope. The relayer scans it as §4 says, with `j = 2` and the envelope's `pk_eph`
+  and `leaf2`, and publishes only if it opens, passes the leaf check, and holds a ticker and an
+  amount it accepts. Handed over as `ct2`, the ticker and the fee are as hidden on their way to the
+  relayer as they are on chain in v0.3. When the output is unused, the sender seals `v = 0` to its
+  own address and makes no `ct`. A wallet never puts its change or a payee there: nothing on chain
+  gives the receiver the amount.
+- **Scanning (§4) follows.** One X25519 for a spend where there are three:
+  `z = X25519(ivk, pk_eph)` and the low-order test of `pk_eph` once, then `s_0` and `s_1` and an
+  AES-GCM attempt for each. `docs/API.md` already gives an `OUT` note its index `j`; in v0.4 the
+  three notes of a spend share `pkEph`, and the one with `j = 2` has no `ct`.
+- "Unused outputs" in §3 and the first note of §6 ("`e` must be fresh for each output") are
+  reworded for one `e` a spend.
+
+**What the review has to weigh.**
+
+1. **One `e` for several recipients.** Reusing the sender's randomness across recipients is proved
+   safe for ElGamal encryption and its relatives (Bellare, Boldyreva and Staddon, "Randomness
+   Re-use in Multi-recipient Encryption Schemes", PKC 2003), and Monero's transaction key works
+   that way, with the output index in each output's derivation. The sealing here is of that
+   family, a Diffie-Hellman secret and then an AEAD; whether the proof carries over as it stands is
+   for the review to say. What is new for SH-20: an address is chosen by its owner, and its `IVK`
+   now multiplies a key that also protects the other outputs of the spend. X25519 clamps `e` to a
+   multiple of 8, and the cofactors of Curve25519 and of its twist are 8 and 4: whatever 32 bytes
+   are given as `IVK`, the small-order part of that point is multiplied away, so `z` is never
+   confined to a small set from which `e` could be read. §2 already refuses the keys that make `z`
+   zero. v0.3 did not need this argument, since each output had its own `e`. v0.4 rests on it.
+2. **The relayer keeps what the chain no longer does.** From its seed alone a relayer finds the
+   keys of every fee (`s_2` follows from `pk_eph`), but not its ticker or its amount. It keeps the
+   28 bytes until the note is spent, or tries the tickers and amounts of its own fee schedule
+   against `leaf2`, one leaf hash for each try. A fee it can neither read nor guess is lost.
+3. **Two sealed outputs, not three.** A v0.3 transfer can pay two addresses and return change, all
+   found by scanning. A v0.4 transfer pays one address and returns change, or pays two with none.
+   The vault only ever pays one (`vault/src/send.js`). It shuffles its three outputs so that a
+   position says nothing; in v0.4 it shuffles two, and the third position says nothing either,
+   since every spend ends with a bare leaf, used or not.
+4. **When.** `SPEC-NOTES.md` §3 is what the outside review and the audit will read. Settling v0.4
+   before they start gives them one sealing to read, not two.
+
+**What stays.**
+
+- **The circuit and its keys.** The circuit sees `bodyHash` and the three leaves, never the layout
+  of the body. The 86,248 gates, the nine public inputs, `artifacts/spend.pk` and `spend.vk`, the
+  digest `f48b5517…b1237745`, the 480-byte proof, the snarkjs cross-check and every proving time
+  above stay as they are. No key is rebuilt.
+- **What the signature covers.** `bodyHash = SHA256("sh20/v0/body" ‖ body) mod r`, over the
+  envelope up to the proof: `pk_eph`, both `ct` and the three leaves, as today.
+- **The indexer's rules.** Acceptance (`SPEC-WIRE.md` §5), the events and the digest (§6: a TRANSFER
+  record names nullifiers and positions, no key and no ciphertext), the tree, the carriers, the batch.
+- **The wallet's keys.** Keys and addresses (`SPEC-NOTES.md` §1–2), a note's secrets from `s`,
+  AES-GCM with the leaf as associated data, the leaf check, notes named by their position, public
+  notes (§5), unused inputs.
+
+**What building it would touch.** The two specs and `docs/API.md`; the codec of both indexers and
+the vectors (every spend's bytes and `bodyHash` change, so each proof of the scenario is made
+again); here `src/wire.rs`, `src/notes.rs`, `src/vectors.rs` and the sealing of `js/` (both entry
+points), with their vectors and no gate touched; in the vault the sealing, the scan and what it
+hands a relayer. `docs/AUDIT.md` cites lines in several of these files.
+
+Three choices above are judgment calls that the owner of the specs may reverse: one layout for
+every spend and not for TRANSFER alone, the version byte kept, and `ct2` rather than the bare
+ticker and amount as what the relayer receives.
+
 ## How the result is checked
 
 - `cargo test --release`: 35 tests. Model against the indexer's constants; 34 adversarial witnesses
@@ -374,8 +521,9 @@ RAYON_NUM_THREADS=1 cargo run --release --example batch_cost -- pot18.ptau 1x2:3
    be found without changing a rule. Each change moves the verifying-key digest. On hold (maintainer,
    2026-11-19).
 4. An audit ([`docs/AUDIT.md`](../docs/AUDIT.md) is the dossier for the auditor), then the freeze of the digest.
-5. **Batches**: the choice left by "Batches and the 150 vB target" is the maintainer's. A transfer
-   with more outputs, if wanted, is a second relation to design, key and audit.
+5. **Batches** (decided on 2026-11-23, `docs/PLAN.md`): one proof for each relayed transfer. The
+   v0.4 body is on paper above and not built. A transfer with more outputs is a second relation to
+   design, key and audit, after the signet and the first audit.
 
 ## Licence
 
