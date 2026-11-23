@@ -23,7 +23,8 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 4. **No project-run trusted setup.** Proofs are PLONK-KZG on the Hermez `pot18` SRS (universal, no
    ceremony); the verifier must stay cross-checked against snarkjs.
 5. **Contributor anonymity.** Commit as `SH-20 contributors <contributors@sh20.invalid>`. Never commit
-   personal names, emails, IP addresses, wallet addresses or machine paths.
+   personal names, emails, IP addresses, wallet addresses or machine paths. No Claude session links in
+   commits or pull requests either: they tie the work to one account (`docs/PLAN.md`, decision 6).
 6. **Determinism.** Any change to bytes or rules updates `docs/SPEC-WIRE.md`, the tests and
    `indexer/vectors/v0.3.json` (regenerate with `npm run vectors`; bump the draft version if the format changes).
 
@@ -39,6 +40,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `indexer-rs/` | a second indexer in Rust, written from the spec alone (clean room): `cargo test --release` replays the vectors |
 | `docs/SPEC-GAPS.md` | what the clean-room indexer found open in the spec, and where each point is now settled |
 | `docs/AUDIT.md` | the dossier for an external zero-knowledge auditor: scope, the relation constraint by constraint, threat model, open doubts; §8 is a first reading of the vault's cryptography, with its findings |
+| `docs/PLAN.md` | the plan from here to mainnet: who does what, in which order, and the decisions of 2026-11-23 |
 | `docs/SIGNET.md` | the public signet, step by step: what must be true first, the launch, what testers do, when the run stops |
 | `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` and `indexer-rs follow` (for the vault, the explorer and relayers): one JSON shape for both, checked by `indexer/bin/api-diff.js` |
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
@@ -142,10 +144,12 @@ profile constants (activation height, `D`); a public signet run.
 
 ## Next task: the clean redeploy, then the public signet
 
+The plan, with an owner and a test of done for each step: `docs/PLAN.md` (2026-11-23).
+
 The protocol, two indexers that agree on every vector, a hardened circuit and a vault that mints, proves, sells and
 claims exist. What is left before people can try it, in order (review of 2026-11-19):
 
-1. **Clean redeploy.** Move the repository to the project's own anonymous account, with the history rewritten: author and
+1. **Clean redeploy.** Move the repository to the project's own anonymous account (`SH-20`, public: `docs/PLAN.md` §2), with the history rewritten: author and
    committer `SH-20 contributors <contributors@sh20.invalid>` everywhere (the web merges of PRs carry a personal account's
    email), and every date in UTC (a timezone is personal data).
    Nothing public before this, and nothing pinned on IPFS from a personal machine (a pinning node announces its IP).
@@ -214,7 +218,7 @@ Keep only what the protocol needs; add nothing that costs bytes without a clear 
 | --- | --- | --- |
 | MINT (proof-less, OP_RETURN) | 42-byte envelope (v0.3), about 164 vB with one input and one change output; up to 10 mints in 43 bytes, about 165 vB | ~165 vB |
 | TRANSFER, alone | 830-byte envelope (480-byte PLONK proof), about 339 vB + commit | ≤ ~350 vB |
-| TRANSFER, in a relayer batch | allowed (`SPEC-WIRE.md` §3): `(515 + 840 n) / 4` vB for `n` transfers, about 223 vB each at `n = 10`, plus a share of the commit | ≤ ~150 vB per transfer |
+| TRANSFER, in a relayer batch | allowed (`SPEC-WIRE.md` §3): `(515 + 840 n) / 4` vB for `n` transfers, about 223 vB each at `n = 10`, plus a share of the commit | ~200 vB in the next wire version (decided 2026-11-23; was ≤ ~150 vB) |
 
 Sizes are computed from serialized envelopes by `circuit/bench/tx-vsize.mjs` (a P2TR payment comes out at 154 vB by the same
 count); nothing has been broadcast yet.
@@ -264,11 +268,13 @@ private part that already proves and verifies, in open code.
 
 ## Open decisions (ask the maintainer)
 
-Open since 2026-11-21: the batch target of the cost budget (≤ ~150 vB per transfer). `circuit/README.md` ("Batches and the 150
-vB target") recommends one proof for each relayed transfer, a target of about 200 vB for it, and the design of a transfer with
-more outputs after the signet. The maintainer decides.
+Still to fix before the signet: the activation height `A` (the tip + 6 at the soft launch, `docs/PLAN.md` §3).
 
-Still to fix before the signet: the profile constants (activation height `A`).
+Decided (2026-11-23, `docs/PLAN.md`, the maintainer having left the choice to the plan): the account `SH-20`, public from the
+first push; the batch target is about 223 vB per relayed transfer on signet and about 200 vB in the next wire version, a
+transfer paying several people after the signet and the first audit, and 150 vB is dropped (it needs a relayer that sees its
+users' transfers); phones and the public explorer read a mirror the Pages site serves itself; no IPFS before mainnet; no
+Claude session links in commits.
 
 Decided (2026-11-20): the name stays **SH-20** and the magic `SH20`; tickers are 4 characters only; `D = 1000` SH20
 burned per DEPLOY, so at most 21,000 tokens can ever be deployed (21,000,000 / `D`); several TRANSFER envelopes per
