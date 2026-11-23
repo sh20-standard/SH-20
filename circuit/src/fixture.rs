@@ -142,6 +142,20 @@ pub fn adversarial(rng: &mut impl RngCore) -> Vec<(&'static str, SpendWitness)> 
     });
     on(&good, "another nullifier key", &|w| w.in_nk[1] += Fr::one());
     on(&good, "rho changed", &|w| w.in_rho[0] += Fr::one());
+    on(&good, "one note as both inputs, counted twice", &|w| {
+        // input 1 becomes input 0 (600 + 600), and an output takes the 200 this makes
+        w.in_v[1] = w.in_v[0];
+        w.in_rho[1] = w.in_rho[0];
+        w.in_nk[1] = w.in_nk[0];
+        w.in_ak[1] = w.in_ak[0];
+        w.in_index[1] = w.in_index[0];
+        w.in_path[1] = w.in_path[0];
+        w.sig_r8[1] = w.sig_r8[0];
+        w.sig_s[1] = w.sig_s[0];
+        w.nf[1] = w.nf[0];
+        w.out_v[0] += Fr::from(200u64);
+        w.out_leaf[0] = leaf_of(w, 0);
+    });
 
     // authorization
     on(&good, "signature S changed", &|w| w.sig_s[0] += Fr::one());

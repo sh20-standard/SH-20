@@ -13,7 +13,7 @@
 //! What a proof shows, for private t, notes and keys:
 //!   * each input note is `leaf_i = H(H(H(TAG_LEAF, t), v_i), H(npk_i, rho_i))` with
 //!     `npk_i = Poseidon(Ak_i, nk_i·B8)`, and unless v_i = 0 it sits in the tree under `root` at `index_i`;
-//!   * `nf_i = Poseidon(nk_i, leaf_i, index_i)` with 0 ≤ nk_i < l, so a note has one nullifier;
+//!   * `nf_i = Poseidon(nk_i, leaf_i, index_i)` with 0 ≤ nk_i < l, so a note has one nullifier, and nf0 ≠ nf1;
 //!   * Ak_i is a point of the curve and its owner signed `bodyHash` (EdDSA-Poseidon, with R8 on the curve);
 //!   * each output leaf is a note of the same t;
 //!   * every amount and vPub is below 2^64 and Σ v_in = Σ v_out + vPub;
@@ -87,6 +87,11 @@ pub fn synthesize(w: &SpendWitness) -> Cs {
 
         in_v.push(v);
     }
+
+    // one note is not both inputs: its value would count twice
+    cs.at("nullifiers distinct");
+    let nf_diff = cs.sub(nf[0], nf[1]);
+    cs.assert_nonzero(nf_diff);
 
     let mut out_v = Vec::with_capacity(N_OUT);
     for (k, &out_leaf_k) in out_leaf.iter().enumerate() {

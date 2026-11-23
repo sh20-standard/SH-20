@@ -46,6 +46,14 @@ template CanonicalKeyMul() {
     out[1] <== m.out[1];
 }
 
+// in ≠ 0, by exhibiting its inverse.
+template NonZero() {
+    signal input in;
+    signal inv;
+    inv <-- in != 0 ? 1 / in : 0;
+    in * inv === 1;
+}
+
 // Poseidon(2) Merkle path of fixed depth. index < 2^depth is enforced by the bit decomposition.
 template MerkleRoot(depth) {
     signal input leaf;

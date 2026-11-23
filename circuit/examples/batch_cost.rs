@@ -183,6 +183,15 @@ fn synthesize(spends: &[Spend]) -> Cs {
             in_v.push(v);
         }
 
+        // no note is two inputs of one spend
+        cs.at("nullifiers distinct");
+        for a in 0..p.nf.len() {
+            for b in a + 1..p.nf.len() {
+                let nf_diff = cs.sub(p.nf[a], p.nf[b]);
+                cs.assert_nonzero(nf_diff);
+            }
+        }
+
         let mut out_v = Vec::new();
         for (k, (note, &out_leaf)) in s.outputs.iter().zip(&p.out_leaf).enumerate() {
             cs.at(format!("out{k} value"));

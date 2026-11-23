@@ -140,7 +140,8 @@ path and a signature, and for each of the three outputs of `v, npk, rho`, such t
 - input note: `npk = Poseidon(Ak.x, Ak.y, NK.x, NK.y)` with `NK = nk·B8` and `0 ≤ nk < l`; `leaf = H(H(H(TAG_LEAF, t), v), H(npk, rho))`;
 - membership: unless `v = 0`, `leaf` is at position `index < 2^32` of the tree with root `R[anchorHeight]`. An input with `v = 0`
   is a dummy: it skips membership only, and still has a nullifier and a signature;
-- nullifier: `nf = Poseidon(nk, leaf, index)`;
+- nullifier: `nf = Poseidon(nk, leaf, index)`, and `nf0 ≠ nf1`: one note is not both inputs, where its value would count
+  twice. Two dummies differ like any two inputs;
 - authorisation: an EdDSA-Poseidon signature `(R8, S)` under `Ak` over `bodyHash`: `Ak` and `R8` are points of the curve,
   `S·B8 = R8 + h·8·Ak`, `h = Poseidon(R8.x, R8.y, Ak.x, Ak.y, bodyHash)` as its integer below `r`, `0 ≤ S < l`, and `4·Ak` has a non-zero x;
 - output note: `leaf = H(H(H(TAG_LEAF, t), v), H(npk, rho))` with the same `t`;
@@ -162,7 +163,7 @@ BN254 with KZG commitments, on a domain of 2^17 rows. The reference circuit and 
   circuit and this SRS.
 - Verifying key: 712 bytes, `power(4) nPublic(4) k1(32) k2(32) Qm Ql Qr Qo Qc S1 S2 S3 (64 each: x ‖ y) X2(128)`.
   Its digest `SHA256("sh20/v0/vk" ‖ key)` is pinned:
-  `f48b551776188b652259ac42ff3d064ea61e9dd0d4b48addb825085ab1237745` (draft: it changes with any change to the circuit until frozen).
+  `64eaf3fe8e0d01ca2a687c3ea8ece8149926f056f0a812d4ff0c6707513b31f4` (draft: it changes with any change to the circuit until frozen).
 - Proof, 480 bytes: `A B C Z T1 T2 T3 Wxi Wxiw` (G1, 32 bytes each) then `a b c s1 s2 zω` (scalars, 32 bytes each).
   A G1 point is its x coordinate, little-endian, with bit 255 set when `y > q − y`; x must be below the base-field modulus `q`
   and on the curve, and the point at infinity has no encoding. A scalar is little-endian and below `r`. Anything else is invalid.
@@ -180,7 +181,7 @@ height `A`. No envelope below `A` is read, and blocks below `A` have no root and
 `start = A`, `end = 0`. It exists from block `A` on; a DEPLOY of `SH20` is rejected like any taken ticker.
 
 **Every spend**: `max(0, H − W) ≤ anchorHeight ≤ H − K_min`; root known (`anchorHeight < A` uses the empty root); nullifiers
-non-zero, distinct (the relation accepts one note as both inputs, counted twice: this rule is what refuses it), never seen; output leaves non-zero (they may repeat, within the spend or a leaf already in the tree);
+non-zero, distinct (the relation of §4 requires `nf0 ≠ nf1` too; an indexer checks it here as well, before the proof), never seen; output leaves non-zero (they may repeat, within the spend or a leaf already in the tree);
 room for 3 leaves in the tree; proof valid, with the nine inputs of §4. Effect: record nullifiers, append the 3 leaves.
 The proof is checked **last**, once every other condition of the envelope holds (those of its type in the table below,
 the turnstile, and the ones above): a refusal has no effect either way, but this fixes which spends reach the verifier,

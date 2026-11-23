@@ -14,7 +14,7 @@ use crate::field::{fr_to_le, hex};
 use ark_bn254::Fr;
 
 /// `SHA256("sh20/v0/vk" ‖ key)` of the verifying key, as SPEC-WIRE §4 pins it.
-pub const VK_DIGEST: &str = "f48b551776188b652259ac42ff3d064ea61e9dd0d4b48addb825085ab1237745";
+pub const VK_DIGEST: &str = "64eaf3fe8e0d01ca2a687c3ea8ece8149926f056f0a812d4ff0c6707513b31f4";
 
 /// The verifying key `circuit/` ships, built into the binary.
 pub const VERIFYING_KEY: &[u8] = include_bytes!("../../circuit/artifacts/spend.vk");
