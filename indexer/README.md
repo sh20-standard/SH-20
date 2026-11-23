@@ -10,16 +10,16 @@ LIST, later DEPLOYs) are rejected. Pass `plonkVerifier` (`src/adapters/plonk.js`
 the pinned verifier of [`circuit/`](../circuit), built as a WebAssembly module with no imports.
 
 - Wire format and rules: [`docs/SPEC-WIRE.md`](../docs/SPEC-WIRE.md)
-- Test vectors for a second implementation: [`vectors/v0.3.json`](./vectors/v0.3.json)
+- Test vectors for a second implementation: [`vectors/v0.3.json`](./vectors/v0.3.json), and [`vectors/plonk-v0.3.json`](./vectors/plonk-v0.3.json) for its PLONK verifier (real proofs)
 
 ## Run
 
 Node 20 or newer, no dependencies.
 
 ```sh
-(cd ../circuit && ./build-wasm.sh)   # optional: the spend verifier; the 4 tests that need it are skipped without it
+(cd ../circuit && ./build-wasm.sh)   # optional: the 4 tests of real proofs use this build, else the copy in ../vault/prover/
 npm test                  # 68 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, block file, API, real proofs
-npm run vectors           # regenerates vectors/v0.3.json (deterministic)
+npm run vectors           # regenerates vectors/v0.3.json and vectors/plonk-v0.3.json (deterministic)
 node bin/replay.js <dir>  # replays a folder of `bitcoin-cli getblock <hash> 3` JSON files
 node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser U --rpcpass P --activation H   # live, own node
 node bin/follow.js --esplora https://mempool.space/signet/api --activation H             # live, Esplora

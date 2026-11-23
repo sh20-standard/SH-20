@@ -3,7 +3,7 @@
 // checks them with the pinned PLONK verifier. This ties together the leaf formula, the tree, the
 // body hash, the order of the public inputs and the proof encoding of the two implementations.
 //
-// Needs the verifier module: `cd circuit && ./build-wasm.sh`. Skipped when it has not been built.
+// Needs the verifier module: the one `cd circuit && ./build-wasm.sh` builds, else the copy in vault/prover/.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +16,9 @@ import { plonkVerifier } from '../src/adapters/plonk.js';
 import { chain, deployEnv, tx } from './helpers.js';
 
 const path = (rel) => fileURLToPath(new URL(rel, import.meta.url));
-const wasm = process.env.SH20_VERIFIER_WASM || path('../../circuit/target/wasm32-unknown-unknown/release/sh20_circuit.wasm');
+// The module built here if there is one, else the one the vault ships (the CI checks it is the same build).
+const built = path('../../circuit/target/wasm32-unknown-unknown/release/sh20_circuit.wasm');
+const wasm = process.env.SH20_VERIFIER_WASM || (existsSync(built) ? built : path('../../vault/prover/sh20_circuit.wasm'));
 const noWasm = existsSync(wasm) ? false : 'verifier module not built (cd circuit && ./build-wasm.sh)';
 
 const fixture = JSON.parse(readFileSync(path('./fixtures/plonk-scenario.json'), 'utf8'));
