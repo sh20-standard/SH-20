@@ -41,12 +41,16 @@ export async function matchNotes(v, pub, { onProgress } = {}) {
   return { found, failed: [...failed].sort(([a], [b]) => a - b).map(([pos, error]) => ({ pos, error })) };
 }
 
+/** Public-note key `index` is used, whatever the rest of what names it says: the counter moves past it (docs/AUDIT.md §8.9). */
+function keyUsed(v, index) {
+  if (v.state.next <= index) v.state.next = index + 1;
+  if ((v.state.seenNext ?? 0) <= index) v.state.seenNext = index + 1;
+}
+
 async function matchPublic(v, n, keys) {
   const index = keys.get(frHex(n.npk));
   if (index === undefined) return false;
-  // the key is used, whatever the rest says: the counter moves past it (docs/AUDIT.md §8.9)
-  if (v.state.next <= index) v.state.next = index + 1;
-  if ((v.state.seenNext ?? 0) <= index) v.state.seenNext = index + 1;
+  keyUsed(v, index);
   // never trust the API's (ticker, v) alone: they must give back the leaf it put in the tree
   const leaf = frHex(noteLeaf(tickerT(n.ticker), n.v, n.npk, PUBLIC_RHO));
   if (n.leaf !== null && frHex(n.leaf) !== leaf) return false;
@@ -64,6 +68,26 @@ async function matchPublic(v, n, keys) {
   if (pending) await v.updateNote(pending.id, { status: 'in tree', pos: n.pos, ticker: n.ticker, v: n.v.toString(), leaf, ...txid });
   else await v.addNote({ index, ticker: n.ticker, v: n.v, txid: n.txid, status: 'in tree', pos: n.pos });
   return true;
+}
+
+/**
+ * The vault's public-note keys that `all` (another indexer's /notes, read whole) names, whatever its
+ * kind, ticker or amount say: each one moves the counter (docs/AUDIT.md §8.9). Only the primary's notes
+ * are matched and recorded, against the tree rebuilt here; which leaf is which key is metadata the
+ * vault cannot check for a sealed output, so a primary that labels one of the vault's MINTs as sealed,
+ * or leaves its npk out, could keep the counter back. A restored vault therefore counts the keys every
+ * other indexer reports too, before its counters are checked. Repeats while the window moves.
+ */
+export async function noteKeysSeen(v, all, { onProgress } = {}) {
+  for (let before = -1; before !== v.state.next;) {
+    before = v.state.next;
+    const keys = await v.npkWindow({ onProgress });
+    for (const n of all) {
+      if (n.npk === null || n.npk === undefined) continue;
+      const index = keys.get(frHex(n.npk));
+      if (index !== undefined) keyUsed(v, index);
+    }
+  }
 }
 
 /**

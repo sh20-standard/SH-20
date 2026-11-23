@@ -763,19 +763,21 @@ from an older backup: their commit outputs (a fee and some dust) cannot be taken
 Fixed in #59: a vault restored from a backup or from its words reserves no public-note key and
 no lock key until a sync has checked its counters against the chain (`reserveNote`, `keys.js`
 l. 311): every leaf read and matched for the note keys (the page reads them all while the check is
-due) with no other indexer disagreeing on that state, the lists of listings of every indexer for
-the lock keys. The lock keys are now looked for again while a match moves their window
-(`matchListings`, `match.js` l. 76), as the note keys were, in the union of those lists; a key an
-indexer reports moves its counter even when its LIST cannot be read or its note does not check out,
-so an indexer that leaves something out or misreports it cannot hide that a key is used while
-another reports it. Once checked, each counter
-skips 10 note keys or 3 lock keys past the last one used (`chainChecked`, `keys.js` l. 286): room for
-MINTs and LISTs another device had broadcast and not yet mined; both skips stay below the windows of
+due) with no other indexer disagreeing on that state, and the notes of every other indexer read
+too, since which leaf is which key is the primary's word for a sealed output; the lists of listings
+of every indexer for the lock keys. The lock keys are now looked for again while a match moves their
+window (`matchListings`, `match.js` l. 100), as the note keys were, in the union of those lists; a key
+any indexer reports moves its counter even when its LIST cannot be read or its note does not check
+out, so an indexer that leaves something out, mislabels it or misreports it cannot hide that a key is
+used while another reports it, and the check waits until every indexer has answered. Once checked,
+each counter skips 10 note keys or 3 lock keys past the last one used (`chainChecked`, `keys.js`
+l. 286): room for MINTs and LISTs another device had broadcast and not yet mined; both skips stay below the windows of
 a restore from the words (50 and 10), so that one still finds what comes after, and a skip does not
 add up over restores. Tests "8.9 …" in `vault/test/restore-indices.test.js`, among them "8.9 a
 restored vault reserves no index before a sync has checked it"; `dev/e2e.js` checks the counter
 after its restore from the words. Left: more than 10 MINTs or 3 LISTs in flight elsewhere when the
-vault is restored, an indexer far behind the chain, or two devices using one vault at the same time
+vault is restored, a key that every configured indexer hides (with one indexer, its word alone), an
+indexer far behind the chain, or two devices using one vault at the same time
 still share indices (linking notes or listings, losing nothing); and the one-time keys of spends in
 flight are still missing from an older backup, so their commit outputs cannot be taken back.
 

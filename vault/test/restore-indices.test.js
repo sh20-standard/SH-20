@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { Vault, RESTORE_SKIP, LOCK_SKIP, RESTORE_GAP, LOCK_GAP } from '../src/keys.js';
-import { matchNotes, matchListings } from '../src/match.js';
+import { matchNotes, matchListings, noteKeysSeen } from '../src/match.js';
 import { noteLeaf, tickerT, PUBLIC_RHO } from '../src/sh20.js';
 import { toHex } from '../src/bytes.js';
 
@@ -81,6 +81,22 @@ test('8.9 a note key an indexer reports moves the counter, even with an amount t
   assert.equal((await b.reserveNote()).index, 5 + RESTORE_SKIP);
 });
 
+test('8.9 a note key the primary hides is counted from the other indexers\' notes', async () => {
+  const a = await Vault.fromWords(memStorage(), WORDS, 'pass');
+  const backup = a.exportBackup();
+  const honest = [await minted(a, 0, 0), await minted(a, 40, 1)]; // within RESTORE_GAP of the one before
+  // the primary labels the second MINT as a sealed output, without its npk: it matches nothing
+  const primary = [honest[0], { ...honest[1], kind: 'OUT', npk: null, ticker: null, v: null, pkEph: new Uint8Array(32), ct: new Uint8Array(28) }];
+  const b = await Vault.restore(memStorage(), backup, 'pass');
+  assert.equal((await matchNotes(b, primary)).found, 1);
+  assert.equal(b.state.next, 1, 'the primary alone keeps key 40 hidden');
+  await noteKeysSeen(b, honest);
+  assert.equal(b.state.next, 41, 'another indexer names it: it counts as used');
+  assert.equal(b.state.notes.length, 1, 'counted, not recorded: only the primary\'s notes are matched against the tree');
+  await b.chainChecked('notes');
+  assert.equal((await b.reserveNote()).index, 41 + RESTORE_SKIP);
+});
+
 test('8.9 lock keys past the first window are found again, and a key found moves the counter even when its LIST cannot be read', async () => {
   const a = await Vault.fromWords(memStorage(), WORDS, 'pass');
   const backup = a.exportBackup();
@@ -98,10 +114,12 @@ test('8.9 lock keys past the first window are found again, and a key found moves
   assert.equal(await b.reserveLock(), 20 + LOCK_SKIP);
 });
 
-test('8.9 the page: a full sync until the note keys are checked, then chainChecked; the words restore as restored', () => {
+test('8.9 the page: a full sync until the note keys are checked, then chainChecked after every indexer\'s notes; the words restore as restored', () => {
   const notes = src('ui/notes-panel.js');
   assert.match(notes, /s\.sync\(indexer, \{ full: full \|\| !!st\.vault\?\.state\.unchecked\?\.notes \}\)/);
-  assert.match(notes, /if \(r\.from === 0 && !failed\.length && !st\.sync\.agreement\.disagree\.length\) await st\.vault\.chainChecked\('notes'\);/);
+  assert.match(notes, /if \(r\.from === 0 && !failed\.length && !st\.sync\.agreement\.disagree\.length && st\.vault\.state\.unchecked\?\.notes\) \{/);
+  assert.match(notes, /indexers\.slice\(1\)\.map\(\(i\) => i\.notes\(0\)\)/, 'the notes of every other indexer');
+  assert.match(notes, /if \(others\.every\(\(o\) => o\.status === 'fulfilled'\)\) await st\.vault\.chainChecked\('notes'\);/, 'and every one of them read');
   const market = src('ui/market-panel.js');
   const sl = market.slice(market.indexOf('export async function syncListings('));
   assert.ok(sl.indexOf('await matchListings(v, [...union.values()],') > 0 && sl.indexOf('await matchListings(v, [...union.values()],') < sl.indexOf("await v.chainChecked('locks');"));
