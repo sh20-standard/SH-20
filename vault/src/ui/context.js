@@ -111,11 +111,24 @@ export const sats = (v) => `${BigInt(v).toLocaleString('en-US')} sats`;
 export const units = (v) => BigInt(v).toLocaleString('en-US');
 export const short = (x) => (x.length > 20 ? `${x.slice(0, 10)}…${x.slice(-8)}` : x);
 
+/** Actions under way (a button's, a sync): while one runs, the vault does not lock itself (autolock.js). */
+export const activity = { running: 0 };
+
+/** Runs `fn` as an action under way. */
+export async function during(fn) {
+  activity.running++;
+  try {
+    return await fn();
+  } finally {
+    activity.running--;
+  }
+}
+
 export function busy(button, fn) {
   return async (...args) => {
     button.disabled = true;
     try {
-      await fn(...args);
+      await during(() => fn(...args));
     } catch (e) {
       report(e);
     } finally {

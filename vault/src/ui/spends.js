@@ -2,7 +2,7 @@
 // vault the reveal; the helpers that fund and sign a transaction with the wallet.
 
 import { finalizePsbt, sameUnsignedTx } from '../btc.js';
-import { loadProver } from '../prover.js';
+import { loadProver, unloadProver } from '../prover.js';
 import { pendingRecord, planCarrier, proveSpend, revealFor } from '../send.js';
 import { PROFILE } from '../profile.js';
 import { MAX_FEE_SATS, esplora, explorerTx, h, requireProfile, result, sats, st } from './context.js';
@@ -56,7 +56,14 @@ async function carryOnce({ kind, out, feeRate, tip, plan, label, outputs, onReve
     const prover = await loadProver({ onStatus: status });
     status(`Proving on ${prover.threads} thread${prover.threads > 1 ? 's' : ''}… keep this tab open.`);
     const t0 = performance.now();
-    envelope = await proveSpend(prover, built);
+    try {
+      envelope = await proveSpend(prover, built);
+    } finally {
+      // the witness holds the nullifier keys and note tweaks of this spend (AUDIT §8.8): zeroed here,
+      // and the prover's memory, which keeps a copy until the next proof, goes with its workers
+      built.witness.fill(0);
+      unloadProver();
+    }
     proveS = ((performance.now() - t0) / 1000).toFixed(1);
   }
   const cp = planCarrier({ envelope, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip, outputs, sweep });

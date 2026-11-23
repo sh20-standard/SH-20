@@ -29,7 +29,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 135 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 139 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 npm run release          # a verifiable release from the current commit, on the signet profile (below)
@@ -77,7 +77,8 @@ the mock chain advance), finds the 300 left, burns 100, lists 150 for 5,000
 sats, copies the offer, checks it and buys it back (the listing is SOLD and a public note of 150
 appears), lists 50 and cancels it, lists 40 and has the offer completed without its TAKE (the
 seller is paid, the listing CLOSED), claims the 40 back, then erases the vault, restores it from the 12 words alone and
-requires the same address, the same notes and the same listings. Measured in headless Chrome on a
+requires the same address, the same notes and the same listings, then moves the page's clock on
+until the vault locks itself, and opens it again with its passphrase. Measured in headless Chrome on a
 laptop: 26 s per proof on one thread, 4.7 s on the thread pool. `serve.js` answers under
 `/ipfs/<cid>/…` like a path gateway, and Chrome resolves `<cid>.ipfs.localhost` to this machine,
 so both kinds of gateway are tested without IPFS.
@@ -150,6 +151,12 @@ folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
   encrypted vault the recovery words are shown after the passphrase. A tab that holds the vault
   locks when another tab writes it, and never writes its older copy back. The seed derives every
   note key, so the backup does not need to be refreshed after each mint.
+- The vault locks itself after 10 minutes without use (`src/autolock.js`), never during an action
+  nor while a DEPLOY waits for the reveal the page sends. A lock (by the button, by time or by
+  another tab) zeroes the master secret, the viewing key and the lock keys, lets go of the rest, and
+  stops the prover, whose memory holds the last witness; the prover is stopped after every proof too.
+  What JavaScript cannot overwrite (`BigInt` scalars, the words as a string) stays in memory,
+  unreachable, until it is reused (docs/AUDIT.md §8.8).
 - Wallet extensions do not inject into `file://` pages, and ES modules do not load there: serve
   the folder over http(s), even locally.
 - A strict CSP allows only same-origin scripts plus the import map (by hash); no data from the
@@ -510,6 +517,7 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | `src/bip39.js`, `src/bip39-english.js` | the 12 recovery words |
 | `src/send.js` | a TRANSFER or a DEPLOY with a burn, end to end: plan, prove, commit and reveal |
 | `src/market.js` | BURN, LIST, offers, TAKE, cancel and CLAIM |
+| `src/autolock.js` | the lock after 10 minutes without use, and what holds it off |
 | `src/isolation.js`, `sw.js` | cross-origin isolation on subdomain gateways (the test page's service worker, served at the site's root) |
 | `src/spend.js` | inputs, dummy inputs, sealed outputs, body, signatures and the prover's witness |
 | `src/prover.js`, `src/prover-worker.js` | the WebAssembly prover, threads or one thread (circuit/web/host.js) |

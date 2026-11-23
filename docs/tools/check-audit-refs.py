@@ -142,6 +142,9 @@ CITES = [
     ("`indexer/src/schnorr.js` `sign` (l. {})", (SCHNORR, "export function sign(secret")),
     ("before `bip340Sign` (l. {}) returns it", (V + "secp256k1.js", "export function bip340Sign(")),
     ("`lock()` (`keys.js` l. {})", (V + "keys.js", "lock() {")),
+    ("goes through `lockVault` (`ui/vault-panel.js` l. {})", (V + "ui/vault-panel.js", "export function lockVault(")),
+    ("`lock()` (`keys.js` l. {}) zeroes the master secret, the viewing key", (V + "keys.js", "lock() {")),
+    ("(`ui/spends.js` l. {}): the next proof", (V + "ui/spends.js", "built.witness.fill(0);")),
     ("by the vault's own rule (`keys.js` l. {})", (V + "keys.js", "async lockOutput(index)")),
     # §8, the table "Read and found as intended"
     ("| `bip39.js` l. {}, l. {}; `keys.js` l. {} |",
@@ -240,6 +243,7 @@ TESTS = [
     ("vault/test/audit8.test.js", "8.6 a scan that could not be made throws"),
     ("vault/test/audit8.test.js", "8.6 a note whose scan throws does not stop the others"),
     ("vault/test/secp256k1.test.js", "8.7 k·G takes the same time"),
+    ("vault/test/autolock.test.js", "8.8 the vault locks itself after ten minutes"),
 ]
 
 # a line reference of the document: "l. 12", "l. 12–14", "l. 12, 14, 16" (each number is one)
