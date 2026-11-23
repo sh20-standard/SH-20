@@ -2,7 +2,9 @@
 
 What a session runs to audit one part of SH-20: open a new Claude Code session in the repository and
 type `/audit <part>` (`.claude/commands/audit.md`), or say "read `docs/AUDIT-PROMPT.md` and run part
-`<part>`". One part per session. The parts and their order are below.
+`<part>`". One part per session. The parts and their order are below. The code audit, which asks
+what is superfluous, unclear or slow rather than what an attacker wins, is the last section:
+`/audit code <part>`.
 
 It is the review we can run ourselves, again on every change, before the external audit by people
 that mainnet waits for (`docs/PLAN.md` §6). It does not replace that one: the code was written by
@@ -134,3 +136,60 @@ Held to `SPEC-WIRE.md` §3–6. Read `indexer/src/` (and `indexer-rs/src/` as a 
 an envelope with two encodings of one meaning; the order of checks and what a refusal leaves behind;
 reorgs and the undo log; the digest; the turnstile; DEPLOY maturity; batches; inputs that cost an
 indexer much more than they cost to send. Tools: `npm run fuzz`, `bin/api-diff.js`, the vectors.
+
+## The code audit
+
+The same discipline, for another question: what in the code is more than the spec needs, what could
+be clearer, and what could run faster or lighter. Type `/audit code <part>`, one part per session.
+Opus 5.5 is enough for this audit (`CLAUDE.md`, "Model"), except inside `circuit/src`, where any
+change goes through the rules of `CLAUDE.md` 4 and 5.
+
+### You are the reviewer
+
+You did not write this code. The spec says what the part must do; the code is everything that does
+it. Every line you keep has to answer to a sentence of the spec, to a test, or to a need the part's
+README states (a tool, a measurement). What answers to nothing is a finding.
+
+### Method
+
+1. Write down, before reading the code, what the part must do: the duties the spec and the README
+   give it, numbered. That list is the measure of everything else.
+2. Measure before you judge, and write the numbers down: lines of code per file (comments and blank
+   lines apart), test coverage (`node --test --experimental-test-coverage` for JavaScript), and the
+   timings of the paths that matter (named per part below), each the best of several runs, with the
+   machine.
+3. Look for:
+   - **superfluous**: code nothing reaches (no caller, no test, not in the coverage), exports nobody
+     imports, options nobody passes, a second copy of a helper, defensive checks that a stricter
+     check before them already makes, comments that repeat the code;
+   - **better**: a function that does two things, names that say something other than what the code
+     does, error handling that loses the reason, the same rule written in two places that could drift;
+   - **faster or lighter**: work repeated that could be kept, allocations in a loop, a quadratic walk,
+     data read whole where a part would do, bytes shipped to a browser that it never runs.
+4. Prove each finding: for dead code, show that nothing reaches it (search, coverage) and that every
+   suite still passes without it; for a duplicate, show both copies and a test that they agree; for
+   speed or size, the measurement before and after. A finding without a measurement or a removal
+   that passes is an opinion: put it under "open".
+5. Behaviour is fixed. A change in this audit changes no byte and no rule: the vectors regenerate
+   byte for byte, every suite passes, `npm run fuzz` and `bin/api-diff.js` find no divergence. Fewer
+   lines never at the cost of a check: a check that looks redundant stays until a test shows that a
+   stricter one before it always fires first.
+6. Do the safe ones: a removal or a change that passes step 5 goes in a pull request of its own,
+   with its numbers before and after in the description. Leave the rest as findings.
+
+### What you hand in
+
+`docs/audit/<YYYY-MM-DD>-code-<part>.md`: scope (commit, files, the duties of step 1), the
+measurements of step 2, the findings (a table: id `code-<part>-<n>`, kind, where, evidence, gain),
+what was changed with its numbers, and what was left open.
+
+### The parts of the code audit
+
+| Part | Read | The paths to time |
+| --- | --- | --- |
+| `indexer` | `indexer/src`, `indexer/bin` | replaying a chain (blocks per second), the tree, Poseidon, the codec, the API's largest routes |
+| `indexer-rs` | `indexer-rs/src` (a second reading, not a comparison with `indexer/`: the clean room stays) | the same as `indexer` |
+| `vault` | `vault/src`, what `vault/build.js` ships | load until the vault is usable, a full scan of the notes, building a spend before the proof, bytes shipped |
+| `circuit` | `circuit/src` outside the gates, `circuit/web`, `circuit/js` | proving time and memory, key loading, WebAssembly size; never a change to the gates |
+| `explorer` | `explorer/index.html` | first render with the demo data and with a live indexer |
+| `tooling` | `.github/workflows`, `docs/tools`, `indexer/bin` tools, `vault/tools` | CI minutes per run, the slowest job and why |
