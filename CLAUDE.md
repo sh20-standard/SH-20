@@ -275,7 +275,8 @@ Decided (2026-11-23, `docs/PLAN.md`, the maintainer having left the choice to th
 first push; the batch target is about 223 vB per relayed transfer on signet and about 200 vB in the next wire version, a
 transfer paying several people after the signet and the first audit, and 150 vB is dropped (it needs a relayer that sees its
 users' transfers); phones and the public explorer read a mirror the Pages site serves itself; no IPFS before mainnet; no
-Claude session links in commits.
+Claude session links in commits; the contributors deploy no token on any network, SH20 being the project's only token
+(decision 7: a test ticker of ours could be copied on mainnet and sold as ours; DEPLOY is tested on regtest).
 
 Decided (2026-11-20): the name stays **SH-20** and the magic `SH20`; tickers are 4 characters only; `D = 1000` SH20
 burned per DEPLOY, so at most 21,000 tokens can ever be deployed (21,000,000 / `D`); several TRANSFER envelopes per
