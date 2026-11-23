@@ -147,11 +147,11 @@ A proof alone does not make a spend valid. [`indexer/src/indexer.js`](../indexer
 | R3 | nullifiers non-zero, different from each other, never seen; then recorded | l. 275–278, `_commitSpend` l. 291 |
 | R4 | output leaves non-zero; room for three leaves | l. 279–281 |
 | R5 | `m` is computed by the indexer from the bytes before the proof | l. 282 |
-| R6 | `(vPub, tPub)` come from the envelope type: TRANSFER `(0, 0)`, BURN `(vPub, t(ticker))`, LIST `(amount, t(ticker))`, DEPLOY with `D > 0` `(D, t("SH20"))` | l. 229, 397, 412, 355 |
-| R7 | turnstile: a spend with `vPub > pool[ticker]` is rejected before its proof is looked at | `_outOfPool` l. 323, called at l. 354, 396, 411 |
+| R6 | `(vPub, tPub)` come from the envelope type: TRANSFER `(0, 0)`, BURN `(vPub, t(ticker))`, LIST `(amount, t(ticker))`, DEPLOY with `D > 0` `(D, t("SH20"))` | l. 229, 395, 410, 353 |
+| R7 | turnstile: a spend with `vPub > pool[ticker]` is rejected before its proof is looked at | `_outOfPool` l. 321, called at l. 352, 394, 409 |
 | R8 | the verifying key must hash to the pinned digest | `adapters/plonk.js` l. 26–27 |
 | R9 | one envelope per transaction, or a batch: several in the witness, all of them TRANSFERs, each accepted or refused alone (`SPEC-WIRE.md` §3); the default verifier rejects every spend | `carrier.js`; `rejectAllVerifier` l. 22 |
-| R10 | the lock of a LIST is the output `OP_1 <lockKey>`, for the `lockKey` its body names (PR #20, §6.1) | `_list` l. 409; `codec.js` l. 223 |
+| R10 | the lock of a LIST is the output `OP_1 <lockKey>`, for the `lockKey` its body names (PR #20, §6.1) | `_list` l. 407; `codec.js` l. 223 |
 
 ### The proof system
 
@@ -325,7 +325,7 @@ is kept here in full so that the fix can be checked against it.
 controlled by a Bitcoin output, the lock: output `lockVout` of the transaction that carries the
 envelope. Whoever spends the lock decides: a TAKE that pays is a sale, a TAKE that does not pay is a
 cancellation, and in both cases the tokens go to the opening the TAKE names (`_take`, `indexer.js`
-l. 425).
+l. 423).
 
 The envelope held the index `lockVout`, not the lock's key. The proof signs the envelope body, and
 none of its nine public inputs depends on the transaction's outputs. So the same envelope was valid
@@ -345,8 +345,8 @@ the threat model (transaction order, copied envelopes) and broke G3.
 **The fix.** The LIST body now carries `lockKey`, the 32-byte x-only output key of the lock, after
 `lockVout` (`SPEC-WIRE.md` §4; `codec.js` l. 223 and l. 287), so the body hash the proof signs
 covers it. `_list` rejects the envelope unless output `lockVout` is exactly `OP_1 <lockKey>`
-(`indexer.js` l. 409), and records the key from the envelope, not from the transaction (l. 418). A
-CLAIM is verified against that recorded key (`_claim`, l. 442). A LIST is 32 bytes longer.
+(`indexer.js` l. 407), and records the key from the envelope, not from the transaction (l. 416). A
+CLAIM is verified against that recorded key (`_claim`, l. 440). A LIST is 32 bytes longer.
 
 The same experiment against PR #20: the copy is rejected with "lock output must be P2TR to lockKey"
 and the seller's LIST is accepted under the seller's key.
@@ -487,7 +487,7 @@ exercised by every spend and by the two tests of §6.2.
 
 - DEPLOY: the first valid one wins. A ticker seen in the mempool could be taken by someone else with
   their own parameters. Since PR #29 a DEPLOY reveals, in the witness, a commit confirmed at least
-  `N = 6` blocks earlier (`_deploy`, `indexer.js` l. 338; `SPEC-WIRE.md` §5): a copier's own commit
+  `N = 6` blocks earlier (`_deploy`, `indexer.js` l. 336; `SPEC-WIRE.md` §5): a copier's own commit
   is too young. Someone who guessed the ticker and committed to it in advance still deploys it
   first. The rule is newer than this section: its author has read the check and has not looked for
   ways around it.

@@ -25,8 +25,26 @@ export function tickerT(ticker) {
 /** rho of every public note (v0.3). */
 export const PUBLIC_RHO = 0n;
 
+// H(TAG_LEAF, t) and H(H(TAG_LEAF, t), v) depend on the asset and the amount alone, and every MINT of a ticker
+// shares them (its amount is lim, or k·lim): they are kept, so that a MINT's leaf costs two hashes instead of four.
+// Each cache holds at most CACHE entries and starts again when full, so amounts anyone chooses (a TAKE's) cannot
+// make it grow without end. A leaf is the same with the caches or without them.
+const CACHE = 4096;
+const tags = new Map();
+const heads = new Map();
+const kept = (map, key, compute) => {
+  let x = map.get(key);
+  if (x === undefined) {
+    if (map.size >= CACHE) map.clear();
+    x = compute();
+    map.set(key, x);
+  }
+  return x;
+};
+
 export function noteLeaf(t, v, npk, rho) {
-  const head = poseidon2(poseidon2(DOMAIN.LEAF, BigInt(t)), BigInt(v));
+  const tag = kept(tags, t, () => poseidon2(DOMAIN.LEAF, BigInt(t)));
+  const head = kept(heads, `${t}/${v}`, () => poseidon2(tag, BigInt(v)));
   return poseidon2(head, poseidon2(npk, rho));
 }
 

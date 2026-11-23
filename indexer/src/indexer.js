@@ -114,7 +114,7 @@ export class Indexer {
         if (this.tree.size >= this.tree.capacity) continue; // a full tree drops the team note (SPEC-WIRE §6)
         const pos = this._append(noteLeaf(tickerT(u.ticker), u.v, u.npk, PUBLIC_RHO), { kind: 'TEAM', ticker: u.ticker, v: u.v, npk: hexFr(u.npk) });
         this._intoPool(u.ticker, u.v);
-        events.push({ type: 'TEAM_UNLOCK', ticker: u.ticker, v: u.v, pos });
+        events.push({ type: 'TEAM_UNLOCK', ticker: u.ticker, pre: u.v, pos });
       }
       for (const tx of block.txs) this._applyTx(tx, block.height, events, rejected);
     }
@@ -289,10 +289,8 @@ export class Indexer {
 
   _commitSpend({ nf, outs }) {
     for (const x of nf) this._add(this.nullifiers, hexFr(x));
-    const positions = outs.map((o, j) =>
-      this._append(o.leaf, { kind: 'OUT', j, pkEph: o.pkEph.toString('hex'), ct: o.ct.toString('hex') }),
-    );
-    return { nullifiers: nf.map(hexFr), positions };
+    const pos = outs.map((o, j) => this._append(o.leaf, { kind: 'OUT', j, pkEph: o.pkEph.toString('hex'), ct: o.ct.toString('hex') }));
+    return { nullifiers: nf.map(hexFr), pos };
   }
 
   /** Creates the genesis token from the profile, in the first block read (the activation block). */
@@ -371,7 +369,7 @@ export class Indexer {
       const queue = (this.teamQueue.get(unlock) || []).concat([{ ticker: env.ticker, v: pre, npk: env.team.npk }]);
       this._set(this.teamQueue, unlock, queue);
     }
-    return { type: 'DEPLOY', ticker: env.ticker, ...(commit ? { burn: commit } : {}) };
+    return { type: 'DEPLOY', ticker: env.ticker, ...commit };
   }
 
   _mint(env, tx, H) {
@@ -397,7 +395,7 @@ export class Indexer {
     const s = this._checkSpend(env.spend, body, env.vPub, t.t, H);
     const commit = this._commitSpend(s);
     this._set(this.tokens, t.ticker, { ...t, burned: t.burned + env.vPub, pool: t.pool - env.vPub });
-    return { type: 'BURN', ticker: t.ticker, v: env.vPub, ...commit };
+    return { type: 'BURN', ticker: t.ticker, vPub: env.vPub, ...commit };
   }
 
   _list(env, body, tx, H) {

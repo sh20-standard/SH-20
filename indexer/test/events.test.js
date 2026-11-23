@@ -11,7 +11,7 @@ const sha256 = (...p) => p.reduce((h, x) => h.update(x), createHash('sha256')).d
 const TX = '11'.repeat(32);
 const LIST = '22'.repeat(32);
 const NF = ['0'.repeat(63) + '1', '0'.repeat(63) + '2'];
-const spend = { nullifiers: NF, positions: [7, 8, 9] };
+const spend = { nullifiers: NF, pos: [7, 8, 9] };
 
 test('event records: byte order and layout pinned by hand', () => {
   // code ‖ txid ‖ ticker ‖ u64le v ‖ u32le pos
@@ -38,22 +38,22 @@ test('event records: byte order and layout pinned by hand', () => {
 test('event records: one fixed size per type', () => {
   const sizes = {
     GENESIS: [{ ticker: 'SH20', max: 1n, lim: 1n, deployBurn: 0n, anchorWindow: 1, anchorMinDepth: 1, deployMaturity: 6 }, 73],
-    TEAM_UNLOCK: [{ ticker: 'GENE', v: 1n, pos: 0 }, 49],
+    TEAM_UNLOCK: [{ ticker: 'GENE', pre: 1n, pos: 0 }, 49],
     DEPLOY: [{ txid: TX, ticker: 'GENE' }, 38],
     MINT: [{ txid: TX, ticker: 'GENE', v: 1n, pos: 0 }, 49],
     TRANSFER: [{ txid: TX, ...spend }, 109],
-    BURN: [{ txid: TX, ticker: 'GENE', v: 1n, ...spend }, 121],
+    BURN: [{ txid: TX, ticker: 'GENE', vPub: 1n, ...spend }, 121],
     LIST: [{ txid: TX, listTxid: TX, ticker: 'GENE', amount: 1n, price: 1n, ...spend }, 129],
     TAKE: [{ txid: TX, listTxid: LIST, outcome: 'SOLD', pos: 0 }, 70],
     CLOSED: [{ txid: TX, listTxid: LIST }, 65],
     CLAIM: [{ txid: TX, listTxid: LIST, pos: 0 }, 69],
   };
   for (const [type, [fields, n]] of Object.entries(sizes)) assert.equal(encodeEvent({ type, ...fields }).length, n, type);
-  assert.equal(encodeEvent({ type: 'DEPLOY', txid: TX, ticker: 'GENE', burn: spend }).length, 38 + 64 + 12);
+  assert.equal(encodeEvent({ type: 'DEPLOY', txid: TX, ticker: 'GENE', ...spend }).length, 38 + 64 + 12);
   assert.equal(encodeEvents([]).length, 0);
   assert.throws(() => encodeEvent({ type: 'NOPE', txid: TX }), /unknown event type/);
   assert.throws(() => encodeEvent({ type: 'MINT', txid: TX, ticker: 'SH2', v: 1n, pos: 0 }), /ticker must be 4 bytes/);
-  assert.throws(() => encodeEvent({ type: 'TRANSFER', txid: TX, nullifiers: NF, positions: [1] }), /2 nullifiers and 3 positions/);
+  assert.throws(() => encodeEvent({ type: 'TRANSFER', txid: TX, nullifiers: NF, pos: [1] }), /2 nullifiers and 3 positions/);
 });
 
 test('digest: SHA256(prev ‖ u32le(H) ‖ root ‖ SHA256(events_H)), from SHA256("sh20-v0")', () => {
