@@ -40,9 +40,9 @@ const txid = (hex) => {
 };
 // Nullifiers are kept as big-endian hex; on the wire and here they are 32 bytes little-endian.
 const fr = (hex) => frToBytes(BigInt('0x' + hex));
-const spent = ({ nullifiers, positions }) => {
-  if (nullifiers.length !== 2 || positions.length !== 3) throw new Error('a spend has 2 nullifiers and 3 positions');
-  return [...nullifiers.map(fr), ...positions.map(u32)];
+const spent = ({ nullifiers, pos }) => {
+  if (nullifiers.length !== 2 || pos.length !== 3) throw new Error('a spend has 2 nullifiers and 3 positions');
+  return [...nullifiers.map(fr), ...pos.map(u32)];
 };
 
 const payload = (e) => {
@@ -50,15 +50,15 @@ const payload = (e) => {
     case 'GENESIS':
       return [ticker(e.ticker), u64(e.max), u64(e.lim), u64(e.deployBurn), u32(e.anchorWindow), u32(e.anchorMinDepth), u32(e.deployMaturity)];
     case 'TEAM_UNLOCK':
-      return [ticker(e.ticker), u64(e.v), u32(e.pos)];
+      return [ticker(e.ticker), u64(e.pre), u32(e.pos)];
     case 'DEPLOY':
-      return e.burn ? [ticker(e.ticker), u8(1), ...spent(e.burn)] : [ticker(e.ticker), u8(0)];
+      return e.nullifiers ? [ticker(e.ticker), u8(1), ...spent(e)] : [ticker(e.ticker), u8(0)];
     case 'MINT':
       return [ticker(e.ticker), u64(e.v), u32(e.pos)];
     case 'TRANSFER':
       return spent(e);
     case 'BURN':
-      return [ticker(e.ticker), u64(e.v), ...spent(e)];
+      return [ticker(e.ticker), u64(e.vPub), ...spent(e)];
     case 'LIST':
       return [ticker(e.ticker), u64(e.amount), u64(e.price), ...spent(e)];
     case 'TAKE':

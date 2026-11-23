@@ -60,7 +60,7 @@ the garbage collector 2.8 %, everything else under 1 % each.
 | code-indexer-3 | untested | `src/api.js`, the `vPub` and `pre` names of BURN and TEAM_UNLOCK events, and `/block/:height` for a block with no activity | reached only by `bin/api-diff.js`, which `npm test` does not run | a test; done |
 | code-indexer-4 | untested | `src/indexer.js`, refusing a block that does not follow the last one | never run (coverage) | a test; done |
 | code-indexer-5 | faster | `src/poseidon.js`, `permute` | 86.7 % of a replay; 141 µs a hash of two inputs, about 828 products | about a quarter of the products; open |
-| code-indexer-6 | better | event records (`v`, `positions`, a nested `burn`) and `src/api.js` `apiEvent`, which renames them to the spec's (`vPub`, `pre`, `pos`, flat `nullifiers`) | two names for one field, kept apart by a translation | the translation goes; open |
+| code-indexer-6 | better (done, §6) | event records (`v`, `positions`, a nested `burn`) and `src/api.js` `apiEvent`, which renames them to the spec's (`vPub`, `pre`, `pos`, flat `nullifiers`) | two names for one field, kept apart by a translation | the translation goes; open |
 | code-indexer-7 | superfluous | exports nothing imports: `parseScript`, `minimalPushData`, `tapscriptOf` (`carrier.js`), `OUT_BYTES` (`constants.js`), `EVENT_CODE`, `TAKE_OUTCOME` (`events.js`), `Reject`, `rejectAllVerifier` (`indexer.js`), `DEFAULT_VK` (`adapters/plonk.js`) | search across the repository | a narrower module surface; open, low |
 
 **code-indexer-1.** The indexer verifies a BIP340 signature for each CLAIM, and the vault verifies
@@ -121,3 +121,23 @@ prover rebuild); `docs/tools/check-audit-refs.py`, 0 problems.
   that does not parse, or parses and is not a block) has no test of its own; a cut last line has.
 - The follower's loop (`run`) and the Bitcoin Core source are exercised by processes (the regtest
   flow, `follow-data.test.js`), which the coverage figure does not count.
+
+## 6. Follow-up, the same day
+
+After the report, two more changes, each behind the same checks (`npm test` 72/72; the vectors and
+the explorer's demo data regenerated, the vectors unchanged; the fuzzer, 30 chains and 1,190 blocks,
+and `api-diff` through a reorg of 3 blocks into 5 and of 2 into 2: no divergence):
+
+- **code-indexer-6, done.** The event records now carry the spec's names (`pos`, `vPub`, `pre`, and a
+  DEPLOY's burn as flat `nullifiers` and `pos`), which the digest encoder reads; `apiEvent` shrinks to
+  dropping a LIST's own txid. The demo data of the explorer changes only in the order of keys. The
+  explorer still reads the old shapes too (`e.burn`, `e.v`): that fallback is now dead, for the code
+  audit of `explorer`.
+- **A leaf costs fewer hashes (new, code-indexer-8).** `noteLeaf` keeps `H(TAG_LEAF, t)` and
+  `H(H(TAG_LEAF, t), v)`, which every MINT of a ticker shares: a MINT's leaf is two Poseidon hashes
+  instead of four. Each cache holds at most 4,096 entries and starts again when full, so amounts that
+  anyone chooses cannot make it grow. The replay of §2: 1,746 ms → 1,582 ms (253 blocks a second);
+  more on a chain that is mostly mints, as the first blocks after an activation are.
+- **code-indexer-5, revised.** The sparse partial rounds remove about a quarter of the products, but
+  not one of the reductions modulo `p`, which cost as much: about 10 to 15 % of a hash. Still open, and
+  lower than the leaf cache was.

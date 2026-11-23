@@ -13,21 +13,11 @@ import { encodeEvents } from './events.js';
 
 const LISTING_STATES = ['ACTIVE', 'SOLD', 'CANCELLED', 'CLOSED', 'CLAIMED'];
 
-// An event as the API shows it (docs/API.md, "Events"): the fields of its record in SPEC-WIRE §6, under the spec's names.
-// The indexer keeps its own shape for the digest; only the JSON changes here.
+// An event as the API shows it (docs/API.md, "Events"): its record of SPEC-WIRE §6, under the spec's names, which are
+// the indexer's own; a LIST does not repeat its own txid as listTxid.
 function apiEvent(e) {
-  const { positions, burn, ...out } = e;
-  if (positions) out.pos = positions;
-  if (burn) Object.assign(out, { nullifiers: burn.nullifiers, pos: burn.positions });
-  if (e.type === 'BURN' && 'v' in out) {
-    out.vPub = out.v;
-    delete out.v;
-  }
-  if (e.type === 'TEAM_UNLOCK' && 'v' in out) {
-    out.pre = out.v;
-    delete out.v;
-  }
-  if (e.type === 'LIST') delete out.listTxid; // the LIST's own txid
+  if (e.type !== 'LIST') return e;
+  const { listTxid, ...out } = e;
   return out;
 }
 // A block as /blocks and /block/:height show it: its events in API shape, and eventsH, the bytes of SPEC-WIRE §6.
@@ -114,7 +104,7 @@ export function apiHandler(indexer, { network } = {}) {
       const out = [];
       for (const [h, b] of ix.history) {
         if (h < from) continue;
-        for (const e of b.events) for (const nf of e.nullifiers ?? e.burn?.nullifiers ?? []) out.push({ height: h, nullifier: nf });
+        for (const e of b.events) for (const nf of e.nullifiers ?? []) out.push({ height: h, nullifier: nf });
       }
       return { from, height: ix.height, nullifiers: out };
     }],
