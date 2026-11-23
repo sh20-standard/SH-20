@@ -48,16 +48,19 @@ project has no account of its own.
 1. **coordination**: `A` = the signet tip + 6 (about an hour), committed. **maintainer**: Settings → Pages →
    GitHub Actions; the variable `PAGES` = `on`.
 2. The mirror running, or, if it is not ready, a computer running both indexers (`docs/SIGNET.md`, step 3).
-3. **maintainer**, on a computer, with each of Xverse, UniSat and Leather set to signet: a MINT, a transfer
-   received and one sent, a DEPLOY, a sale and a purchase. Each failure goes back with the vault's message.
+3. **maintainer**, on a computer, with each of Xverse, UniSat and Leather set to signet: a MINT of SH20, a
+   transfer received and one sent, a sale and a purchase. Each failure goes back with the vault's message.
+   No DEPLOY (decision 7): the regtest flow already proves and signs one, in private, and a DEPLOY is the
+   same commit and reveal for a wallet as a transfer.
 4. Fixes, each with its test. A fix that changes a rule takes a new `A`.
 
 What the first testers find has to work: nothing is announced before step 3 passes.
 
 ## 4. Announce
 
-`A`, the site's address, the release's SHA-256, and the explorer's link. From an identity made for the
-project: a Nostr key needs no email and no phone number. The repository's README says the same.
+`A`, the site's address, the release's SHA-256, and the explorer's link, and that the project's only token
+is SH20 and its contributors deploy none (decision 7). From an identity made for the project: a Nostr key
+needs no email and no phone number. The repository's README says the same.
 
 ## 5. The signet run: two to four weeks
 
@@ -96,3 +99,8 @@ from a workflow (`vault/RELEASES.md`, step 7).
    would be one more account.
 6. **No Claude session links** in commits or pull requests (`CLAUDE.md`, rule 5): they tie the work to one
    account. The rewrite drops those of the past.
+7. **The contributors deploy no token, on signet or on mainnet.** A ticker the project deployed, even as a
+   test, could be found, copied on mainnet and sold as "the project's token". The project's token is SH20,
+   and it comes first by construction: it exists from the activation block without a DEPLOY, no DEPLOY can
+   take its ticker ("ticker already deployed"), and every DEPLOY burns 1,000 SH20, so every other token is
+   born from it, after it. DEPLOY is tested on regtest, where nothing is public.
