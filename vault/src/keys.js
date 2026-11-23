@@ -62,10 +62,11 @@ export class Vault {
   #wallet = null; // keys derived from the seed, on first use
   #openings = new Map(); // index -> public opening, cached (each costs two BabyJubJub multiplications, ~170 ms)
   #locks = new Map(); // index -> lock output (market.js), cached
+  #state; // { v, network, scheme, next, notes, obsolete?, npks?, pending? }, null once locked
 
   constructor(storage, state, seed, key, salt, words = null) {
     this.storage = storage;
-    this.state = state; // { v, network, scheme, next, notes, obsolete?, npks?, pending? } — secrets kept apart
+    this.#state = state;
     this.#seed = seed;
     this.#words = words;
     this.#key = key;
@@ -88,6 +89,16 @@ export class Vault {
   get #w() {
     if (!this.#wallet) throw new Error('the vault is locked');
     return this.#wallet;
+  }
+
+  /** The vault's records: its notes (with their tweaks), listings and spends under way (with their one-time keys). */
+  get state() {
+    if (!this.#state) throw new Error('the vault is locked');
+    return this.#state;
+  }
+
+  get locked() {
+    return this.#state === null;
   }
 
   /** The keys, for building a spend (send.js); they never leave the page. */
@@ -131,6 +142,7 @@ export class Vault {
 
   /** The recovery words, or null for a vault made before them (its backup file restores it). */
   get words() {
+    if (this.locked) throw new Error('the vault is locked');
     return this.#words;
   }
 
@@ -413,12 +425,22 @@ export class Vault {
     return out;
   }
 
+  /**
+   * Locks the vault (the Lock button, the inactivity lock of autolock.js, another tab's write):
+   * what can be overwritten is zeroed (the master secret, the viewing key, the lock keys), the rest
+   * is let go (the state with its note tweaks and one-time keys, the derived scalars, the words, the
+   * passphrase key): a BigInt or a string cannot be overwritten in JavaScript, only left to the
+   * garbage collector. Nothing here reads the vault again until it is opened from storage.
+   */
   lock() {
     this.#seed?.fill(0);
+    this.#wallet?.ivk?.fill(0);
+    for (const o of this.#locks.values()) o.secret.fill(0);
     this.#seed = null;
     this.#words = null;
     this.#key = null;
     this.#wallet = null;
+    this.#state = null;
     this.#openings.clear();
     this.#locks.clear();
   }

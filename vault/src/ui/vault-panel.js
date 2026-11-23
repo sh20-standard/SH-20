@@ -4,16 +4,44 @@
 import { addressToScript, scriptType } from '../btc.js';
 import { Vault } from '../keys.js';
 import { WALLETS } from '../wallets.js';
-import { busy, fill, h, report, result, resultBox, st } from './context.js';
+import { LOCK_AFTER_MS } from '../autolock.js';
+import { unloadProver } from '../prover.js';
+import { $, activity, busy, fill, h, report, result, resultBox, st } from './context.js';
 import { syncNotes } from './notes-panel.js';
 import { renderAll } from './render.js';
 
 // ---- vault ----------------------------------------------------------------------
 
+/**
+ * Locks the vault: its keys leave this page's memory (keys.js lock()), and so does the prover's,
+ * which may hold the witness of the last proof. `note` stays on screen to say why.
+ */
+export function lockVault(note) {
+  st.vault?.lock();
+  st.vault = null;
+  st.showWords = false;
+  st.vaultForm = null;
+  st.vaultFormNode = null;
+  unloadProver();
+  renderAll();
+  if (note) $('warnings').append(h('div', { class: 'warn' }, note));
+}
+
+/** Why the vault must not lock itself now (autolock.js), or null. */
+export function lockHeld() {
+  if (activity.running > 0) return 'an action is under way';
+  if (!st.vault || st.vault.locked) return null;
+  if ((st.vault.state.pending ?? []).some((p) => p.status === 'waiting maturity')) return 'a DEPLOY waits for its reveal, which this page sends';
+  return null;
+}
+
+export const AUTO_LOCK_NOTE = `The vault locked itself after ${LOCK_AFTER_MS / 60000} minutes without use: its keys are no longer in this page's memory. Unlock it to go on.`;
+
 export function renderVault() {
   if (st.vault) {
     const v = st.vault;
-    const lock = () => { v.lock(); st.vault = null; st.showWords = false; st.vaultForm = null; st.vaultFormNode = null; renderAll(); };
+    const lock = () => lockVault();
+    const held = lockHeld();
     // an open form is the same node across renders (a sync renders every panel): what is typed stays
     if (!st.vaultForm) st.vaultFormNode = null; // a closed form is made anew, empty, when opened again
     const keep = (kind, make) => (st.vaultFormNode?.kind === kind ? st.vaultFormNode.el : (st.vaultFormNode = { kind, el: make() }).el);
@@ -26,6 +54,9 @@ export function renderVault() {
     };
     fill('vault-body',
       h('p', {}, h('span', { class: 'ok' }, 'Unlocked. '), `${v.state.next} public note key(s) used, ${v.encrypted ? 'encrypted with your passphrase' : 'stored without passphrase'}.`),
+      h('p', { class: 'muted', id: 'autolock' }, held === 'a DEPLOY waits for its reveal, which this page sends'
+        ? 'It stays unlocked while a DEPLOY waits for its reveal (this page sends it), then locks itself after ' + `${LOCK_AFTER_MS / 60000} minutes without use.`
+        : `It locks itself after ${LOCK_AFTER_MS / 60000} minutes without use.`),
       v.encrypted ? null : h('p', { class: 'warn' }, 'Stored in clear on this device: anyone using this browser profile can read its keys. Set a passphrase: it encrypts this copy, and a backup file needs it.'),
       h('p', {}, 'Your sh20 address (signet), for receiving sealed notes: '),
       h('p', { class: 'mono', id: 'address' }, v.address),

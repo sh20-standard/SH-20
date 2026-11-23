@@ -9,7 +9,8 @@ import { initContext, setIsolation, busy, $, h, st, staticWarnings } from './ui/
 import { initSettings } from './ui/settings-panel.js';
 import { renderAll } from './ui/render.js';
 import { refresh } from './ui/tokens-panel.js';
-import { renderWallet } from './ui/vault-panel.js';
+import { AUTO_LOCK_NOTE, lockHeld, lockVault, renderWallet } from './ui/vault-panel.js';
+import { autoLock } from './autolock.js';
 import { syncNotes } from './ui/notes-panel.js';
 import { startDeployTimer } from './ui/deploy-panel.js';
 
@@ -75,10 +76,9 @@ startDeployTimer();
 window.addEventListener('storage', (ev) => {
   if (ev.key !== STORAGE_KEY || !st.vault) return;
   st.vault.lock();
-  st.vault = null;
-  st.showWords = false;
-  st.vaultForm = null;
-  st.vaultFormNode = null;
-  renderAll();
-  $('warnings').append(h('div', { class: 'warn' }, 'The vault was changed in another tab of this browser: this tab locked it. Unlock it again to see the same state.'));
+  lockVault('The vault was changed in another tab of this browser: this tab locked it. Unlock it again to see the same state.');
 });
+
+// Without use, the vault locks itself and its keys leave the page's memory (docs/AUDIT.md §8.8);
+// never in the middle of an action, nor while a DEPLOY waits for the reveal this page sends.
+autoLock({ unlocked: () => st.vault !== null, held: lockHeld, lock: () => lockVault(AUTO_LOCK_NOTE) });

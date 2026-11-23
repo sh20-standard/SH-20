@@ -6,7 +6,7 @@ import { frHex } from '../fr.js';
 import { Sync } from '../sync.js';
 import { matchNotes } from '../match.js';
 import { REFUSAL_DEPTH, refusedSpend } from '../send.js';
-import { $, esplora, explorerTx, fill, h, indexer, indexers, report, short, st, staticWarnings, units } from './context.js';
+import { $, during, esplora, explorerTx, fill, h, indexer, indexers, report, short, st, staticWarnings, units } from './context.js';
 import { agreementText, digestAgreement, refusalAgreed } from '../consensus.js';
 import { balances } from './send-panel.js';
 import { processDeploys } from './deploy-panel.js';
@@ -113,7 +113,11 @@ async function settleRefused(s) {
  * new since the cached block), rebuilds the tree here, then finds the vault's
  * notes, their Merkle paths and their spends on the device.
  */
-export async function syncNotes({ full = false } = {}) {
+export async function syncNotes(opts) {
+  return during(() => syncOnce(opts)); // the vault does not lock itself in the middle of a sync
+}
+
+async function syncOnce({ full = false } = {}) {
   const s = await getSyncer();
   const r = await s.sync(indexer, { full });
   // the other indexers' root and digest after the same block (AUDIT §8.5): shown next to the balance

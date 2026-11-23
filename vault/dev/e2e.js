@@ -435,6 +435,17 @@ async function main() {
   await waitFor(`document.querySelectorAll('#words li').length === 12`, 'the words after the passphrase');
   step('passphrase added after the restore: stored encrypted, backup enabled, words shown after the passphrase');
 
+  // docs/AUDIT.md §8.8: without use the vault locks itself (the page's clock moved 11 minutes on), and
+  // its passphrase opens it again; the check runs when the page is shown, as for a tab left behind
+  await evaluate(`(() => { const real = Date.now; Date.now = () => real() + 11 * 60 * 1000; })()`);
+  await waitFor(`(document.dispatchEvent(new Event('visibilitychange')), !document.querySelector('#address'))`, 'the vault to lock itself');
+  if (!(await evaluate(`document.querySelector('#warnings').innerText.includes('locked itself after 10 minutes without use')`))) throw new Error('no word of the inactivity lock');
+  if (await evaluate(`!!document.querySelector('#words')`)) throw new Error('the recovery words still on screen after the lock');
+  await evaluate(`document.querySelector('#vault-body input[type=password]').value = 'e2e second'`);
+  await click('#vault-body button', 'Unlock');
+  await waitFor(`document.querySelector('#address')?.textContent === ${JSON.stringify(address)}`, 'the vault unlocked again');
+  step('locked itself after 10 minutes without use, its words gone from the screen; unlocked again with the passphrase');
+
   ws.close();
   // a 404 on /nullifiers is expected from an indexer without the route (before PR #5): spends shown as unknown
   const real = problems.filter((p) => !/favicon/.test(p) && !/404.*\/nullifiers\?from=/.test(p));
