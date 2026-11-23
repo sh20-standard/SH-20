@@ -415,6 +415,13 @@ Three choices above are judgment calls that the owner of the specs may reverse: 
 every spend and not for TRANSFER alone, the version byte kept, and `ct2` rather than the bare
 ticker and amount as what the relayer receives.
 
+The owner of the specs (the coordination session) kept all three on 2026-11-23: one layout leaves
+one spend section for the codec and the circuit's inputs to know; no network will ever carry both
+layouts before a mainnet activation, so a new `A` tells them apart; and `ct2` is opened by the
+relayer's ordinary scanning (`docs/RELAYER.md` §2, step 5), with nothing written for this case
+alone. The one ephemeral key for several recipients waits for the audit of the part `sealing`
+(`docs/AUDIT-PROMPT.md`) before v0.4 goes into `SPEC-WIRE.md` and `SPEC-NOTES.md`.
+
 ## How the result is checked
 
 - `cargo test --release`: 38 tests (three of them, `tests/audit.rs`, from the audit of 2026-11-23). Model against the indexer's constants; 34 adversarial witnesses
