@@ -42,12 +42,6 @@ class Reader {
     this.need(1);
     return this.buf[this.pos++];
   }
-  u16() {
-    this.need(2);
-    const v = this.buf.readUInt16LE(this.pos);
-    this.pos += 2;
-    return v;
-  }
   u32() {
     this.need(4);
     const v = this.buf.readUInt32LE(this.pos);
@@ -80,11 +74,6 @@ class Writer {
   }
   u8(v) {
     this.parts.push(Buffer.from([v]));
-  }
-  u16(v) {
-    const b = Buffer.alloc(2);
-    b.writeUInt16LE(v);
-    this.parts.push(b);
   }
   u32(v) {
     const b = Buffer.alloc(4);

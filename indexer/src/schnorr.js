@@ -1,6 +1,7 @@
 // BIP340 Schnorr signatures over secp256k1, using only Node's built-in crypto.
 // Verification is what the indexer needs (CLAIM). Signing is here for tests
-// and wallets. Checked against the BIP340 test vectors in test/schnorr.test.js.
+// and wallets (not in constant time: the vault signs with its own vault/src/secp256k1.js). Checked
+// against the BIP340 test vectors in test/primitives.test.js.
 
 import { createHash } from 'node:crypto';
 
@@ -26,27 +27,70 @@ function powMod(b, e, m) {
 
 const invP = (a) => powMod(a, p - 2n, p);
 
-function add(P1, P2) {
-  if (P1 === null) return P2;
-  if (P2 === null) return P1;
-  if (P1.x === P2.x && md(P1.y + P2.y, p) === 0n) return null;
-  let lam;
-  if (P1.x === P2.x && P1.y === P2.y) lam = md(3n * P1.x * P1.x * invP(2n * P1.y), p);
-  else lam = md((P2.y - P1.y) * invP(md(P2.x - P1.x, p)), p);
-  const x = md(lam * lam - P1.x - P2.x, p);
-  return { x, y: md(lam * (P1.x - x) - P1.y, p) };
+// Points are kept in Jacobian coordinates [X, Y, Z] (x = X/Z², y = Y/Z³) while they are added, so that a
+// scalar multiplication pays one inversion, at the end, instead of one per addition; null is the point at
+// infinity. secp256k1 has no point of order 2 (y = 0), which these formulas would need to handle.
+const jac = (P) => (P === null ? null : [P.x, P.y, 1n]);
+
+function jDouble(P) {
+  if (P === null) return null;
+  const [X, Y, Z] = P;
+  const A = (X * X) % p;
+  const B = (Y * Y) % p;
+  const C = (B * B) % p;
+  const D = md(2n * ((X + B) * (X + B) - A - C), p);
+  const E = (3n * A) % p;
+  const X3 = md(E * E - 2n * D, p);
+  return [X3, md(E * (D - X3) - 8n * C, p), (2n * Y * Z) % p];
 }
 
-function mul(P0, k) {
-  let R = null;
-  let A = P0;
-  while (k > 0n) {
-    if (k & 1n) R = add(R, A);
-    A = add(A, A);
-    k >>= 1n;
-  }
-  return R;
+function jAdd(P1, P2) {
+  if (P1 === null) return P2;
+  if (P2 === null) return P1;
+  const [X1, Y1, Z1] = P1;
+  const [X2, Y2, Z2] = P2;
+  const Z1Z1 = (Z1 * Z1) % p;
+  const Z2Z2 = (Z2 * Z2) % p;
+  const U1 = (X1 * Z2Z2) % p;
+  const U2 = (X2 * Z1Z1) % p;
+  const S1 = (Y1 * Z2 * Z2Z2) % p;
+  const S2 = (Y2 * Z1 * Z1Z1) % p;
+  if (U1 === U2) return S1 === S2 ? jDouble(P1) : null;
+  const H = md(U2 - U1, p);
+  const I = (4n * H * H) % p;
+  const J = (H * I) % p;
+  const r = md(2n * (S2 - S1), p);
+  const V = (U1 * I) % p;
+  const X3 = md(r * r - J - 2n * V, p);
+  return [X3, md(r * (V - X3) - 2n * S1 * J, p), md(((Z1 + Z2) * (Z1 + Z2) - Z1Z1 - Z2Z2) * H, p)];
 }
+
+function affine(P) {
+  if (P === null) return null;
+  const zi = invP(P[2]);
+  const zi2 = (zi * zi) % p;
+  return { x: (P[0] * zi2) % p, y: (P[1] * zi2 * zi) % p };
+}
+
+/** k1·P1 + k2·P2 (P2 and k2 optional), with 4-bit windows and shared doublings; 0 ≤ k < 2^256. */
+function mul2(P1, k1, P2 = null, k2 = 0n) {
+  const table = (P) => {
+    const t = [null, jac(P)];
+    for (let i = 2; i < 16; i++) t.push(jAdd(t[i - 1], t[1]));
+    return t;
+  };
+  const t1 = table(P1);
+  const t2 = P2 === null ? null : table(P2);
+  let R = null;
+  for (let shift = 252n; shift >= 0n; shift -= 4n) {
+    R = jDouble(jDouble(jDouble(jDouble(R))));
+    R = jAdd(R, t1[Number((k1 >> shift) & 15n)]);
+    if (t2) R = jAdd(R, t2[Number((k2 >> shift) & 15n)]);
+  }
+  return affine(R);
+}
+
+const mul = (P, k) => mul2(P, k);
 
 const toInt = (buf) => BigInt('0x' + (Buffer.from(buf).toString('hex') || '0'));
 const toBytes32 = (x) => Buffer.from(x.toString(16).padStart(64, '0'), 'hex');
@@ -100,7 +144,7 @@ export function verify(pubkey, msg, sig) {
   const s = toInt(sig.subarray(32, 64));
   if (r >= p || s >= n) return false;
   const e = md(toInt(taggedHash('BIP0340/challenge', sig.subarray(0, 32), pubkey, msg)), n);
-  const R = add(mul(G, s), mul(Pt, n - e));
+  const R = mul2(G, s, Pt, n - e);
   if (R === null || (R.y & 1n) !== 0n || R.x !== r) return false;
   return true;
 }
