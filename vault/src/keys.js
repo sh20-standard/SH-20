@@ -14,12 +14,12 @@ import { frHex } from './fr.js';
 import { noteLeaf, tickerT, PUBLIC_RHO, masterSecret, hmacSha512 } from './sh20.js';
 import { newMnemonic, mnemonicToSeed } from './bip39.js';
 import { keyPathOutput } from './taproot.js';
+import { keyFromBytes } from './secp256k1.js';
 import { gatewayKind } from './isolation.js';
 
-const SECP_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
 /** How many lock keys past the last one used a restored vault looks for among the listings. */
 export const LOCK_GAP = 10;
-import { toHex, fromHex, toBase64, fromBase64, utf8, concat, u32le, bytesToBig, bigTo32 } from './bytes.js';
+import { toHex, fromHex, toBase64, fromBase64, utf8, concat, u32le } from './bytes.js';
 
 export const STORAGE_KEY = 'sh20.vault.v0';
 const PBKDF2_ITER = 600000;
@@ -327,7 +327,7 @@ export class Vault {
   async lockOutput(index) {
     if (this.#locks.has(index)) return this.#locks.get(index);
     const wide = await hmacSha512(new TextEncoder().encode('sh20/vault/lock'), concat(this.#seed, u32le(index)));
-    const out = keyPathOutput(bigTo32((bytesToBig(wide.subarray(0, 32)) % (SECP_N - 1n)) + 1n));
+    const out = keyPathOutput(keyFromBytes(wide.subarray(0, 32))); // (x mod (n − 1)) + 1, in constant time
     this.#locks.set(index, out);
     return out;
   }
