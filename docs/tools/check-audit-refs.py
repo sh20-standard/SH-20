@@ -145,6 +145,9 @@ CITES = [
     ("goes through `lockVault` (`ui/vault-panel.js` l. {})", (V + "ui/vault-panel.js", "export function lockVault(")),
     ("`lock()` (`keys.js` l. {}) zeroes the master secret, the viewing key", (V + "keys.js", "lock() {")),
     ("(`ui/spends.js` l. {}): the next proof", (V + "ui/spends.js", "built.witness.fill(0);")),
+    ("(`reserveNote`, `keys.js`\nl. {})", (V + "keys.js", "async reserveNote() {")),
+    ("(`matchListings`, `match.js` l. {})", (V + "match.js", "export async function matchListings(")),
+    ("(`chainChecked`, `keys.js` l. {})", (V + "keys.js", "async chainChecked(kind) {")),
     ("by the vault's own rule (`keys.js` l. {})", (V + "keys.js", "async lockOutput(index)")),
     # §8, the table "Read and found as intended"
     ("| `bip39.js` l. {}, l. {}; `keys.js` l. {} |",
@@ -244,6 +247,7 @@ TESTS = [
     ("vault/test/audit8.test.js", "8.6 a note whose scan throws does not stop the others"),
     ("vault/test/secp256k1.test.js", "8.7 k·G takes the same time"),
     ("vault/test/autolock.test.js", "8.8 the vault locks itself after ten minutes"),
+    ("vault/test/restore-indices.test.js", "8.9 a restored vault reserves no index before a sync has checked it"),
 ]
 
 # a line reference of the document: "l. 12", "l. 12–14", "l. 12, 14, 16" (each number is one)

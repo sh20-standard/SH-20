@@ -212,7 +212,7 @@ test('8.2 the page signs nothing it has not vouched for or shown: offerTerms, th
   assert.match(body, /Offer signed for: /, 'the signed terms are shown with the offer');
   assert.equal((app.match(/signOffer\(/g) ?? []).length, 1, 'no other path signs an offer');
   assert.match(app, /source: 'sent' \}\)/, 'a listing sent here is recorded as such');
-  assert.match(app, /source: 'chain' \}\)/, 'one found again after a restore is not');
+  assert.match(app + src('match.js'), /source: 'chain' \}\)/, 'one found again after a restore is not (matchListings, since §8.9)');
   assert.equal(scriptToAddress(fromHex('0014751e76e8199196d454941c45d1b3a323f1433bd6')), WPKH, 'the payee is shown as an address');
 });
 

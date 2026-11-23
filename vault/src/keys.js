@@ -19,6 +19,14 @@ import { gatewayKind } from './isolation.js';
 
 /** How many lock keys past the last one used a restored vault looks for among the listings. */
 export const LOCK_GAP = 10;
+/**
+ * How far a restored vault moves its counters past the last index it finds on chain (docs/AUDIT.md
+ * §8.9): room for the MINTs and LISTs another device may have had broadcast and not yet mined when
+ * this one was restored. Below RESTORE_GAP and LOCK_GAP, so that a later restore from the words still
+ * finds what comes after.
+ */
+export const RESTORE_SKIP = 10;
+export const LOCK_SKIP = 3;
 import { toHex, fromHex, toBase64, fromBase64, utf8, concat, u32le } from './bytes.js';
 
 export const STORAGE_KEY = 'sh20.vault.v0';
@@ -124,18 +132,22 @@ export class Vault {
     return Vault.fromWords(storage, newMnemonic(), passphrase);
   }
 
+  /** The counters a restore must check against the chain before it reserves an index (§8.9). */
+  static #unchecked = () => ({ notes: true, locks: true });
+
   /**
    * A vault from recovery words: new ones, or the words of a vault to restore (it then rescans
    * every leaf to find its notes). `passphrase` encrypts the vault on this device; it is not a
-   * BIP39 passphrase (none is used).
+   * BIP39 passphrase (none is used). `restored`: the words of a vault that may have been used, whose
+   * counters start at 0 and are checked against the chain before an index is reserved (reserveNote).
    */
-  static async fromWords(storage, words, passphrase = '') {
+  static async fromWords(storage, words, passphrase = '', { restored = false } = {}) {
     refuseSharedOrigin();
     if (Vault.exists(storage)) throw new Error('a vault already exists on this device');
     const m = Uint8Array.from(await masterSecret(await mnemonicToSeed(words)));
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const key = passphrase ? await aesKey(passphrase, salt) : null;
-    const v = await new Vault(storage, { v: 0, network: 'signet', scheme: NOTE_SCHEME, next: 0, notes: [] }, m, key, salt, words.normalize('NFKD').trim().toLowerCase().split(/\s+/).join(' ')).#init();
+    const v = await new Vault(storage, { v: 0, network: 'signet', scheme: NOTE_SCHEME, next: 0, notes: [], ...(restored ? { unchecked: Vault.#unchecked() } : {}) }, m, key, salt, words.normalize('NFKD').trim().toLowerCase().split(/\s+/).join(' ')).#init();
     await v.save();
     return v;
   }
@@ -182,6 +194,8 @@ export class Vault {
     refuseSharedOrigin();
     if (Vault.exists(storage)) throw new Error('a vault already exists on this device');
     const v = await Vault.open(storage, passphrase, text);
+    // a backup's counters are those of the day it was written: the indices used since are on chain
+    v.state.unchecked = Vault.#unchecked();
     if (!v.encrypted && passphrase) await v.setPassphrase(passphrase);
     else await v.save();
     return v;
@@ -262,8 +276,39 @@ export class Vault {
     return text;
   }
 
+  /**
+   * After a restore, the counters are checked against the chain before any index is reserved: a
+   * backup is older than the notes and listings made since, and the words start from 0. The page
+   * calls this once a sync has read every leaf (`notes`) and the full list of listings (`locks`),
+   * the indices found moving the counters on. Each then also skips RESTORE_SKIP or LOCK_SKIP more,
+   * past the last index used: room for what was broadcast elsewhere and not yet mined.
+   */
+  async chainChecked(kind) {
+    const u = this.state.unchecked;
+    if (!u?.[kind]) return;
+    if (kind === 'notes') {
+      const used = Math.max(-1, ...this.state.notes.filter((n) => n.kind === 'public').map((n) => n.index)) + 1;
+      this.state.next = Math.max(this.state.next, used + RESTORE_SKIP);
+    } else {
+      const used = Math.max(-1, ...(this.state.listings ?? []).map((l) => l.lockIndex), (this.state.nextLock ?? 0) - 1) + 1;
+      this.state.nextLock = Math.max(this.state.nextLock ?? 0, used + LOCK_SKIP);
+    }
+    delete u[kind];
+    if (!u.notes && !u.locks) delete this.state.unchecked;
+    await this.save();
+  }
+
+  #requireChecked(kind) {
+    if (this.state.unchecked?.[kind]) {
+      throw new Error(kind === 'notes'
+        ? 'sync first: this vault was restored, and the public-note keys it used since its backup (or since its words were new) are not known yet. A key used twice links two notes.'
+        : 'sync first, with an indexer that lists the listings: this vault was restored, and the lock keys it used since are not known yet. A lock key used twice links two listings.');
+    }
+  }
+
   /** Reserves a fresh public-note index (saved at once: SPEC-NOTES §5, the counter never repeats). */
   async reserveNote() {
+    this.#requireChecked('notes');
     const index = this.state.next;
     this.state.next = index + 1;
     await this.save();
@@ -346,6 +391,7 @@ export class Vault {
 
   /** Reserves the next lock index (saved at once: a lock key is used for one listing only). */
   async reserveLock() {
+    this.#requireChecked('locks');
     const index = this.state.nextLock ?? 0;
     this.state.nextLock = index + 1;
     await this.save();

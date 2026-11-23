@@ -176,7 +176,10 @@ vout n  change to the payer                                     only if above du
 
 - The opening is `npk` alone: a public note has `rho = 0` (wire v0.3). `npk` is the vault's next
   public note key (`docs/SPEC-NOTES.md` §5: derived from the viewing key `ivk` and a counter that
-  never repeats), so a restored or watch-only vault finds it again.
+  never repeats), so a restored or watch-only vault finds it again. A restored vault (a backup, which
+  has the counters of its day, or the words, which start at 0) reserves no note key and no lock key
+  until a sync has read every leaf and every listing; it then skips 10 note keys and 3 lock keys past
+  the last one used, for what another device may have had broadcast and not yet mined (docs/AUDIT.md §8.9).
 - **Batch mint:** the mint panel takes `k` from 1 to 10. One envelope then asks for `k` mints and
   pays `k × price`, for one note of `k × lim` (one more byte, `k` omitted when 1). The vault never
   asks for more mints than are left: an indexer gives a late batch only what is left and keeps the

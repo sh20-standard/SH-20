@@ -2,6 +2,8 @@
 
 import { frHex } from './fr.js';
 import { PUBLIC_RHO, noteLeaf, tickerT } from './sh20.js';
+import { LOCK_GAP } from './keys.js';
+import { toHex } from './bytes.js';
 
 /**
  * Public notes by npk (leaf recomputed with rho = 0), sealed outputs by opening them with the
@@ -59,4 +61,36 @@ async function matchPublic(v, n, keys) {
   if (pending) await v.updateNote(pending.id, { status: 'in tree', pos: n.pos, ticker: n.ticker, v: n.v.toString(), leaf, ...txid });
   else await v.addNote({ index, ticker: n.ticker, v: n.v, txid: n.txid, status: 'in tree', pos: n.pos });
   return true;
+}
+
+/**
+ * The vault's listings among `all` (an indexer's /listings), found by their lock keys: the vault's
+ * next LOCK_GAP keys past the last one used, again while a match moves that window (a restore, from
+ * an old backup or the words). A key found moves the counter on even when its LIST cannot be read
+ * (docs/AUDIT.md §8.9: a lock key is never used twice); `fromChain(l)` reads the listing's terms from
+ * its transaction, never from the indexer's word (§8.2). Returns how many were added.
+ */
+export async function matchListings(v, all, fromChain) {
+  const known = new Set((v.state.listings ?? []).map((r) => r.listTxid));
+  let found = 0;
+  for (let before = -1; before !== (v.state.nextLock ?? 0);) {
+    before = v.state.nextLock ?? 0;
+    const keys = new Map();
+    for (let i = 0; i < before + LOCK_GAP; i++) keys.set(toHex((await v.lockOutput(i)).key), i);
+    for (const l of all) {
+      const i = keys.get(l.lockKey);
+      if (i === undefined || known.has(l.listTxid)) continue;
+      if ((v.state.nextLock ?? 0) <= i) v.state.nextLock = i + 1; // before addListing saves
+      let chain;
+      try {
+        chain = await fromChain(l);
+      } catch {
+        continue;
+      }
+      known.add(l.listTxid);
+      await v.addListing({ lockIndex: i, ticker: chain.ticker, amount: String(chain.amount), price: String(chain.price), payScript: toHex(chain.payScript), listTxid: l.listTxid, state: l.state, source: 'chain' });
+      found++;
+    }
+  }
+  return found;
 }

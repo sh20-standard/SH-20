@@ -1,0 +1,100 @@
+// docs/AUDIT.md §8.9: restoring an old backup (or the words) cannot reuse an index. A restored vault
+// reserves no public-note key and no lock key until a sync has checked its counters against the
+// chain; it then skips past the last index used, for what another device had in flight; and the lock
+// keys are looked for again while a match moves their window, as the note keys were.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { Vault, RESTORE_SKIP, LOCK_SKIP, RESTORE_GAP, LOCK_GAP } from '../src/keys.js';
+import { matchNotes, matchListings } from '../src/match.js';
+import { noteLeaf, tickerT, PUBLIC_RHO } from '../src/sh20.js';
+import { toHex } from '../src/bytes.js';
+
+const memStorage = () => {
+  const m = new Map();
+  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), m };
+};
+const WORDS = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+const src = (f) => readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8');
+
+/** The public note of index `i` of `v` as an indexer's /notes lists it, at tree position `pos`. */
+async function minted(v, i, pos) {
+  const { npk } = await v.opening(i);
+  return { kind: 'MINT', pos, npk, ticker: 'SH20', v: 1000n, leaf: noteLeaf(tickerT('SH20'), 1000n, npk, PUBLIC_RHO), txid: String(pos).padStart(64, '0') };
+}
+
+/** A listing of lock key `i` of `v`, as /listings has it. */
+async function listed(v, i) {
+  return { listTxid: String(100 + i).padStart(64, 'a'), lockKey: toHex((await v.lockOutput(i)).key), state: 'ACTIVE' };
+}
+const terms = async () => ({ ticker: 'SH20', amount: 10n, price: 1000n, payScript: Uint8Array.of(0x51, 0x20, ...new Uint8Array(32)) });
+
+test('8.9 a restored vault reserves no index before a sync has checked it against the chain, then skips past what it found', async () => {
+  assert.ok(RESTORE_SKIP < RESTORE_GAP && LOCK_SKIP < LOCK_GAP, 'a later restore from the words still finds what comes after');
+  // device A writes a backup, then mints three notes (mined) and a fourth (broadcast, not mined yet), and lists twice
+  const a = await Vault.fromWords(memStorage(), WORDS, 'pass');
+  const backup = a.exportBackup();
+  for (let i = 0; i < 4; i++) assert.equal((await a.reserveNote()).index, i, 'a vault made here reserves at once');
+  assert.equal(await a.reserveLock(), 0);
+  assert.equal(await a.reserveLock(), 1);
+  const notes = [await minted(a, 0, 0), await minted(a, 1, 1), await minted(a, 2, 2)];
+  const listings = [await listed(a, 0), await listed(a, 1)];
+
+  // device B restores the old backup
+  const b = await Vault.restore(memStorage(), backup, 'pass');
+  assert.equal(b.state.next, 0, 'the backup has the counters of its day');
+  await assert.rejects(b.reserveNote(), /sync first/);
+  await assert.rejects(b.reserveLock(), /sync first/);
+  assert.equal((await matchNotes(b, notes)).found, 3);
+  await assert.rejects(b.reserveNote(), /sync first/, 'matching notes is not enough: the page says when every leaf was read');
+  await b.chainChecked('notes');
+  const o = await b.reserveNote();
+  assert.equal(o.index, 3 + RESTORE_SKIP, 'past the three found, and past room for the one still in flight');
+  assert.notEqual(o.npk, (await a.opening(3)).npk, 'not the key of the MINT in flight');
+  await assert.rejects(b.reserveLock(), /sync first/, 'the lock keys are checked on their own');
+  assert.equal(await matchListings(b, listings, terms), 2);
+  await b.chainChecked('locks');
+  assert.equal(await b.reserveLock(), 2 + LOCK_SKIP);
+  assert.equal(b.state.unchecked, undefined);
+
+  // the words: the same, from 0
+  const w = await Vault.fromWords(memStorage(), WORDS, '', { restored: true });
+  await assert.rejects(w.reserveNote(), /sync first/);
+  await matchNotes(w, notes);
+  await w.chainChecked('notes');
+  assert.equal((await w.reserveNote()).index, 3 + RESTORE_SKIP);
+  // a skip does not add up: restoring the backup of a vault that skipped once skips from what it found
+  const again = await Vault.restore(memStorage(), (await (async () => { await w.setPassphrase('p2'); return w.exportBackup(); })()), 'p2');
+  await matchNotes(again, notes);
+  await again.chainChecked('notes');
+  assert.equal(again.state.next, 3 + RESTORE_SKIP + 1, 'its own reservation, and no second skip');
+});
+
+test('8.9 lock keys past the first window are found again, and a key found moves the counter even when its LIST cannot be read', async () => {
+  const a = await Vault.fromWords(memStorage(), WORDS, 'pass');
+  const backup = a.exportBackup();
+  const listings = [await listed(a, 5), await listed(a, 12), await listed(a, 19)]; // each within LOCK_GAP of the one before
+  const b = await Vault.restore(memStorage(), backup, 'pass');
+  const unreadable = new Set([listings[2].listTxid]);
+  const found = await matchListings(b, listings, async (l) => {
+    if (unreadable.has(l.listTxid)) throw new Error('Esplora is down');
+    return terms();
+  });
+  assert.equal(found, 2, 'the window moved twice');
+  assert.deepEqual(b.state.listings.map((l) => l.lockIndex), [5, 12]);
+  assert.equal(b.state.nextLock, 20, 'key 19 is used, even if its listing could not be read');
+  await b.chainChecked('locks');
+  assert.equal(await b.reserveLock(), 20 + LOCK_SKIP);
+});
+
+test('8.9 the page: a full sync until the note keys are checked, then chainChecked; the words restore as restored', () => {
+  const notes = src('ui/notes-panel.js');
+  assert.match(notes, /s\.sync\(indexer, \{ full: full \|\| !!st\.vault\?\.state\.unchecked\?\.notes \}\)/);
+  assert.match(notes, /if \(r\.from === 0 && !failed\.length\) await st\.vault\.chainChecked\('notes'\);/);
+  const market = src('ui/market-panel.js');
+  const sl = market.slice(market.indexOf('export async function syncListings('));
+  assert.ok(sl.indexOf('await matchListings(v, all,') > 0 && sl.indexOf('await matchListings(v, all,') < sl.indexOf("await v.chainChecked('locks');"));
+  assert.ok(sl.indexOf("await v.chainChecked('locks');") < sl.indexOf('\n}\n'), 'in syncListings, after the whole list was read');
+  assert.match(src('ui/vault-panel.js'), /Vault\.fromWords\(localStorage, words\.value, wpass\.value, \{ restored: true \}\)/);
+  assert.match(src('sync.js'), /notes, from: keep,/);
+});

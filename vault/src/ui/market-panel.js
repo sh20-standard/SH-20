@@ -4,7 +4,7 @@ import { toHex } from '../bytes.js';
 import { scriptToAddress } from '../btc.js';
 import { frHex } from '../fr.js';
 import { loadProver } from '../prover.js';
-import { LOCK_GAP } from '../keys.js';
+import { matchListings } from '../match.js';
 import { buildCancel, buildClaim, buildTake, claimProblem, decodeOffer, encodeOffer, listingFromChain, offerTerms, offerValid, payeeProblem, signOffer } from '../market.js';
 import { busy, esplora, fill, h, indexer, indexers, requireProfile, result, resultBox, sats, short, st, units } from './context.js';
 import { renderAll } from './render.js';
@@ -33,22 +33,9 @@ export async function syncListings() {
     const l = byTxid.get(rec.listTxid);
     if (l && l.state !== rec.state) await v.updateListing(rec.id, { state: l.state });
   }
-  const known = new Set((v.state.listings ?? []).map((r) => r.listTxid));
-  const keys = new Map();
-  for (let i = 0; i < (v.state.nextLock ?? 0) + LOCK_GAP; i++) keys.set(toHex((await v.lockOutput(i)).key), i);
-  for (const l of all) {
-    const i = keys.get(l.lockKey);
-    if (i === undefined || known.has(l.listTxid)) continue;
-    // found again by its lock key: its terms come from the LIST on chain, not from the indexer's word
-    let chain;
-    try {
-      chain = listingFromChain(l.listTxid, await esplora.txHex(l.listTxid), { ...l, amount: String(l.amount), price: String(l.price) });
-    } catch {
-      continue;
-    }
-    if ((v.state.nextLock ?? 0) <= i) v.state.nextLock = i + 1; // before addListing saves: a lock key is never used twice
-    await v.addListing({ lockIndex: i, ticker: chain.ticker, amount: String(chain.amount), price: String(chain.price), payScript: toHex(chain.payScript), listTxid: l.listTxid, state: l.state, source: 'chain' });
-  }
+  // found again by its lock key: its terms come from the LIST on chain, not from the indexer's word
+  await matchListings(v, all, async (l) => listingFromChain(l.listTxid, await esplora.txHex(l.listTxid), { ...l, amount: String(l.amount), price: String(l.price) }));
+  await v.chainChecked('locks'); // the whole list was read: a restored vault may reserve lock keys again
 }
 
 /**

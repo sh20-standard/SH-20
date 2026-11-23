@@ -53,7 +53,7 @@ export function renderVault() {
       renderVault();
     };
     fill('vault-body',
-      h('p', {}, h('span', { class: 'ok' }, 'Unlocked. '), `${v.state.next} public note key(s) used, ${v.encrypted ? 'encrypted with your passphrase' : 'stored without passphrase'}.`),
+      h('p', {}, h('span', { class: 'ok' }, 'Unlocked. '), `${v.state.next} public note key(s) reserved, ${v.encrypted ? 'encrypted with your passphrase' : 'stored without passphrase'}.`),
       h('p', { class: 'muted', id: 'autolock' }, held === 'a DEPLOY waits for its reveal, which this page sends'
         ? 'It stays unlocked while a DEPLOY waits for its reveal (this page sends it), then locks itself after ' + `${LOCK_AFTER_MS / 60000} minutes without use.`
         : `It locks itself after ${LOCK_AFTER_MS / 60000} minutes without use.`),
@@ -117,7 +117,7 @@ export function renderVault() {
   const wpass = h('input', { type: 'password', placeholder: 'new passphrase for this device', autocomplete: 'new-password' });
   const fromWords = h('button', { type: 'button', class: 'secondary' }, 'Restore from words');
   fromWords.addEventListener('click', busy(fromWords, async () => {
-    st.vault = await Vault.fromWords(localStorage, words.value, wpass.value);
+    st.vault = await Vault.fromWords(localStorage, words.value, wpass.value, { restored: true }); // counters checked against the chain first
     words.value = '';
     renderAll();
     syncNotes({ full: true }).catch(report); // looks for its notes in every leaf
