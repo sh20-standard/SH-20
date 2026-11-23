@@ -268,10 +268,17 @@ above is history for `genesis`, the listing and the verifier's name. `api-diff.j
 
 Two points are not gaps of the text but decide whether the two indexers can be compared on the signet:
 
-- **The proof verifier.** `/status` names the verifier, and `indexer-rs` has only two: `reject` (every spend is
+- **The proof verifier.** `/status` names the verifier, and `indexer-rs` had only two: `reject` (every spend is
   refused) and the vectors' `test` rule. The PLONK verifier lives in `circuit/`, outside what this clean room reads.
   Until one is wired in behind `SpendVerifier`, `indexer-rs` agrees with a reference indexer run without a verifier
   and leaves it at the first valid spend (a TRANSFER, a BURN, a LIST, or a DEPLOY, which burns `D`).
+  **Done (2026-11-24):** `--verifier plonk-bn254-hermez` is the verifier of `circuit/` itself, called as a library
+  through the interface `circuit/README.md` gives and under the key SPEC-WIRE §4 pins; `circuit/src` stays unread.
+  `indexer-rs` replays `indexer/vectors/plonk-v0.3.json`: the three verifier calls with their nine inputs and their
+  answers, and every root, `eventsH` and digest. Nothing was found open in the spec on the way: "Verifier inputs"
+  and "The proof" of §4 were enough to build the call. What the vectors do not hold: a LIST or a DEPLOY burn with a
+  real proof, and a proof refused for its public inputs rather than for its own bytes (the tests of `indexer-rs`
+  move each input of the TRANSFER's call by one; all nine are refused).
 - **The same profile.** `A`, `D`, `W`, `K_min` and `N` come from the command line on both sides; `D`, `W`, `K_min`
   and `N` are in the GENESIS record, so a difference shows in the digest of block `A`. Only `A` is not committed to:
   two indexers started at different heights agree on nothing and no digest says why. `follow` asks for `A` and `D`

@@ -11,7 +11,7 @@ contributors: the standard needs none (hard requirement 2), and a default of our
 | --- | --- | --- |
 | 1 | The clean redeploy: the repository on the project's own anonymous account `SH-20`, public, history rewritten (`docs/PLAN.md` §2) | waits on that account; the rewritten history is ready |
 | 2 | The CI runs. On a public repository GitHub's runners cost nothing; on a private one a run costs about 27 runner minutes | the account's minutes ran out on 2026-11-22 (no job starts since 11:41 UTC) |
-| 3 | `indexer-rs` verifies PLONK proofs. Until then it refuses every spend, and parts with the reference at the first TRANSFER | open (`indexer-rs`) |
+| 3 | `indexer-rs` verifies PLONK proofs. Without `--verifier plonk-bn254-hermez` it refuses every spend, and parts with the reference at the first TRANSFER | done (2026-11-24): the verifier of `circuit/` as a library; it replays `indexer/vectors/plonk-v0.3.json` |
 | 4 | An indexer that a phone can reach (below, "Phones") | decided: the site's own mirror (`docs/PLAN.md`, decision 3), to build |
 | 5 | The activation height `A` | fixed at launch (step 1) |
 
@@ -34,7 +34,7 @@ contributors: the standard needs none (hard requirement 2), and a default of our
      --activation A --verifier vault/prover/sh20_circuit.wasm --data ~/sh20-js   # API on 127.0.0.1:8020
    indexer-rs/target/release/sh20-indexer-rs follow --rpc http://127.0.0.1:38332 \
      --rpccookie ~/.bitcoin/signet/.cookie --activation A --deploy-burn 1000 \
-     --verifier <its PLONK verifier> --data ~/sh20-rs                    # API on 127.0.0.1:8621
+     --verifier plonk-bn254-hermez --data ~/sh20-rs                      # API on 127.0.0.1:8621
    ```
 
    `indexer-rs` has no default for `D`: `--deploy-burn 1000` is required. `vault/prover/sh20_circuit.wasm`
@@ -89,6 +89,6 @@ The two indexers give different digests at the same height; the explorer's suppl
 indexer accepts a spend it should refuse, or refuses one it should accept. Keep both indexers'
 logs and the height, dump the blocks from `A` (`bitcoin-cli -signet getblock <hash> 3`), and replay
 them in both with the profile of step 1 (`node indexer/bin/replay.js <folder> --activation A --verifier
-vault/prover/sh20_circuit.wasm`, `sh20-indexer-rs replay <folder> --activation A --deploy-burn 1000 --json`
-with its verifier): the first block whose events differ says which rule. On signet the simplest restart is a new release
-with a new `A`; the old chain's tokens do not carry over.
+vault/prover/sh20_circuit.wasm`, `sh20-indexer-rs replay <folder> --activation A --deploy-burn 1000
+--verifier plonk-bn254-hermez --json`): the first block whose events differ says which rule. On signet the
+simplest restart is a new release with a new `A`; the old chain's tokens do not carry over.
