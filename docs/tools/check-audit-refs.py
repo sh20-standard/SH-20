@@ -246,6 +246,8 @@ TESTS = [
     ("vault/test/audit8.test.js", "8.6 a scan that could not be made throws"),
     ("vault/test/audit8.test.js", "8.6 a note whose scan throws does not stop the others"),
     ("vault/test/secp256k1.test.js", "8.7 k·G takes the same time"),
+    ("vault/test/secp256k1.test.js", "8.7 the complete addition"),
+    ("vault/test/secp256k1.test.js", "8.7 every entry of the table"),
     ("vault/test/autolock.test.js", "8.8 the vault locks itself after ten minutes"),
     ("vault/test/restore-indices.test.js", "8.9 a restored vault reserves no index before a sync has checked it"),
 ]

@@ -135,8 +135,10 @@ Done since: a second indexer in Rust (`indexer-rs/`), written from `SPEC-WIRE.md
 (2026-11-19). The vault proves transfers, burns, listings and DEPLOY burns, buys, cancels and claims (`vault/`).
 The audit dossier is `docs/AUDIT.md`. Its §8 (2026-11-19) lists what a reading of the vault's cryptography found, most
 serious first. 8.1 to 8.6 are fixed (#33; #40 for what 8.6 left in `circuit/js`), and each fix is followed by what its
-author's reading checked and what it leaves. Open, all low: lock keys sign with code that is not constant-time; secrets
-stay in memory and the vault never locks itself; an old backup reuses indices.
+author's reading checked and what it leaves. 8.7 to 8.9 are fixed too (#57, #58, #59): the vault's secp256k1 secrets go
+through `vault/src/secp256k1.js` (no `BigInt`, no division, no branch or index on a secret; read again on 2026-11-23, with
+what an interpreter still showed removed), the vault locks itself, and a restored vault checks its counters before it
+reserves an index. 8.10 lists what is so by design.
 
 Not done: an audit; a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the
 circuit session; its reference code and vectors are in `circuit/js`); a real wallet signing in the vault; a relayer; the
