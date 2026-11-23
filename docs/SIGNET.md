@@ -9,17 +9,17 @@ contributors: the standard needs none (hard requirement 2), and a default of our
 
 | | Condition | State (2026-11-22) |
 | --- | --- | --- |
-| 1 | The clean redeploy: the repository on the project's own anonymous account, history rewritten (`CLAUDE.md`, next task 1) | waits on that account |
+| 1 | The clean redeploy: the repository on the project's own anonymous account `SH-20`, public, history rewritten (`docs/PLAN.md` §2) | waits on that account; the rewritten history is ready |
 | 2 | The CI runs. On a public repository GitHub's runners cost nothing; on a private one a run costs about 27 runner minutes | the account's minutes ran out on 2026-11-22 (no job starts since 11:41 UTC) |
 | 3 | `indexer-rs` verifies PLONK proofs. Until then it refuses every spend, and parts with the reference at the first TRANSFER | open (`indexer-rs`) |
-| 4 | Who runs an indexer that a phone can reach (below, "Phones") | maintainer's decision |
+| 4 | An indexer that a phone can reach (below, "Phones") | decided: the site's own mirror (`docs/PLAN.md`, decision 3), to build |
 | 5 | The activation height `A` | fixed at launch (step 1) |
 
 ## Launch, in order
 
-1. **Fix `A`.** A signet block not yet mined when the launch is announced, so that nobody holds an
-   early mint; signet mines about 144 blocks a day, so `A` = the tip at the announcement + 144 gives
-   testers a day to set up. Set `SIGNET_ACTIVATION_HEIGHT = A` in `vault/src/profile.js`: the one
+1. **Fix `A`.** For the soft launch, the signet tip + 6, about an hour (signet mines about 144 blocks a
+   day): signet coins are worth nothing, so mints before the announcement harm nobody (`docs/PLAN.md`,
+   decision 4). On mainnet, a block not yet mined when the launch is announced. Set `SIGNET_ACTIVATION_HEIGHT = A` in `vault/src/profile.js`: the one
    value a launch adds. The rest of the profile is in the code and is never passed on signet: `D =
    1000`, `N = 6`, `W = 100`, `K_min = 1`, genesis `SH20` (`indexer/src/constants.js`). The vault
    names any indexer whose `/status` reports another profile, and acts on nothing it says.
@@ -44,9 +44,9 @@ contributors: the standard needs none (hard requirement 2), and a default of our
    Actions → Variables: `PAGES` = `on`. `.github/workflows/pages.yml` then publishes, from `main`,
    the vault on the signet profile at `/vault/`, the explorer at `/explorer/` and the phone test page
    at `/phone/`. It stops while `A` is unset, so nothing goes out before step 1.
-5. **The release.** `vault/RELEASES.md`, steps 3 to 7: version, CI green on the commit (the regtest
-   job included), `npm run release`, the `release` workflow's rebuild, and the CID pinned from a
-   workflow run, never from a machine of ours.
+5. **The release.** `vault/RELEASES.md`, steps 3 to 6: version, CI green on the commit (the regtest
+   job included), `npm run release`, and the `release` workflow's rebuild. Step 7, the CID pinned on
+   IPFS, waits for mainnet (`docs/PLAN.md`, decision 5).
 6. **A real wallet signs** a MINT, a transfer and a sale on signet, with each of Xverse, UniSat and
    Leather that can be set to signet. Note which ones cannot: the vault's README says what each returns.
 7. **Announce**: `A`, the site's address, the release's SHA-256 and CID, and the explorer link with
@@ -73,15 +73,14 @@ contributors: the standard needs none (hard requirement 2), and a default of our
 
 The phone test page needs nothing but the site: it proves on the phone and reports the time. The
 vault on a phone needs an indexer the phone can reach, which means https on a public address: an
-https page cannot read a plain http address other than the device's own. The ways to have one,
-for the maintainer to choose:
+https page cannot read a plain http address other than the device's own.
 
-- none at launch: phones measure the prover, and the whole flow is tried on computers;
-- operators who run `follow.js` behind https offer it as a link (`/vault/?indexer=https://…`): the
-  vault asks before it uses servers from a link, and a default needs its operator's agreement and
-  its host in `vault/test/signet.test.js` (`vault/RELEASES.md`, step 2);
-- an indexer run for the project from its anonymous identity: whatever hosts it must not be paid
-  for or reached from a contributor's own name or address.
+Decided (`docs/PLAN.md`, decision 3): the site serves a mirror of both indexers itself, at `/api/js/`
+and `/api/rs/`, rebuilt every 10 minutes by `pages.yml` from the public code; it lags the chain by
+about 10 to 30 minutes. Until it is built, phones measure the prover and the whole flow is tried on
+computers. Operators who run `follow.js` behind https can still offer it as a link
+(`/vault/?indexer=https://…`): the vault asks before it uses servers from a link, and a default needs
+its operator's agreement and its host in `vault/test/signet.test.js` (`vault/RELEASES.md`, step 2).
 
 ## When the run stops
 

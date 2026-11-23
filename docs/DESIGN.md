@@ -165,5 +165,18 @@ The verifier stays cross-checked against snarkjs' PLONK verifier.
    and DEPLOY stay one per transaction, so the lock rules stay simple. Specified in `SPEC-WIRE.md` §3 (a batch), with
    no count limit beyond Bitcoin's own.
 
+## Decisions of 2026-11-23
+
+Taken by the plan (`docs/PLAN.md`), the maintainer having left the choice to it:
+
+1. The project's account is `SH-20`, and its repository is public from the first push.
+2. A relayed transfer costs about 223 vB on signet and about 200 vB in the next version of the wire. The
+   150 vB target is dropped: it needs three transfers under one proof, which only a relayer who sees its
+   users' transfers could make. A transfer that pays several people (52 vB for each of ten) is designed
+   after the signet and the first audit.
+3. Phones and the public explorer read a mirror of both indexers that the Pages site serves itself, rebuilt
+   from the public code by a scheduled run: no server of ours, no traffic seen by us, and any fork can turn
+   on its own.
+
 Decided in v0.3: the events inside the digest have a fixed byte encoding (`SPEC-WIRE.md` §6), so a second
 indexer in any language reproduces every digest; the GENESIS record commits to the profile's rules.
