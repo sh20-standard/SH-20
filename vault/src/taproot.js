@@ -11,14 +11,16 @@
 // The one-time key E is both the internal key and the key in the leaf, so the commit output can
 // also be taken back by the key path if a reveal is never sent. BIP341 (tweak, leaf hash, control
 // block, signature message) is written here and checked against the BIP341 vectors
-// (test/taproot.test.js); the BIP340 signature is the indexer's (indexer/src/schnorr.js).
+// (test/taproot.test.js). Whatever touches a secret key (its point, its tweak, its signatures) is
+// the constant-time code of secp256k1.js; the BigInt arithmetic below only ever sees public values.
 
-import { MAGIC, schnorrSign, schnorrPublicKey, taggedHash } from './sh20.js';
+import { MAGIC, taggedHash } from './sh20.js';
+import { isSecretKey, pointOf, bip340PublicKey, bip340Sign, tweakSecret } from './secp256k1.js';
 import { sha256 } from './hash.js';
 import { concat, fromHex, toHex, u32le, u64le } from './bytes.js';
 import { compactSize, pushData, serializeTx, txid as txidOf, dustLimit } from './btc.js';
 
-// ---- secp256k1, only what the taproot tweak needs ----------------------------------------------
+// ---- secp256k1 on public values: the output key of a public internal key --------------------
 
 const P = 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2fn;
 const N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
@@ -124,18 +126,14 @@ export function sigMsg(tx, index, prevouts, leaf = null, hashType = SIGHASH_DEFA
  * back without the reveal). { script, key (x-only output key), secret (the tweaked secret that signs) }.
  */
 export function keyPathOutput(d, merkleRoot = null) {
-  const x = big(d);
-  if (x <= 0n || x >= N) throw new Error('bad secret key');
-  const p = mul(G, x);
-  const internal = be32(p[0]);
-  const even = p[1] & 1n ? N - x : x; // BIP340: the key with an even y
+  const internal = pointOf(d).x; // throws on a key out of [1, n)
   const q = tweakKey(internal, merkleRoot);
-  return { script: concat(Uint8Array.of(0x51, 0x20), q.key), key: q.key, internal, secret: be32((even + q.tweak) % N) };
+  return { script: concat(Uint8Array.of(0x51, 0x20), q.key), key: q.key, internal, secret: tweakSecret(d, be32(q.tweak)) };
 }
 
 /** A BIP340 signature by a key-path output's tweaked secret, with its sighash byte unless DEFAULT. */
 export function signKeyPath(secret, msg, hashType = SIGHASH_DEFAULT, aux) {
-  const sig = new Uint8Array(schnorrSign(secret, sigHash(msg), aux ?? crypto.getRandomValues(new Uint8Array(32))));
+  const sig = bip340Sign(secret, sigHash(msg), aux ?? crypto.getRandomValues(new Uint8Array(32)));
   return hashType === SIGHASH_DEFAULT ? sig : concat(sig, Uint8Array.of(hashType));
 }
 
@@ -150,8 +148,7 @@ const REVEAL_FRAME = 4 + 1 + 1 + 4; // version, input count, output count, lockt
 export function oneTimeSecret(random = (n) => crypto.getRandomValues(new Uint8Array(n))) {
   for (;;) {
     const k = random(32);
-    const x = big(k);
-    if (x > 0n && x < N) return k;
+    if (isSecretKey(k)) return k;
   }
 }
 
@@ -160,7 +157,7 @@ export function oneTimeSecret(random = (n) => crypto.getRandomValues(new Uint8Ar
  * { e, script, leaf, scriptPubKey, control }.
  */
 export function commitment(secret, envelope) {
-  const e = new Uint8Array(schnorrPublicKey(secret));
+  const e = bip340PublicKey(secret);
   const script = envelopeScript(e, envelope);
   const leaf = leafHash(script);
   const q = tweakKey(e, leaf); // one leaf: the merkle root is the leaf hash
@@ -206,7 +203,7 @@ export function signReveal({ secret, c, commitTxid, vout = 0, value, returnScrip
     vout: outs,
   };
   const msg = sigHash(sigMsg(tx, 0, [{ value, script: c.scriptPubKey }], c.leaf));
-  const sig = new Uint8Array(schnorrSign(secret, msg, aux ?? crypto.getRandomValues(new Uint8Array(32))));
+  const sig = bip340Sign(secret, msg, aux ?? crypto.getRandomValues(new Uint8Array(32)));
   tx.vin[0].witness = [sig, c.script, c.control];
   const raw = serializeTx(tx);
   return { tx, hex: toHex(raw), txid: txidOf(tx), vsize: size, fee };

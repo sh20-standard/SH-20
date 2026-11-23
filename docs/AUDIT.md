@@ -701,13 +701,31 @@ the vault would read again from that note at every sync. Node and Chrome accept 
 
 **8.7 Signatures by secp256k1 keys use the indexer's verification code.** Low.
 Lock keys sign offers, cancels and claims, and a one-time key signs each reveal, with
-`indexer/src/schnorr.js` `sign` (l. 78) and the point arithmetic of `taproot.js` (l. 44): `BigInt`
+`indexer/src/schnorr.js` `sign` (l. 78) and the point arithmetic `taproot.js` had then (`mul`): `BigInt`
 double-and-add, whose running time depends on the key and on the nonce. The nonce follows BIP340
 with 32 fresh random bytes each time, and a key signs a handful of times in normal use (every
 "Copy offer" is a new signature), which leaves little for timing to work on. Two things to add: BIP340's advice to verify a signature before
 releasing it (a faulty signature of an offer is published and lasts), and a statement in the code
 that this path is not constant-time. The same holds for BabyJubJub in `circuit/js` (§6.11), where
 the wallet's two scalars are multiplied again at every unlock.
+
+Fixed in #57: every operation of the vault on a secp256k1 secret (the point of a lock key or of a
+one-time key, the BIP86 and BIP341 tweaks of both, every BIP340 signature, the reduction of a lock
+key into `[1, n − 1]`) is the code of [`secp256k1.js`](../vault/src/secp256k1.js), which has no
+`BigInt`: field elements and scalars are 16 limbs of 16 bits in a `Float64Array`, points are added
+with the complete formulas of Renes, Costello and Batina (algorithm 7, the point at infinity and
+doubling included), `k·G` is a comb of 64 additions whose table entries are read by going through
+all 16 of a window with a mask, and the choices made on a secret (the key whose point has an even
+y) are masked selects. Each signature is verified before `bip340Sign` (l. 344) returns it. The
+BigInt code of `taproot.js` now only sees public keys (`tweakKey`), and `indexer/src/schnorr.js`
+only verifies. The bytes are unchanged: BIP340 vectors 0 and 1, the indexer's signer on random and
+extreme keys, the arithmetic at its edges against `BigInt`, and the lock outputs of a vault
+recorded before the change (tests "8.7 …" in `vault/test/secp256k1.test.js`). Test "8.7 k·G takes
+the same time" measures `k·G` for the key 1 and the key n − 2: about 1.0× apart (the `BigInt` code:
+about 450×). Left: JavaScript promises no timing (the engine compiles the code as it sees fit, and
+its garbage collector copies memory); the BIP340 tagged hashes of the secret key and nonce run in
+the vault's SHA-256 (`hash.js`: 32-bit operations, no table indexed by data); the BabyJubJub of
+`circuit/js` (§6.11) is not the vault's code and is unchanged.
 
 **8.8 Secrets stay in memory, and the vault never locks itself.** Low.
 The witness of a spend holds the nullifier keys in clear. It stays in the object `buildSpend`
@@ -741,7 +759,7 @@ from an older backup: their commit outputs (a fee and some dust) cannot be taken
 | --- | --- |
 | 12 words from 128 random bits; checksum checked before any key is derived; BIP39 seed by WebCrypto PBKDF2; `m` = first 32 bytes of HMAC-SHA512("sh20/v0/seed", seed), as `SPEC-NOTES.md` §1 | `bip39.js` l. 38, l. 41; `keys.js` l. 121 |
 | note keys, address, sealing, scanning and the EdDSA nonce go through `circuit/js/webcrypto.js`; the `node:crypto` stand-in implements SHA-256 only and throws for the rest | `sh20.js`; `shim/node-crypto.js` |
-| lock keys are separated from note keys: HMAC-SHA512 under the tag "sh20/vault/lock" over `m ‖ index`, reduced into `[1, n − 1]`, then the BIP86 tweak | `keys.js` l. 327; `taproot.js` l. 126 |
+| lock keys are separated from note keys: HMAC-SHA512 under the tag "sh20/vault/lock" over `m ‖ index`, reduced into `[1, n − 1]`, then the BIP86 tweak | `keys.js` l. 327; `taproot.js` l. 128 |
 | a sealed output is recorded only if it opens, has a value and hashes to its leaf; a note is identified by its position; before spending, each input is checked again against its leaf | `keys.js` l. 307; `spend.js` l. 85 |
 | the payer's checks on an address are made by `decodeAddress`; each output is sealed with 32 fresh random bytes; the three outputs are shuffled | `send.js` l. 54, l. 23; `spend.js` l. 99 |
 | nullifier = `Poseidon(nsk + τn mod l, leaf, position)`; spent notes are found in the full list of nullifiers, never by asking about one | `notekeys.js` l. 46; `sync.js` |
@@ -749,8 +767,8 @@ from an older backup: their commit outputs (a fee and some dust) cannot be taken
 | the body signed is every envelope byte before the proof; each signature is verified, and the proof is verified against its public inputs, before anything is sent | `spend.js` l. 113–117; `send.js` l. 85 |
 | the prover's seed is 32 bytes from `crypto.getRandomValues` for each proof, drawn in the worker, never stored or derived, with a test (§6.6) | `prover-worker.js` l. 19; `test/prover-seed.test.js` |
 | the proving key is checked by the module against its pinned hash, and the verifying key it yields against the pinned digest | `prover.js` l. 69 |
-| the BIP341 signature message, read against the specification for the two modes used (default, and `SINGLE \| ANYONECANPAY`), key path and script path | `taproot.js` l. 92 |
+| the BIP341 signature message, read against the specification for the two modes used (default, and `SINGLE \| ANYONECANPAY`), key path and script path | `taproot.js` l. 94 |
 | an offer's signature commits to the lock's outpoint, amount, script and sequence, to the version and locktime, and to the output paying the price; a buyer checks it under the key of the lock output, which the txid does cover | `market.js` l. 86–116, l. 136 |
-| the BIP340 nonce is derived as specified, with fresh auxiliary randomness at every signature | `indexer/src/schnorr.js` l. 78; `taproot.js` l. 137, l. 196 |
+| the BIP340 nonce is derived as specified, with fresh auxiliary randomness at every signature | `secp256k1.js` l. 344; `taproot.js` l. 135, l. 193 |
 | the state is AES-256-GCM under the passphrase key with a fresh 12-byte nonce at every save; a wrong passphrase fails the tag | `keys.js` l. 27, l. 204 |
 | the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 16, l. 48; `ui/context.js` l. 33; `ui/spends.js` l. 30 and `ui/tokens-panel.js` l. 177 |

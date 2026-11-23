@@ -140,7 +140,7 @@ CITES = [
     ("`Sync.scanned(from)` (`sync.js` l. {})", (V + "sync.js", "async scanned(from = null)")),
     ("(`isLowOrder`, l. {}), and `x25519` (l. {})", (SUBTLE, "export function isLowOrder(u)"), (SUBTLE, "export async function x25519(")),
     ("`indexer/src/schnorr.js` `sign` (l. {})", (SCHNORR, "export function sign(secret")),
-    ("the point arithmetic of `taproot.js` (l. {})", (V + "taproot.js", "function mul(p, k)")),
+    ("before `bip340Sign` (l. {}) returns it", (V + "secp256k1.js", "export function bip340Sign(")),
     ("`lock()` (`keys.js` l. {})", (V + "keys.js", "lock() {")),
     ("by the vault's own rule (`keys.js` l. {})", (V + "keys.js", "async lockOutput(index)")),
     # §8, the table "Read and found as intended"
@@ -159,8 +159,8 @@ CITES = [
     ("| `taproot.js` l. {} |", (V + "taproot.js", "export function sigMsg")),
     ("| `market.js` l. {}–{}, l. {} |",
      (V + "market.js", "function offerSkeleton"), (V + "market.js", "schnorrVerify(Buffer.from(l.lockKey)"), (V + "market.js", "the lock output is not P2TR")),
-    ("| `indexer/src/schnorr.js` l. {}; `taproot.js` l. {}, l. {} |",
-     (SCHNORR, "export function sign(secret"), (V + "taproot.js", "export function signKeyPath"), (V + "taproot.js", "export function signReveal")),
+    ("| `secp256k1.js` l. {}; `taproot.js` l. {}, l. {} |",
+     (V + "secp256k1.js", "export function bip340Sign("), (V + "taproot.js", "export function signKeyPath"), (V + "taproot.js", "export function signReveal")),
     ("| `keys.js` l. {}, l. {} |", (V + "keys.js", "async function aesKey"), (V + "keys.js", "async #record()")),
     ("| `app.js` l. {}, l. {}; `ui/context.js` l. {}; `ui/spends.js` l. {} and `ui/tokens-panel.js` l. {} |",
      (V + "app.js", "window.top !== window.self"), (V + "app.js", "await available()"), (V + "ui/context.js", "asks the vault to use other servers"),
@@ -239,6 +239,7 @@ TESTS = [
     ("vault/test/audit8.test.js", "8.5 every sync compares the root and the digest"),
     ("vault/test/audit8.test.js", "8.6 a scan that could not be made throws"),
     ("vault/test/audit8.test.js", "8.6 a note whose scan throws does not stop the others"),
+    ("vault/test/secp256k1.test.js", "8.7 k·G takes the same time"),
 ]
 
 # a line reference of the document: "l. 12", "l. 12–14", "l. 12, 14, 16" (each number is one)

@@ -29,7 +29,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 128 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 135 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 npm run release          # a verifiable release from the current commit, on the signet profile (below)
@@ -514,6 +514,7 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | `src/spend.js` | inputs, dummy inputs, sealed outputs, body, signatures and the prover's witness |
 | `src/prover.js`, `src/prover-worker.js` | the WebAssembly prover, threads or one thread (circuit/web/host.js) |
 | `src/taproot.js` | the witness carrier: commit output, reveal, BIP341 signature message |
+| `src/secp256k1.js` | what touches a secp256k1 secret, in constant time, no `BigInt`: lock and one-time keys, their tweaks, BIP340 signatures (docs/AUDIT.md §8.7) |
 | `prover/`, `tools/prover.sh`, `tools/rustc-host.sh` | the two prover modules, built from `circuit/` with remapped paths and one host line, so that every machine gives the same bytes |
 | `src/notekeys.js` | note keys, address, scanning, nullifiers: `circuit/js`, nothing of its own |
 | `src/sync.js`, `src/cache.js` | private sync: the local tree (the indexer's `NoteTree`), paths, spends, IndexedDB cache |
@@ -526,7 +527,7 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | `src/btc.js` | addresses, transactions, PSBT v0, finalization, size estimates |
 | `src/wallets.js` | Xverse, UniSat, Leather adapters (injected providers, no SDK) |
 | `src/api.js` | indexer API and Esplora clients |
-| `src/hash.js`, `src/bytes.js`, `src/fr.js` | SHA-256 and RIPEMD-160 (public data), bytes, field elements |
+| `src/hash.js`, `src/bytes.js`, `src/fr.js` | SHA-256 (32-bit operations, no table indexed by data: it also hashes a signature's nonce) and RIPEMD-160, bytes, field elements |
 | `src/sh20.js`, `src/shim/` | the reused indexer and `circuit/js` modules and their browser shims |
 | `build.js` | the site's file set; `npm run build` writes `dist/` |
 | `release.js`, `tools/pack.js` | reproducible release: tar, CAR, SHA-256, IPFS CID, `RELEASES.md` |
