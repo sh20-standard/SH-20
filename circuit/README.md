@@ -417,7 +417,7 @@ ticker and amount as what the relayer receives.
 
 ## How the result is checked
 
-- `cargo test --release`: 35 tests. Model against the indexer's constants; 34 adversarial witnesses
+- `cargo test --release`: 38 tests (three of them, `tests/audit.rs`, from the audit of 2026-11-23). Model against the indexer's constants; 34 adversarial witnesses
   (inflation, wrong ticker, double-spend attempts, bad ranges, wrong or swapped signatures, aliased
   keys, points off the curve) rejected by the gates; proofs end to end with every public input and
   proof byte bound; the shipped proving key reproduced by key generation.
