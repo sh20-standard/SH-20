@@ -4,7 +4,7 @@
 import { defaultCache } from '../cache.js';
 import { frHex } from '../fr.js';
 import { Sync } from '../sync.js';
-import { matchNotes } from '../match.js';
+import { matchNotes, noteKeysSeen } from '../match.js';
 import { REFUSAL_DEPTH, refusedSpend } from '../send.js';
 import { $, during, esplora, explorerTx, fill, h, indexer, indexers, report, short, st, staticWarnings, units } from './context.js';
 import { agreementText, digestAgreement, refusalAgreed } from '../consensus.js';
@@ -119,7 +119,8 @@ export async function syncNotes(opts) {
 
 async function syncOnce({ full = false } = {}) {
   const s = await getSyncer();
-  const r = await s.sync(indexer, { full });
+  // a restored vault reads every leaf until it has checked its public-note keys (AUDIT §8.9)
+  const r = await s.sync(indexer, { full: full || !!st.vault?.state.unchecked?.notes });
   // the other indexers' root and digest after the same block (AUDIT §8.5): shown next to the balance
   st.sync = { height: r.height, leaves: r.leaves, nullifiersKnown: r.nullifiersKnown, agreement: await digestAgreement(indexers, r.height, r.digest, r.root) };
   let found = 0;
@@ -132,6 +133,14 @@ async function syncOnce({ full = false } = {}) {
     found = m.found;
     failed = m.failed;
     await s.scanned(failed[0]?.pos ?? null);
+    // every leaf read and matched: a restored vault knows the public-note keys it used (AUDIT §8.9),
+    // once no other indexer disagrees with the state those leaves come from, and the keys every other
+    // indexer names in its own /notes are counted too (one whose labels hide a key cannot keep it back)
+    if (r.from === 0 && !failed.length && !st.sync.agreement.disagree.length && st.vault.state.unchecked?.notes) {
+      const others = await Promise.allSettled(indexers.slice(1).map((i) => i.notes(0)));
+      for (const o of others) if (o.status === 'fulfilled') await noteKeysSeen(st.vault, o.value);
+      if (others.every((o) => o.status === 'fulfilled')) await st.vault.chainChecked('notes');
+    }
     await checkOwned(s);
     refused = await settleRefused(s);
     await syncListings();

@@ -418,6 +418,11 @@ async function main() {
   const listingsAfter = await evaluate(`[...document.querySelectorAll('#market-body tbody tr')].map((r) => r.children[1].textContent + ' ' + r.children[3].textContent).sort().join(', ')`);
   if (listingsAfter !== listingsBefore) throw new Error(`listings after the restore: ${listingsAfter}, before: ${listingsBefore}`);
   step('listings found again from the words: ' + listingsAfter);
+  // docs/AUDIT.md §8.9: the counters were checked against the chain, and moved past the keys used (and room for any in flight)
+  const used = new Set([...after.matchAll(/public #(\d+)/g)].map((m) => Number(m[1])));
+  const reserved = Number((await evaluate(`document.querySelector('#vault-body').innerText`)).match(/(\d+) public note key\(s\) reserved/)?.[1]);
+  if (reserved !== Math.max(...used) + 1 + 10) throw new Error(`after the restore, ${reserved} public note keys reserved for ${used.size} used`);
+  step(`counters checked after the restore: next public note key #${reserved}, past the ${used.size} found and 10 more`);
 
   // docs/AUDIT.md §8.4: restored without a passphrase, no backup in clear; a passphrase added here, then the words behind it
   if (!(await evaluate(`document.querySelector('#vault-body button[name=backup]').disabled`))) throw new Error('a backup offered in clear');
