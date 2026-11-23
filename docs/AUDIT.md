@@ -142,7 +142,7 @@ A proof alone does not make a spend valid. [`indexer/src/indexer.js`](../indexer
 
 | # | Rule | Where |
 | --- | --- | --- |
-| R1 | field elements on the wire are below `r`, envelopes re-serialise to the same bytes, no trailing byte | `codec.js` `fr()` l. 63; `sh20_verify` refuses a public input that is not canonical (`ffi.rs` l. 133) |
+| R1 | field elements on the wire are below `r`, envelopes re-serialise to the same bytes, no trailing byte | `codec.js` `fr()` l. 57; `sh20_verify` refuses a public input that is not canonical (`ffi.rs` l. 133) |
 | R2 | `H − 100 ≤ anchorHeight ≤ H − 1`; `root` is the root after that block, or the empty root before activation | `_checkSpend` l. 270–274 |
 | R3 | nullifiers non-zero, different from each other, never seen; then recorded | l. 275–278, `_commitSpend` l. 291 |
 | R4 | output leaves non-zero; room for three leaves | l. 279–281 |
@@ -151,7 +151,7 @@ A proof alone does not make a spend valid. [`indexer/src/indexer.js`](../indexer
 | R7 | turnstile: a spend with `vPub > pool[ticker]` is rejected before its proof is looked at | `_outOfPool` l. 323, called at l. 354, 396, 411 |
 | R8 | the verifying key must hash to the pinned digest | `adapters/plonk.js` l. 26–27 |
 | R9 | one envelope per transaction, or a batch: several in the witness, all of them TRANSFERs, each accepted or refused alone (`SPEC-WIRE.md` §3); the default verifier rejects every spend | `carrier.js`; `rejectAllVerifier` l. 22 |
-| R10 | the lock of a LIST is the output `OP_1 <lockKey>`, for the `lockKey` its body names (PR #20, §6.1) | `_list` l. 409; `codec.js` l. 234 |
+| R10 | the lock of a LIST is the output `OP_1 <lockKey>`, for the `lockKey` its body names (PR #20, §6.1) | `_list` l. 409; `codec.js` l. 223 |
 
 ### The proof system
 
@@ -343,7 +343,7 @@ was accepted with the copier's key, and the cancelling TAKE gave the copier the 
 the threat model (transaction order, copied envelopes) and broke G3.
 
 **The fix.** The LIST body now carries `lockKey`, the 32-byte x-only output key of the lock, after
-`lockVout` (`SPEC-WIRE.md` §4; `codec.js` l. 234 and l. 298), so the body hash the proof signs
+`lockVout` (`SPEC-WIRE.md` §4; `codec.js` l. 223 and l. 287), so the body hash the proof signs
 covers it. `_list` rejects the envelope unless output `lockVout` is exactly `OP_1 <lockKey>`
 (`indexer.js` l. 409), and records the key from the envelope, not from the transaction (l. 418). A
 CLAIM is verified against that recorded key (`_claim`, l. 442). A LIST is 32 bytes longer.
@@ -702,7 +702,7 @@ the vault would read again from that note at every sync. Node and Chrome accept 
 
 **8.7 Signatures by secp256k1 keys use the indexer's verification code.** Low.
 Lock keys sign offers, cancels and claims, and a one-time key signs each reveal, with
-`indexer/src/schnorr.js` `sign` (l. 78) and the point arithmetic `taproot.js` had then (`mul`): `BigInt`
+`indexer/src/schnorr.js` `sign` (l. 122) and the point arithmetic `taproot.js` had then (`mul`): `BigInt`
 double-and-add, whose running time depends on the key and on the nonce. The nonce follows BIP340
 with 32 fresh random bytes each time, and a key signs a handful of times in normal use (every
 "Copy offer" is a new signature), which leaves little for timing to work on. Two things to add: BIP340's advice to verify a signature before
@@ -781,7 +781,9 @@ iPhone) and SpiderMonkey were not. Where an engine does not compile (the optimis
 browser's security settings, Lockdown Mode on an iPhone), the way a number is represented still
 follows its value: no dependence on the key shows after the changes, at a resolution of about
 0.3 %, and none is excluded below it. The verification before release is the indexer's `BigInt`
-code: about 90 ms for each signature, against 3.5 ms for the signing, on public values only. The
+code, on public values only: about 90 ms for each signature until the code audit of 2026-11-23 put its
+points in Jacobian coordinates (`docs/audit/2026-11-23-code-indexer.md`, code-indexer-1), about 1.5 ms
+since, against 3.5 ms for the signing. The
 limbs of a key, of a nonce and of the masked key are not wiped after use: they are typed arrays,
 which could be zeroed where the `BigInt`s of 8.8 cannot, but each operation makes new ones.
 

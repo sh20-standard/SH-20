@@ -327,3 +327,12 @@ test('a DEPLOY reveals a commit confirmed at least N blocks before, in the witne
   assert.deepEqual(reasons(b), ['DEPLOY commit confirmed less than 6 blocks before', 'DEPLOY must use the witness carrier']);
   assert.equal(ix.token('GENE').deployTxid, original.txid);
 });
+
+test('a block that does not follow the last one is refused before anything is applied', () => {
+  const ix = new Indexer({ profile: { deployMaturity: 0, activationHeight: 1, deployBurn: 0n }, verifier: mockVerifier() });
+  ix.applyBlock({ height: 1, hash: 'h1', txs: [] });
+  const digest = ix.digest.toString('hex');
+  assert.throws(() => ix.applyBlock({ height: 3, hash: 'h3', txs: [] }), /expected block 2, got 3/);
+  assert.equal(ix.height, 1);
+  assert.equal(ix.digest.toString('hex'), digest);
+});

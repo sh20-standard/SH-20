@@ -7,7 +7,8 @@
   "scripts": {
     "test": "node --test 'test/*.test.js'",
     "vectors": "node bin/vectors.js",
-    "fuzz": "node bin/fuzz.js --rs ../indexer-rs/target/release/sh20-indexer-rs"
+    "fuzz": "node bin/fuzz.js --rs ../indexer-rs/target/release/sh20-indexer-rs",
+    "bench": "node bin/bench.js"
   },
   "engines": {
     "node": ">=20"

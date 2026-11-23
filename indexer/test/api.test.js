@@ -102,3 +102,28 @@ test('blocks with activity, newest first, and one transaction with its notes', (
     assert.ok(all.nullifiers.every((x) => x.height === 3));
     assert.equal((await get('/nullifiers?from=4')).body.nullifiers.length, 0);
   }));
+
+test('events under the spec names: a BURN has vPub and a team unlock has pre; a block with no activity', async () => {
+  const ix = new Indexer({ profile: { deployMaturity: 0, activationHeight: 1, deployBurn: 0n }, verifier: mockVerifier() });
+  const c = chain(ix);
+  c.block(tx({ env: deployEnv({ pre: 1000n, team: opening(), unlock: 3 }) }));
+  c.block(tx({ env: { type: 'MINT', ticker: 'GENE', ...opening() }, burnSats: 1000n }));
+  c.block(tx({ env: { type: 'BURN', ticker: 'GENE', vPub: 400n, spend: spend(2) }, carrier: 'witness' }));
+  c.block();
+  const server = await listen(ix, { port: 0 });
+  const get = async (p) => (await fetch(`http://127.0.0.1:${server.address().port}${p}`)).json();
+  try {
+    const b3 = await get('/block/3');
+    const burn = b3.events.find((e) => e.type === 'BURN');
+    const unlock = b3.events.find((e) => e.type === 'TEAM_UNLOCK');
+    assert.ok(burn && unlock, JSON.stringify(b3.events.map((e) => e.type)));
+    assert.equal(String(burn.vPub), '400');
+    assert.equal(String(unlock.pre), '1000');
+    assert.ok(!('v' in burn) && !('v' in unlock));
+    const b4 = await get('/block/4');
+    assert.deepEqual(b4.events, []);
+    assert.equal(b4.digest, ix.digest.toString('hex'));
+  } finally {
+    server.close();
+  }
+});
