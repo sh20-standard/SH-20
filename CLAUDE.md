@@ -229,7 +229,9 @@ transfer it is out of reach whatever is done to the rest, since 150 vB leaves 54
 are 160. It takes three transfers under one proof. `pot18` allows that (a domain of 2^18) and no more, and only someone who
 holds the three witnesses can make the proof: a relayer that sees its users' transfers. Within the requirements: about 200 vB
 for a relayed transfer (92 bytes off its body), and 52 vB for each person paid when one payer pays ten (a transfer with more
-outputs, in the same domain and the same proving time).
+outputs, in the same domain and the same proving time). Those 92 bytes are on paper, not in code (`circuit/README.md`, "The
+transfer body of wire v0.4, on paper"): one ephemeral key for a spend, no ciphertext on chain for its third output, a TRANSFER
+of 738 bytes, and no change to the circuit or its keys.
 
 Levers, biggest first. Measure each one and keep every hard requirement above:
 1. **Proof size.** Done: PLONK with KZG on the same public Hermez setup, 480 bytes, against Tacit's 2,080
