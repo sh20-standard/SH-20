@@ -18,11 +18,18 @@ const big = (b) => BigInt('0x' + toHex(b));
 const rnd = () => Uint8Array.from(randomBytes(32));
 const mod = (a, m) => ((a % m) + m) % m;
 
-test('8.7 BIP340 vectors 0 and 1: public key and signature', () => {
+test('8.7 the eight signing vectors of BIP340: public key and signature (0 to 3, and 15 to 18 with messages of 0, 1, 17 and 100 bytes)', () => {
   const vectors = [
     ['0000000000000000000000000000000000000000000000000000000000000003', 'F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9', '0000000000000000000000000000000000000000000000000000000000000000', '0000000000000000000000000000000000000000000000000000000000000000', 'E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0'],
     ['B7E151628AED2A6ABF7158809CF4F3C762E7160F38B4DA56A784D9045190CFEF', 'DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659', '0000000000000000000000000000000000000000000000000000000000000001', '243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89', '6896BD60EEAE296DB48A229FF71DFE071BDE413E6D43F917DC8DCF8C78DE33418906D11AC976ABCCB20B091292BFF4EA897EFCB639EA871CFA95F6DE339E4B0A'],
+    ['C90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B14E5C9', 'DD308AFEC5777E13121FA72B9CC1B7CC0139715309B086C960E18FD969774EB8', 'C87AA53824B4D7AE2EB035A2B5BBBCCC080E76CDC6D1692C4B0B62D798E6D906', '7E2D58D8B3BCDF1ABADEC7829054F90DDA9805AAB56C77333024B9D0A508B75C', '5831AAEED7B44BB74E5EAB94BA9D4294C49BCF2A60728D8B4C200F50DD313C1BAB745879A5AD954A72C45A91C3A51D3C7ADEA98D82F8481E0E1E03674A6F3FB7'],
+    ['0B432B2677937381AEF05BB02A66ECD012773062CF3FA2549E44F58ED2401710', '25D1DFF95105F5253C4022F628A996AD3A0D95FBF21D468A1B33F8C160D8F517', 'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF', 'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF', '7EB0509757E246F19449885651611CB965ECC1A187DD51B64FDA1EDC9637D5EC97582B9CB13DB3933705B32BA982AF5AF25FD78881EBB32771FC5922EFC66EA3'],
+    ['0340034003400340034003400340034003400340034003400340034003400340', '778CAA53B4393AC467774D09497A87224BF9FAB6F6E68B23086497324D6FD117', '0000000000000000000000000000000000000000000000000000000000000000', '', '71535DB165ECD9FBBC046E5FFAEA61186BB6AD436732FCCC25291A55895464CF6069CE26BF03466228F19A3A62DB8A649F2D560FAC652827D1AF0574E427AB63'],
+    ['0340034003400340034003400340034003400340034003400340034003400340', '778CAA53B4393AC467774D09497A87224BF9FAB6F6E68B23086497324D6FD117', '0000000000000000000000000000000000000000000000000000000000000000', '11', '08A20A0AFEF64124649232E0693C583AB1B9934AE63B4C3511F3AE1134C6A303EA3173BFEA6683BD101FA5AA5DBC1996FE7CACFC5A577D33EC14564CEC2BACBF'],
+    ['0340034003400340034003400340034003400340034003400340034003400340', '778CAA53B4393AC467774D09497A87224BF9FAB6F6E68B23086497324D6FD117', '0000000000000000000000000000000000000000000000000000000000000000', '0102030405060708090A0B0C0D0E0F1011', '5130F39A4059B43BC7CAC09A19ECE52B5D8699D1A71E3C52DA9AFDB6B50AC370C4A482B77BF960F8681540E25B6771ECE1E5A37FD80E5A51897C5566A97EA5A5'],
+    ['0340034003400340034003400340034003400340034003400340034003400340', '778CAA53B4393AC467774D09497A87224BF9FAB6F6E68B23086497324D6FD117', '0000000000000000000000000000000000000000000000000000000000000000', '99'.repeat(100), '403B12B0D8555A344175EA7EC746566303321E5DBFA8BE6F091635163ECA79A8585ED3E3170807E7C03B720FC54C7B23897FCBA0E9D0B4A06894CFD249F22367'],
   ];
+  assert.equal(vectors.length, 8);
   for (const [sk, pk, aux, msg, sig] of vectors) {
     const H = (x) => fromHex(x.toLowerCase());
     assert.equal(toHex(publicKey(H(sk))), pk.toLowerCase());
@@ -52,6 +59,8 @@ test('8.7 the same keys and signatures as the reference signer, on random and ex
   }
   assert.throws(() => tweakSecret(b32(5n), b32(N)), /tweak out of range/);
   assert.throws(() => sign(b32(5n), rnd(), new Uint8Array(31)), /aux/);
+  // a message that is not bytes would be signed as other bytes (a string as zeros, a number as nothing)
+  for (const notBytes of ['00'.repeat(32), 32, [1, 2, 3], null]) assert.throws(() => sign(b32(5n), notBytes, rnd()), /the message must be bytes/);
   // without aux, fresh randomness: two signatures of one message differ, and both verify
   const sk = rnd();
   const msg = rnd();
@@ -108,9 +117,72 @@ test('8.7 the keys of existing vaults do not change: lock outputs and key-path o
   assert.ok(isSecretKey(oneTimeSecret()));
 });
 
-test('8.7 no BigInt in the code that handles secret keys', () => {
+// The affine law in BigInt, null for the point at infinity: what the complete formulas must agree with.
+const inv = (a) => { let [r, b, e] = [1n, mod(a, P), P - 2n]; for (; e > 0n; e >>= 1n, b = (b * b) % P) if (e & 1n) r = (r * b) % P; return r; };
+function affineAdd(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  if (a[0] === b[0] && mod(a[1] + b[1], P) === 0n) return null;
+  const l = a[0] === b[0] ? mod(3n * a[0] * a[0] * inv(2n * a[1]), P) : mod((b[1] - a[1]) * inv(b[0] - a[0]), P);
+  const x = mod(l * l - a[0] - b[0], P);
+  return [x, mod(l * (a[0] - x) - a[1], P)];
+}
+const GEN = [0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798n, 0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8n];
+const opposite = (p) => [p[0], mod(-p[1], P)];
+const xy = (p) => p && fromHex(p[0].toString(16).padStart(64, '0') + p[1].toString(16).padStart(64, '0'));
+
+test('8.7 the complete addition: doubling, opposite points and the point at infinity, as the affine law', () => {
+  const double = (p) => affineAdd(p, p);
+  const pts = [GEN, double(GEN), affineAdd(double(GEN), GEN)];
+  for (let i = 0; i < 12; i++) pts.push(affineAdd(double(pts[pts.length - 1]), pts[i])); // other points of the curve
+  const check = (list) => assert.deepEqual(ar.sum(list.map(xy)), xy(list.reduce(affineAdd, null)), `${list.length} points`);
+  for (let i = 0; i < pts.length; i++) {
+    const [a, b, c] = [pts[i], pts[(i + 1) % pts.length], pts[(i + 5) % pts.length]];
+    check([a]); // ∞ + P
+    check([a, null]); // P + ∞
+    check([null, null, a]);
+    check([a, b]);
+    check([a, a]); // doubling, Z = 1
+    check([a, b, a, b]); // doubling of a sum: Z is no longer 1
+    check([a, opposite(a)]); // the point at infinity
+    check([a, b, opposite(b), opposite(a)]); // again, from points whose Z is not 1
+    check([a, opposite(a), c]); // an infinity the formulas made, then a point
+    check([a, opposite(a), null, c, c]);
+    check([a, b, c, opposite(a), b, opposite(c), a]);
+  }
+  assert.equal(ar.sum([]), null);
+  assert.equal(ar.sum([null, null]), null);
+});
+
+test('8.7 every entry of the table: k·G for each digit of each window', () => {
+  // k·G is read from a table with the digits of k − 0x11…11: k = 0x11…11 + j·16^w reads entry j of window w
+  const ones = BigInt('0x' + '1'.repeat(64));
+  let entry0 = null; // 0x11…11·G
+  for (let w = 0, b = GEN; w < 64; w++) {
+    entry0 = affineAdd(entry0, b);
+    for (let i = 0; i < 4; i++) b = affineAdd(b, b);
+  }
+  let seen = 0;
+  for (let w = 0, base = GEN; w < 64; w++) {
+    let want = entry0;
+    for (let j = 0; j < 16; j++) {
+      const k = (ones + (BigInt(j) << BigInt(4 * w))) % N;
+      const got = pointOf(b32(k));
+      assert.equal(toHex(got.x), want[0].toString(16).padStart(64, '0'), `window ${w}, digit ${j}`);
+      assert.equal(got.odd, Number(want[1] & 1n), `window ${w}, digit ${j}: parity`);
+      want = affineAdd(want, base);
+      seen++;
+    }
+    for (let i = 0; i < 4; i++) base = affineAdd(base, base);
+  }
+  assert.equal(seen, 1024);
+});
+
+test('8.7 no BigInt and no division in the code that handles secret keys', () => {
   const src = readFileSync(new URL('../src/secp256k1.js', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
   assert.doesNotMatch(src, /BigInt|\b\d+n\b|0x[0-9a-f]+n\b/i);
+  // a division's time follows its operands on common processors: carries are taken with a multiplication
+  assert.doesNotMatch(src.replace(/'[^'\n]*'/g, "''"), /[/%]/);
   // and the vault's paths to a secret key go through it
   const taproot = readFileSync(new URL('../src/taproot.js', import.meta.url), 'utf8');
   for (const call of ['pointOf(d)', 'tweakSecret(d,', 'bip340PublicKey(secret)', 'isSecretKey(k)']) assert.ok(taproot.includes(call), call);

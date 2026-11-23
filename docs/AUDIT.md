@@ -715,11 +715,11 @@ one-time key, the BIP86 and BIP341 tweaks of both, every BIP340 signature, the r
 key into `[1, n − 1]`) is the code of [`secp256k1.js`](../vault/src/secp256k1.js), which has no
 `BigInt`: field elements and scalars are 16 limbs of 16 bits in a `Float64Array`, points are added
 with the complete formulas of Renes, Costello and Batina (algorithm 7, the point at infinity and
-doubling included), `k·G` is a comb of 64 additions whose table entries are read by going through
+doubling included), `k·G` is a comb, one table entry for each of 64 digits, read by going through
 all 16 of a window with a mask, and the choices made on a secret (the key whose point has an even
-y) are masked selects. Each signature is verified before `bip340Sign` (l. 344) returns it. The
+y) are masked selects. Each signature is verified before `bip340Sign` (l. 358) returns it. The
 BigInt code of `taproot.js` now only sees public keys (`tweakKey`), and `indexer/src/schnorr.js`
-only verifies. The bytes are unchanged: BIP340 vectors 0 and 1, the indexer's signer on random and
+only verifies. The bytes are unchanged: BIP340's signing vectors, the indexer's signer on random and
 extreme keys, the arithmetic at its edges against `BigInt`, and the lock outputs of a vault
 recorded before the change (tests "8.7 …" in `vault/test/secp256k1.test.js`). Test "8.7 k·G takes
 the same time" measures `k·G` for the key 1 and the key n − 2: about 1.0× apart (the `BigInt` code:
@@ -727,6 +727,63 @@ about 450×). Left: JavaScript promises no timing (the engine compiles the code 
 its garbage collector copies memory); the BIP340 tagged hashes of the secret key and nonce run in
 the vault's SHA-256 (`hash.js`: 32-bit operations, no table indexed by data); the BabyJubJub of
 `circuit/js` (§6.11) is not the vault's code and is unchanged.
+
+Checked on 2026-11-23, by reading `secp256k1.js` line by line and by running its internals against
+`BigInt` outside the repository. The arithmetic: the largest double it forms is 15,633 × 65,535²,
+under 2^46 (the fold of `fmul`), 2^7 below where a double stops being exact. `fnorm` leaves every
+limb in [0, 2^16) and a value below 2^256 for limbs of either sign up to 2^47 (20,119 inputs), more
+than its comment claimed, and `sreduce` agrees with `BigInt` on 3,010 values up to 2^512 − 1. The
+addition is algorithm 7 line for line, and 1,112 sums match the affine law: two points, a doubling,
+a point and its opposite, the point at infinity on either side or on both, any `Z`, and an infinity
+the formulas made, used again. No branch, loop bound or index depends on a secret; the three `if`
+that look at one refuse a key, a nonce or a tweaked key equal to zero. The nonce is BIP340's
+default signing step by step: the auxiliary bytes hashed and masked with the key whose point has an
+even y, hashed with the public key and the message, reduced mod n, refused at zero, negated by the
+parity of R. The public key is computed from the secret and never taken from the caller, and every
+caller (`signKeyPath`, `signReveal`, the CLAIM of `market.js`) passes 32 fresh random bytes. The
+eight signing vectors of BIP340 pass, those with messages of 0, 1, 17 and 100 bytes included.
+
+Four things were found and changed with this paragraph. None changes a byte: 572 keys give the
+points, signatures and tweaked secrets of the file of #57.
+
+1. Three carries were divisions by 2^16. A division is the one operation on doubles whose time
+   follows its operands on common processors. A compiler turns a division by a power of two into a
+   multiplication; an interpreter does not. They are now multiplications by 2^-16, which are exact.
+2. A digit 0 of a key read the point at infinity from the table, and the additions after it worked
+   on zeros. Compiled, nothing shows (below). In V8's interpreter, which handles small integers
+   faster than other numbers, `k·G` for the key 1 was 1.2 % faster than for a random key
+   (t = −8.7), and 0.9 % for a key whose low half is zero (t = −5.4). Without the divisions:
+   0.5 % (t = −5.9). The table now holds (j + 1)·16^w·G and is read with the digits of k − Σ 16^w,
+   and its first entry is G written with a `Z` that is not 1: no digit selects a point with zeros
+   in it. After: every class of keys within 0.1 % of random ones (|t| ≤ 0.5).
+3. `bip340Sign` took anything iterable as a message: a string was signed as zeros, a number as the
+   empty message. It refuses what is not bytes.
+4. Inside `bip340Sign`, `P` named the public key and hid the prime of the field. Renamed.
+
+The measurements: six classes of keys (1, n − 2, every digit 1, every digit 15, the low half zero,
+random), taken in random order in each round, on an Apple M1 Pro with Node 22 (V8 12.4). t is
+Welch's statistic against random keys, on the samples under each class's 90th percentile; 4.5 is
+where a difference is usually taken as real. Compiled, `k·G`: |t| ≤ 2.5 before the changes and
+≤ 0.9 after, over 1,500 rounds. The first `k·G` of a new process, which the building of the table
+(public) precedes: |t| ≤ 2.6 over 160 processes for each class, before the changes. The interpreter
+alone (`node --jitless`): 500 rounds, the figures above. A signature without its last verification,
+compiled: |t| ≤ 1.7 after the changes, over 1,200 rounds.
+
+Tests added to `vault/test/secp256k1.test.js`: "8.7 the complete addition…" (the cases above, through
+the formulas, against the affine law in `BigInt`), "8.7 every entry of the table…" (each of the 16
+digits of each of the 64 windows), no `/` and no `%` in the code, a message that is not bytes, and
+BIP340's six other signing vectors. Each fails when the code is broken the way it guards against: a
+division put back, 3b = 20, one line of the addition, a mask that reads the next entry, one window
+of the table, the public key left out of the nonce.
+
+Left: one engine and one processor were measured; JavaScriptCore (Safari, and every browser on an
+iPhone) and SpiderMonkey were not. Where an engine does not compile (the optimiser turned off in a
+browser's security settings, Lockdown Mode on an iPhone), the way a number is represented still
+follows its value: no dependence on the key shows after the changes, at a resolution of about
+0.3 %, and none is excluded below it. The verification before release is the indexer's `BigInt`
+code: about 90 ms for each signature, against 3.5 ms for the signing, on public values only. The
+limbs of a key, of a nonce and of the masked key are not wiped after use: they are typed arrays,
+which could be zeroed where the `BigInt`s of 8.8 cannot, but each operation makes new ones.
 
 **8.8 Secrets stay in memory, and the vault never locks itself.** Low.
 The witness of a spend holds the nullifier keys in clear. It stays in the object `buildSpend`
@@ -808,6 +865,6 @@ flight are still missing from an older backup, so their commit outputs cannot be
 | the proving key is checked by the module against its pinned hash, and the verifying key it yields against the pinned digest | `prover.js` l. 106 |
 | the BIP341 signature message, read against the specification for the two modes used (default, and `SINGLE \| ANYONECANPAY`), key path and script path | `taproot.js` l. 94 |
 | an offer's signature commits to the lock's outpoint, amount, script and sequence, to the version and locktime, and to the output paying the price; a buyer checks it under the key of the lock output, which the txid does cover | `market.js` l. 86–116, l. 136 |
-| the BIP340 nonce is derived as specified, with fresh auxiliary randomness at every signature | `secp256k1.js` l. 344; `taproot.js` l. 135, l. 193 |
+| the BIP340 nonce is derived as specified, with fresh auxiliary randomness at every signature | `secp256k1.js` l. 358; `taproot.js` l. 135, l. 193 |
 | the state is AES-256-GCM under the passphrase key with a fresh 12-byte nonce at every save; a wrong passphrase fails the tag | `keys.js` l. 35, l. 230 |
 | the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 17, l. 49; `ui/context.js` l. 33; `ui/spends.js` l. 30 and `ui/tokens-panel.js` l. 177 |

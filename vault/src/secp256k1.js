@@ -4,12 +4,16 @@
 //
 //   - field elements and scalars are 16 limbs of 16 bits in a Float64Array; every operation runs the
 //     same sequence of double-precision additions, multiplications and Math.floor whatever the
-//     values (sums and products stay below 2^53, so each is exact). No BigInt: its running time
-//     follows the size of the numbers;
+//     values (sums and products stay below 2^53, so each is exact: the largest is 15,633 × 65,535²,
+//     under 2^46, in fmul). No BigInt: its running time follows the size of the numbers. No
+//     division either, the one operation on doubles whose time follows its operands on common
+//     processors: a carry is taken with a multiplication by 2^-16, which is exact;
 //   - points are added with the complete formulas of Renes, Costello and Batina (2016, algorithm 7,
 //     a = 0): one formula for every pair of points, the point at infinity and doubling included;
-//   - k·G is a fixed-window comb: 64 additions of one entry of a table of 16, read by going through
-//     all 16 and keeping one with a 0/1 mask;
+//   - k·G is a fixed-window comb: one entry of a table of 16 for each of the 64 digits, read by going
+//     through all 16 and keeping one with a 0/1 mask, and 63 additions. The digits are those of
+//     k − Σ 16^w, and entry j of a window is (j + 1)·16^w·G: no digit selects the point at infinity,
+//     whose zeros an engine that does not compile handles faster than other numbers;
 //   - a choice made on a secret (the key whose point has an even y) is a masked select.
 //
 // What JavaScript cannot promise: the engine compiles this code as it sees fit, and a garbage
@@ -27,6 +31,7 @@ import { concat, fromHex, utf8 } from './bytes.js';
 import { verify } from '../../indexer/src/schnorr.js';
 
 const RADIX = 65536;
+const INV_RADIX = 2 ** -16; // v * INV_RADIX is v / RADIX to the bit, without a division
 
 /** 32 bytes, big-endian → 16 limbs, least significant first. */
 function limbs(b) {
@@ -51,7 +56,7 @@ function carryOut(a) {
   let c = 0;
   for (let i = 0; i < a.length; i++) {
     const v = a[i] + c;
-    c = Math.floor(v / RADIX);
+    c = Math.floor(v * INV_RADIX);
     a[i] = v - c * RADIX;
   }
   return c;
@@ -70,7 +75,7 @@ function reduceOnce(a, m) {
   let borrow = 0;
   for (let i = 0; i < 16; i++) {
     const v = a[i] - m[i] + borrow;
-    borrow = Math.floor(v / RADIX); // 0 or −1
+    borrow = Math.floor(v * INV_RADIX); // 0 or −1
     d[i] = v - borrow * RADIX;
   }
   return select(-borrow, a, d);
@@ -79,7 +84,7 @@ function reduceOnce(a, m) {
 /** 1 when a < m, else 0 (canonical a and m). */
 function below(a, m) {
   let borrow = 0;
-  for (let i = 0; i < 16; i++) borrow = Math.floor((a[i] - m[i] + borrow) / RADIX);
+  for (let i = 0; i < 16; i++) borrow = Math.floor((a[i] - m[i] + borrow) * INV_RADIX);
   return -borrow;
 }
 
@@ -97,7 +102,10 @@ const hex = (h) => limbs(fromHex(h));
 const P = hex('fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f');
 const P_MINUS_2 = 'fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2d'; // public exponent
 
-/** Folds what is above 2^256 back (2^256 ≡ 2^32 + 977 mod p), three times: limbs end below 2^17. */
+/**
+ * Folds what is above 2^256 back (2^256 ≡ 2^32 + 977 mod p), three times. For limbs of either sign up
+ * to 2^47 the third carry is 0: every limb ends in [0, 2^16), and the value below 2^256 (not below p).
+ */
 function fnorm(a) {
   for (let k = 0; k < 3; k++) {
     const c = carryOut(a);
@@ -206,17 +214,17 @@ function add(p1, p2) {
   return { X: X3, Y: Y3, Z: Z3 };
 }
 
-let TABLE = null; // TABLE[w][j] = j·16^w·G, built once (public: it depends on G alone)
+let TABLE = null; // TABLE[w][j] = (j + 1)·16^w·G, built once (public: it depends on G alone)
 
 function table() {
   if (TABLE) return TABLE;
   const rows = [];
-  let base = G;
+  let base = { X: fmul(G.X, G.Y), Y: fmul(G.Y, G.Y), Z: G.Y }; // G, written with a Z that is not 1
   for (let w = 0; w < 64; w++) {
-    const row = [INFINITY, base];
-    for (let j = 2; j < 16; j++) row.push(add(row[j - 1], base));
+    const row = [base];
+    for (let j = 1; j < 16; j++) row.push(add(row[j - 1], base));
     rows.push(row);
-    base = add(row[15], base);
+    base = row[15]; // 16·16^w·G
   }
   return (TABLE = rows);
 }
@@ -238,11 +246,16 @@ function lookup(row, j) {
   return { X, Y, Z };
 }
 
-/** k·G for a canonical scalar k: x (32 bytes) and the parity of y (0 or 1). */
+/**
+ * k·G for a canonical scalar k in [1, n): x (32 bytes) and the parity of y (0 or 1). With d = k − Σ 16^w
+ * mod n and its 64 digits d_w, k·G = Σ (d_w + 1)·16^w·G: each digit reads one entry, and none is the
+ * point at infinity. A partial sum is never a multiple of n (only k = 0 would make the whole sum one).
+ */
 function mulG(k) {
   const rows = table();
-  let acc = INFINITY;
-  for (let w = 0; w < 64; w++) acc = add(acc, lookup(rows[w], (k[w >> 2] >>> (4 * (w & 3))) & 15));
+  const d = sadd(k, MINUS_ONES);
+  let acc = lookup(rows[0], d[0] & 15);
+  for (let w = 1; w < 64; w++) acc = add(acc, lookup(rows[w], (d[w >> 2] >>> (4 * (w & 3))) & 15));
   const zi = finv(acc.Z);
   const y = freeze(fmul(acc.Y, zi));
   return { x: bytes(freeze(fmul(acc.X, zi))), odd: y[0] & 1 };
@@ -253,6 +266,7 @@ function mulG(k) {
 const N = hex('fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141');
 const N_MINUS_1 = hex('fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140');
 const C = hex('000000000000000000000000000000014551231950b75fc4402da1732fc9bebf'); // 2^256 − n, below 2^129
+const MINUS_ONES = hex('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeda99dcbd59e378f2aaec14d7bbf253030'); // n − Σ 16^w = n − 0x11…11
 
 /** t mod n, for t of 32 limbs below 2^512: four folds of 2^256 ≡ C, then one subtraction. */
 function sreduce(t) {
@@ -343,25 +357,38 @@ export function tweakSecret(secret, tweak) {
 /** A BIP340 signature (64 bytes) of `msg` by `secret`, with 32 bytes of fresh auxiliary randomness. */
 export function bip340Sign(secret, msg, aux = crypto.getRandomValues(new Uint8Array(32))) {
   if (!(aux instanceof Uint8Array) || aux.length !== 32) throw new Error('aux must be 32 bytes');
+  // anything else would be signed as other bytes: a string as zeros, a number as the empty message
+  if (!(msg instanceof Uint8Array)) throw new Error('the message must be bytes');
   const m = Uint8Array.from(msg);
   const d0 = secretScalar(secret);
-  const P = mulG(d0);
-  const d = select(P.odd, sneg(d0), d0);
+  const pub = mulG(d0);
+  const d = select(pub.odd, sneg(d0), d0);
   const masked = tagged('BIP0340/aux', aux);
   const db = bytes(d);
   for (let i = 0; i < 32; i++) masked[i] ^= db[i];
-  const k0 = reduceOnce(limbs(tagged('BIP0340/nonce', masked, P.x, m)), N);
+  const k0 = reduceOnce(limbs(tagged('BIP0340/nonce', masked, pub.x, m)), N);
   if (zero(k0)) throw new Error('bad nonce'); // probability 2^-256
   const R = mulG(k0);
   const k = select(R.odd, sneg(k0), k0);
-  const e = reduceOnce(limbs(tagged('BIP0340/challenge', R.x, P.x, m)), N);
+  const e = reduceOnce(limbs(tagged('BIP0340/challenge', R.x, pub.x, m)), N);
   const sig = concat(R.x, bytes(sadd(k, smul(e, d))));
-  if (!verify(P.x, m, sig)) throw new Error('the signature did not verify: not released');
+  if (!verify(pub.x, m, sig)) throw new Error('the signature did not verify: not released');
   return sig;
 }
 
-/** For test/secp256k1.test.js only: the field and scalar arithmetic, on 32-byte values. */
+/**
+ * For test/secp256k1.test.js only: the field and scalar arithmetic on 32-byte values, and the sum of
+ * points given as x ‖ y (64 bytes) or null (the point at infinity), added in order from the point at
+ * infinity with nothing normalised in between; null when the sum is the point at infinity.
+ */
 export const arithmetic = {
+  sum: (points) => {
+    let acc = INFINITY;
+    for (const q of points) acc = add(acc, q ? { X: limbs(q.subarray(0, 32)), Y: limbs(q.subarray(32)), Z: FE_ONE } : INFINITY);
+    if (zero(freeze(acc.Z))) return null;
+    const zi = finv(acc.Z);
+    return concat(bytes(freeze(fmul(acc.X, zi))), bytes(freeze(fmul(acc.Y, zi))));
+  },
   fmul: (a, b) => bytes(freeze(fmul(limbs(a), limbs(b)))),
   fadd: (a, b) => bytes(freeze(fadd(limbs(a), limbs(b)))),
   fsub: (a, b) => bytes(freeze(fsub(limbs(a), limbs(b)))),
