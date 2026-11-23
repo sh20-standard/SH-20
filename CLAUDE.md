@@ -60,7 +60,7 @@ npm run fuzz        # random chains through both indexers (build indexer-rs firs
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 3` JSON files>
 
 cd circuit
-cargo test --release    # 35 tests, with the shipped proving key (artifacts/spend.pk)
+cargo test --release    # 38 tests, with the shipped proving key (artifacts/spend.pk)
 ./build-wasm.sh         # two WebAssembly builds: one thread with no imports, and a thread pool over Web Workers
 bench/cross-check.sh    # snarkjs against our verifier, both ways (hard requirement 4)
 web/build.sh            # the phone test page, in web/dist/ (see circuit/web/README.md)
@@ -142,7 +142,7 @@ through `vault/src/secp256k1.js` (no `BigInt`, no division, no branch or index o
 what an interpreter still showed removed), the vault locks itself, and a restored vault checks its counters before it
 reserves an index. 8.10 lists what is so by design.
 
-Not done: an audit; a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the
+Not done: an external audit (our own, `docs/AUDIT-PROMPT.md`, has run its part `circuit`: no finding above a Note, `docs/audit/2026-11-23-circuit.md`); a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the
 circuit session; its reference code and vectors are in `circuit/js`); a real wallet signing in the vault; a relayer; the
 profile constants (activation height, `D`); a public signet run.
 

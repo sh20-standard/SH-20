@@ -180,7 +180,7 @@ height `A`. No envelope below `A` is read, and blocks below `A` have no root and
 `start = A`, `end = 0`. It exists from block `A` on; a DEPLOY of `SH20` is rejected like any taken ticker.
 
 **Every spend**: `max(0, H − W) ≤ anchorHeight ≤ H − K_min`; root known (`anchorHeight < A` uses the empty root); nullifiers
-non-zero, distinct, never seen; output leaves non-zero (they may repeat, within the spend or a leaf already in the tree);
+non-zero, distinct (the relation accepts one note as both inputs, counted twice: this rule is what refuses it), never seen; output leaves non-zero (they may repeat, within the spend or a leaf already in the tree);
 room for 3 leaves in the tree; proof valid, with the nine inputs of §4. Effect: record nullifiers, append the 3 leaves.
 The proof is checked **last**, once every other condition of the envelope holds (those of its type in the table below,
 the turnstile, and the ones above): a refusal has no effect either way, but this fixes which spends reach the verifier,

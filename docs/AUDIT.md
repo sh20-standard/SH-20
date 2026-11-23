@@ -271,7 +271,7 @@ The three digests are constants of `circuit/src/lib.rs` (`SRS_SHA256`, `VK_DIGES
 **Tests.**
 
 ```sh
-cd circuit && cargo test --release           # 35 tests
+cd circuit && cargo test --release           # 38 tests
 ./build-wasm.sh                              # needs the targets wasm32-unknown-unknown and wasm32-wasip1-threads
 cd ../indexer && npm test                    # 61 tests; those of plonk.test.js need the module just built
 cd ../circuit/js && npm test                 # 48 tests

@@ -107,7 +107,9 @@ the proof decoding), `circuit/src/ffi.rs`, `indexer/src/adapters/plonk.js`. At l
 and every public input enters the transcript before the challenge it must precede; points are checked
 on the curve and scalars below `r` when decoded; the point at infinity; the number of public inputs; the
 verifying key is the pinned one wherever a verifier is built; nothing at the WebAssembly boundary reads
-or writes outside what it was given. Tools: `bench/cross-check.sh`, and proofs you damage on purpose.
+or writes outside what it was given. Zero-knowledge too: the prover's blinding factors (`plonk/prover.rs`,
+section 8.3 of the paper), and that every host seeds them with fresh randomness for each proof. Tools:
+`bench/cross-check.sh`, and proofs you damage on purpose.
 
 ### `sealing`: keys, addresses, ciphertexts, scanning
 
