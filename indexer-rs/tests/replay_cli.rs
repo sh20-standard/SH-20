@@ -193,3 +193,49 @@ fn replay_refuses_bad_arguments() {
     assert!(!replay(&dir, &["--activation"]).0);
     assert!(!replay(&dir, &["--frobnicate"]).0);
 }
+
+/// `indexer/vectors/plonk-v0.3.json` as `getblock` files, under the real verifier: the digests
+/// of the vectors. Under `reject-all` the command parts with them at block 3, the first block
+/// with a valid proof.
+#[test]
+fn replay_checks_real_proofs() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../indexer/vectors/plonk-v0.3.json");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("replay-plonk");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for b in v["blocks"].as_array().unwrap() {
+        std::fs::write(dir.join(format!("{}.json", b["height"])), getblock_json(b)).unwrap();
+    }
+    let want: Vec<String> = v["after"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| format!("{} {}", a["height"], a["digest"].as_str().unwrap()))
+        .collect();
+    let profile = ["--activation", "1", "--deploy-burn", "0", "--maturity", "0"];
+
+    let (ok, stdout, stderr) = replay(&dir, &[&profile[..], &["--verifier", "plonk-bn254-hermez"]].concat());
+    assert!(ok, "{stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), want);
+    assert!(stderr.contains("verifier = plonk-bn254-hermez"), "{stderr}");
+
+    // --json: the refusals of the vectors, and no other
+    let (ok, stdout, _) = replay(&dir, &[&profile[..], &["--verifier", "plonk-bn254-hermez", "--json"]].concat());
+    assert!(ok);
+    let lines: Vec<Value> = stdout.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let refused: Vec<(&Value, &Value)> = lines
+        .iter()
+        .flat_map(|l| l["rejected"].as_array().unwrap().iter().map(|r| (&l["height"], &r["txid"])))
+        .collect();
+    let want_refused: Vec<(&Value, &Value)> =
+        v["rejected"].as_array().unwrap().iter().map(|r| (&r["height"], &r["txid"])).collect();
+    assert_eq!(refused, want_refused);
+
+    let (ok, stdout, stderr) = replay(&dir, &profile);
+    assert!(ok, "{stderr}");
+    let got: Vec<&str> = stdout.lines().collect();
+    assert_eq!(got[..2], want[..2]);
+    assert!(got[2..].iter().zip(&want[2..]).all(|(g, w)| g != w));
+    assert!(stderr.contains("verifier = reject-all"), "{stderr}");
+}

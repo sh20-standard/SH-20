@@ -21,5 +21,7 @@ ark-ff = "0.5"
 light-poseidon = "0.4"
 secp256k1 = { version = "0.31", default-features = false, features = ["std"] }
 sha2 = "0.10"
+# the PLONK verifier, and nothing else of the circuit: no thread pool, no wallet code
+sh20-circuit = { path = "../circuit", default-features = false }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 ureq = { version = "2", default-features = false, features = ["tls"] }

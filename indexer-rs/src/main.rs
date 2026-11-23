@@ -8,7 +8,7 @@ use sh20_indexer::field::{fr_to_be, hex};
 use sh20_indexer::follow::{Follower, Source, Step};
 use sh20_indexer::json::block_from_getblock;
 use sh20_indexer::sources::{basic_auth, CoreRpc, Esplora};
-use sh20_indexer::{Block, Indexer, Profile, RejectAll, SpendVerifier, TestVerifier};
+use sh20_indexer::{Block, Indexer, PlonkVerifier, Profile, RejectAll, SpendVerifier, TestVerifier};
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::ExitCode;
@@ -32,7 +32,8 @@ options:
   --window <W>            anchor window (default: 100)
   --min-depth <K_min>     anchor minimum depth (default: 1)
   --maturity <N>          blocks a DEPLOY commit must have behind it (default: 6)
-  --verifier <name>       reject-all (default: every spend is refused; `reject` is the same) or
+  --verifier <name>       plonk-bn254-hermez (the PLONK verifier of circuit/, under the pinned key),
+                          reject-all (default: every spend is refused; `reject` is the same) or
                           test (accepts the proof \"valid-proof\" padded with zeros to 480 bytes)
   --json                  one JSON object per block: height, root, events, eventsH, digest, rejected
 
@@ -153,7 +154,8 @@ fn verifier_of(name: &str) -> Result<(Box<dyn SpendVerifier>, &'static str), Str
     match name {
         "reject-all" | "reject" => Ok((Box::new(RejectAll), "reject-all")),
         "test" => Ok((Box::new(TestVerifier), "test")),
-        other => Err(format!("unknown verifier \"{other}\" (reject-all or test)")),
+        PlonkVerifier::NAME => Ok((Box::new(PlonkVerifier::pinned()?), PlonkVerifier::NAME)),
+        other => Err(format!("unknown verifier \"{other}\" ({}, reject-all or test)", PlonkVerifier::NAME)),
     }
 }
 
@@ -186,7 +188,10 @@ fn follow(o: &Options) -> Result<(), String> {
     let address = listener.local_addr().map_err(|e| e.to_string())?;
     eprintln!("{}", profile_line(&profile, verifier_name));
     if verifier_name == "reject-all" {
-        eprintln!("note: no proof verifier, so every spend is refused (TRANSFER, BURN, LIST, a DEPLOY that burns)");
+        eprintln!(
+            "note: every spend is refused (TRANSFER, BURN, LIST, a DEPLOY that burns); --verifier {} checks proofs",
+            PlonkVerifier::NAME
+        );
     }
 
     match (&o.rpc, &o.esplora) {

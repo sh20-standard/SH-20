@@ -3,14 +3,26 @@
 A Rust indexer for SH-20 draft v0.3, written from [`docs/SPEC-WIRE.md`](../docs/SPEC-WIRE.md) alone, to check that
 the spec is enough to reach the reference indexer's results.
 
-**Clean room.** Read: `docs/SPEC-WIRE.md`, `docs/DESIGN.md`, `indexer/vectors/v0.3.json`, the root `CLAUDE.md`,
-`docs/API.md` (for `follow`), and `docs/SPEC-GAPS.md` (written here; its resolution table is the maintainer's).
-Never opened: `indexer/` apart from the vectors file, `explorer/`, `vault/`, `circuit/`, `docs/AUDIT.md`. No code is shared
-with the reference: Poseidon is [`light-poseidon`](https://crates.io/crates/light-poseidon) (circom parameters, over
-`ark-bn254`), BIP340 is the [`secp256k1`](https://crates.io/crates/secp256k1) crate (libsecp256k1), SHA-256 is `sha2`.
+**Clean room.** Read: `docs/SPEC-WIRE.md`, `docs/DESIGN.md`, the two vectors files of `indexer/vectors/`, the root
+`CLAUDE.md`, `docs/API.md` (for `follow`), `docs/PLAN.md`, and `docs/SPEC-GAPS.md` (written here; its resolution table is
+the maintainer's). Never opened: `indexer/` apart from the vectors, `explorer/`, `vault/`, `circuit/src`, `docs/AUDIT.md`.
+No code is shared with the reference indexer: Poseidon is [`light-poseidon`](https://crates.io/crates/light-poseidon)
+(circom parameters, over `ark-bn254`), BIP340 is the [`secp256k1`](https://crates.io/crates/secp256k1) crate
+(libsecp256k1), SHA-256 is `sha2`.
+
+**One exception, on purpose: the proof verifier.** A second PLONK verifier written here would be new
+soundness-critical code that no audit covers. So `--verifier plonk-bn254-hermez` calls the verifier of `circuit/`, the
+one the reference runs as WebAssembly, as a library (`sh20-circuit`, a path dependency without its default features),
+through the interface its README gives ("The verifier as a library") and no other reading of that crate. What stays
+independent is everything around it: the nine public inputs come from this indexer's own reading of the chain, and
+the key is checked against the digest `docs/SPEC-WIRE.md` §4 pins. A bug in the verifier itself is common to both
+indexers and no comparison of the two will show it.
 
 **Result.** It reproduces every value of `indexer/vectors/v0.3.json`: the 17 blocks of the scenario and its reorg, the `bodyHash`
-of every spend envelope, the nine inputs of every verifier call, the 32 carrier cases and the CLAIM.
+of every spend envelope, the nine inputs of every verifier call, the 32 carrier cases and the CLAIM. And every value of
+`indexer/vectors/plonk-v0.3.json`, a chain with real proofs: the three calls to the verifier with their inputs and
+answers (a TRANSFER and a BURN accepted, a TRANSFER with one bit of its proof flipped refused), and the root,
+`eventsH` and digest of its five blocks.
 [`docs/SPEC-GAPS.md`](../docs/SPEC-GAPS.md) lists the 28 points the first draft of the spec left open and the six a
 recheck still found, all settled in the spec since, and what the vectors still do not pin.
 
@@ -19,7 +31,7 @@ beside the reference indexer and be compared with it block by block (`follow`, b
 
 ```sh
 cd indexer-rs
-cargo test --release      # 104 tests
+cargo test --release      # 111 tests
 cargo run --release -- replay <folder of `bitcoin-cli getblock <hash> 3` JSON files> [options]
 cargo run --release -- follow --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS --activation A --deploy-burn D
 ```
@@ -28,7 +40,7 @@ cargo run --release -- follow --rpc http://127.0.0.1:38332 --rpcuser USER --rpcp
 
 ```
 sh20-indexer-rs replay <folder> [--activation <A>] [--deploy-burn <D>] [--window <W>] [--min-depth <K_min>]
-                                [--maturity <N>] [--verifier reject-all|test] [--json]
+                                [--maturity <N>] [--verifier <name>] [--json]
 ```
 
 Reads every `.json` file of the folder (one block each, bare or inside a JSON-RPC `result`), orders them by the
@@ -51,9 +63,16 @@ revealed in a witness: there the replay stops with an error that names the block
 no digest for that block. It never guesses, and never refuses the DEPLOY for lack of a height. Esplora gives the
 same height as the spent transaction's `status.block_height`; this command reads `getblock` files only.
 
-`--verifier reject-all` (default; `reject` is the same) refuses every spend. `--verifier test` accepts the one proof the vectors use
-(`"valid-proof"` padded with zeros to 480 bytes). The PLONK verifier of `circuit/` is not wired in: it implements
-the `SpendVerifier` trait when someone adds it.
+`--verifier` names what checks the proof of a spend:
+
+| Name | What it accepts |
+| --- | --- |
+| `plonk-bn254-hermez` | a valid PLONK proof under the pinned verifying key (SPEC-WIRE §4): the verifier of `circuit/`, with `circuit/artifacts/spend.vk` built into the binary and refused unless its digest is the spec's. The one for a real network |
+| `reject-all` (default; `reject` is the same) | nothing: every spend is refused |
+| `test` | the one proof `v0.3.json` uses (`"valid-proof"` padded with zeros to 480 bytes), whatever the inputs. For the vectors and the fuzzer only |
+
+The default stays `reject-all`, as in the reference, whose default it is too: two indexers started without the option
+agree. Give both the real verifier on a network (`--verifier <wasm>` for the reference).
 
 To compare two indexers on a chain, run both over the same folder with the same profile and verifier, and compare
 the digests. The first block where they differ holds the event to look at; `--json` shows its `eventsH`.
@@ -63,7 +82,7 @@ the digests. The first block where they differ holds the event to look at; `--js
 ```
 sh20-indexer-rs follow (--rpc <url> [--rpcuser <user> --rpcpass <password> | --rpccookie <file>] | --esplora <url>)
                        --activation <A> --deploy-burn <D> [--window <W>] [--min-depth <K_min>] [--maturity <N>]
-                       [--verifier reject-all|test] [--listen <address>] [--data <folder>] [--poll <seconds>]
+                       [--verifier <name>] [--listen <address>] [--data <folder>] [--poll <seconds>]
                        [--network <name>]
 ```
 
@@ -89,8 +108,8 @@ Follows the best chain from the activation block and serves the API of `docs/API
   height. Without `--data`, a restart reads the chain again from `A`.
 - **A missing commit height** (a node that gives no `prevout.height`) stops the command at the first DEPLOY
   revealed, with the block and the transaction named (SPEC-WIRE §5: stop, do not guess).
-- **Proofs.** As for `replay`: `--verifier reject-all` refuses every spend and `test` is the vectors' rule; `/status`
-  gives that name. There is no PLONK verifier here yet (`plonk-bn254-hermez` in the reference's `/status`). See "Beside the reference indexer" for what that means on a chain with real spends.
+- **Proofs.** As for `replay`: `--verifier plonk-bn254-hermez` on a network; the default refuses every spend.
+  `/status` gives the name (`verifier`), the same one the reference gives for the same verifier.
 
 Standard error gets the profile, `listening on http://<address>`, a line per block (`block <height> <digest>`; one
 every few seconds while catching up), `reorg: block <height> undone`, and `source: …; trying again`.
@@ -136,22 +155,22 @@ Both read the same node (or the same Esplora), each on its own port, with the sa
 
 ```sh
 # the reference, as docs/API.md gives it
-cd indexer && node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS --activation A --deploy-burn D
+cd indexer && node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS --activation A --deploy-burn D \
+    --verifier ../vault/prover/sh20_circuit.wasm
 
 # this one
 cd indexer-rs && cargo run --release -- follow --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS \
-    --activation A --deploy-burn D --listen 127.0.0.1:8621 --data ./data
+    --activation A --deploy-burn D --verifier plonk-bn254-hermez --listen 127.0.0.1:8621 --data ./data
 ```
 
 1. **The same profile.** Read the reference's `/status` (`activationHeight`, `deployBurn`, `anchorWindow`,
    `deployMaturity`) and give this one the same `--activation`, `--deploy-burn`, `--window` and `--maturity`
    (and `--min-depth` if the reference does not use `K_min = 1`). `D`, `W`, `K_min` and `N` are in the GENESIS
    record: with a different one, the digests differ from block `A` on. `A` is in no digest: check it by eye.
-2. **The same verifier.** This indexer refuses every spend (`verifier: "reject-all"` in `/status`). It agrees with a
-   reference started without `--verifier <wasm>` (`reject-all` too), and with one started with it up to the first valid proof on the chain (a TRANSFER, a BURN,
-   a LIST, or a DEPLOY, which burns `D`): from that block on the reference accepts what this one refuses and the
-   digests part for good. Mints and proof-less envelopes (MINT, TAKE, CLAIM) are compared in full either way.
-   A PLONK verifier behind the `SpendVerifier` trait is what a signet with real spends needs.
+2. **The same verifier.** Both `/status` must name the same one: `plonk-bn254-hermez` on a network (`--verifier
+   plonk-bn254-hermez` here, `--verifier <wasm>` for the reference), or `reject-all` on both. An indexer that refuses
+   every spend agrees with one that checks proofs up to the first valid proof on the chain (a TRANSFER, a BURN, a
+   LIST, or a DEPLOY, which burns `D`): from that block on the digests part for good.
 3. **Compare.** With `REF` and `RS` the two addresses:
 
    ```sh
@@ -172,7 +191,7 @@ cd indexer-rs && cargo run --release -- follow --rpc http://127.0.0.1:38332 --rp
 | `src/tree.rs` | the shared tree of depth 32, kept as a frontier (§2) |
 | `src/chain.rs` | transactions, script parsing, the OP_RETURN and witness carriers (§3) |
 | `src/envelope.rs` | strict codec of the 7 envelopes and the spend section (§4) |
-| `src/verifier.rs` | `SpendVerifier`: the nine public inputs and a proof; `RejectAll`, `TestVerifier` |
+| `src/verifier.rs` | `SpendVerifier`: the nine public inputs and a proof; `PlonkVerifier` (the verifier of `circuit/` under the pinned key), `RejectAll`, `TestVerifier` |
 | `src/state.rs` | acceptance rules, turnstile, listings, block processing, digest, undo log (§5, §6) |
 | `src/events.rs` | byte encoding of the events inside the digest (§6) |
 | `src/json.rs` | blocks from `getblock <hash> 3` (or 2) and from the vectors |
@@ -188,12 +207,13 @@ cd indexer-rs && cargo run --release -- follow --rpc http://127.0.0.1:38332 --rp
 | File | What |
 | --- | --- |
 | `tests/vectors.rs` | replays `v0.3.json`: primitives; per block the root, the events, `eventsH`, the digest; the refusals (with the index of the envelope in a batch); every verifier call and its nine inputs; the final state; the `reorg` part (roll back, apply, compare); every `bodyHash`; the carrier cases, alone and through the rules; the CLAIM message and signature; `digest_{A−1}` |
+| `tests/plonk.rs` | replays `plonk-v0.3.json` under the real verifier: the key and its digest; the envelopes and each `bodyHash`; every verifier call with its nine inputs and its answer; per block the root, the events, `eventsH`, the digest; the refusals; the final state. The same chain with every spend refused. And one valid proof made wrong thirty-odd ways (each public input moved, each part of the proof, a scalar that is `r`, bytes that are no point, other lengths): all refused |
 | `tests/codec.rs` | every envelope of the vectors and of the §4 table, byte for byte; the note leaf; what the decoder refuses |
 | `tests/rules.rs` | what the vectors do not cover: carriers at their edges, batches at their edges, mint window and payment, DEPLOY conditions and maturity, the `payScript` rule, anchors, nullifiers, CANCELLED, CLOSED, CLAIM, team unlocks, reorgs |
-| `tests/replay_cli.rs` | the `replay` command over the scenario written as `getblock` files |
+| `tests/replay_cli.rs` | the `replay` command over the scenario written as `getblock` files, and over the chain of `plonk-v0.3.json` with the real verifier and without |
 | `tests/follow.rs` | the follower over a chain in memory: the scenario block after block, among transactions that carry nothing; the vectors' reorg and back; a shorter chain; the scenario undone block by block; a reorg of the activation block; one deeper than the undo history; a failure at every call to the source; a missing commit height; restarts from the block file, and a damaged file |
 | `tests/api.rs` | every route over the scenario: roots, digests, `eventsH`, refusals, nullifiers, listings and token counters against the vectors; public leaves recomputed from their openings; Merkle paths folded up to the root; batches in `/tx`; pages, bad parameters, 404s |
-| `tests/sources.rs` | over real sockets on local ports: the scenario served as Bitcoin Core's RPC (credentials, a busy node, no `prevout.height`) and as an Esplora API (pages, commit heights, 429), and the `follow` command from its first block through a reorg, a stop and a restart with the node down |
+| `tests/sources.rs` | over real sockets on local ports: the scenario served as Bitcoin Core's RPC (credentials, a busy node, no `prevout.height`) and as an Esplora API (pages, commit heights, 429), and the `follow` command from its first block through a reorg, a stop and a restart with the node down; `follow` with the real verifier over the chain of `plonk-v0.3.json` |
 
 `tests/rules.rs` states this implementation's reading of the spec. It is not evidence of agreement with the
 reference: only the vectors and a run of both indexers over the same chain are.
@@ -205,8 +225,10 @@ indexer's API: where `docs/API.md` is silent, the shape of an answer is this ind
 
 ## Limits
 
-- No PLONK verification here (interface only): on a chain with valid spends, `follow` and the reference part at
-  the first one.
+- The PLONK verifier is the reference's own code (`circuit/`), on purpose: the two indexers check each other's rules,
+  not each other's proof check. Only two proofs made by the prover are replayed here (a TRANSFER and a BURN); a LIST
+  and a DEPLOY that burns go through the same call, with inputs built by the same code, but with no real proof in
+  any vector.
 - The state lives in memory; `--data` keeps the blocks, not the state, so a restart applies them again.
 - `/nullifiers`, `/roots` and `/listings` return everything at once, as `docs/API.md` describes them.
 - One request per connection, 64 at a time and 8 for one remote address (an IPv6 /64 counts as one). A connection
