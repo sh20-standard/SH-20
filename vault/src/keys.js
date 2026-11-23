@@ -287,7 +287,8 @@ export class Vault {
     const u = this.state.unchecked;
     if (!u?.[kind]) return;
     if (kind === 'notes') {
-      const used = Math.max(-1, ...this.state.notes.filter((n) => n.kind === 'public').map((n) => n.index)) + 1;
+      // the keys of its notes, and those an indexer reported with a note that did not check out (match.js)
+      const used = Math.max(this.state.seenNext ?? 0, Math.max(-1, ...this.state.notes.filter((n) => n.kind === 'public').map((n) => n.index)) + 1);
       this.state.next = Math.max(this.state.next, used + RESTORE_SKIP);
     } else {
       const used = Math.max(-1, ...(this.state.listings ?? []).map((l) => l.lockIndex), (this.state.nextLock ?? 0) - 1) + 1;

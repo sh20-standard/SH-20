@@ -44,6 +44,9 @@ export async function matchNotes(v, pub, { onProgress } = {}) {
 async function matchPublic(v, n, keys) {
   const index = keys.get(frHex(n.npk));
   if (index === undefined) return false;
+  // the key is used, whatever the rest says: the counter moves past it (docs/AUDIT.md §8.9)
+  if (v.state.next <= index) v.state.next = index + 1;
+  if ((v.state.seenNext ?? 0) <= index) v.state.seenNext = index + 1;
   // never trust the API's (ticker, v) alone: they must give back the leaf it put in the tree
   const leaf = frHex(noteLeaf(tickerT(n.ticker), n.v, n.npk, PUBLIC_RHO));
   if (n.leaf !== null && frHex(n.leaf) !== leaf) return false;

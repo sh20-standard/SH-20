@@ -70,6 +70,17 @@ test('8.9 a restored vault reserves no index before a sync has checked it agains
   assert.equal(again.state.next, 3 + RESTORE_SKIP + 1, 'its own reservation, and no second skip');
 });
 
+test('8.9 a note key an indexer reports moves the counter, even with an amount that does not give its leaf', async () => {
+  const a = await Vault.fromWords(memStorage(), WORDS, 'pass');
+  const backup = a.exportBackup();
+  const lying = { ...(await minted(a, 4, 0)), v: 999n }; // the leaf is that of 1000: (ticker, v) do not match it
+  const b = await Vault.restore(memStorage(), backup, 'pass');
+  assert.equal((await matchNotes(b, [lying])).found, 0, 'not recorded as a note');
+  assert.equal(b.state.next, 5, 'but its key counts as used');
+  await b.chainChecked('notes');
+  assert.equal((await b.reserveNote()).index, 5 + RESTORE_SKIP);
+});
+
 test('8.9 lock keys past the first window are found again, and a key found moves the counter even when its LIST cannot be read', async () => {
   const a = await Vault.fromWords(memStorage(), WORDS, 'pass');
   const backup = a.exportBackup();
@@ -90,11 +101,13 @@ test('8.9 lock keys past the first window are found again, and a key found moves
 test('8.9 the page: a full sync until the note keys are checked, then chainChecked; the words restore as restored', () => {
   const notes = src('ui/notes-panel.js');
   assert.match(notes, /s\.sync\(indexer, \{ full: full \|\| !!st\.vault\?\.state\.unchecked\?\.notes \}\)/);
-  assert.match(notes, /if \(r\.from === 0 && !failed\.length\) await st\.vault\.chainChecked\('notes'\);/);
+  assert.match(notes, /if \(r\.from === 0 && !failed\.length && !st\.sync\.agreement\.disagree\.length\) await st\.vault\.chainChecked\('notes'\);/);
   const market = src('ui/market-panel.js');
   const sl = market.slice(market.indexOf('export async function syncListings('));
-  assert.ok(sl.indexOf('await matchListings(v, all,') > 0 && sl.indexOf('await matchListings(v, all,') < sl.indexOf("await v.chainChecked('locks');"));
+  assert.ok(sl.indexOf('await matchListings(v, [...union.values()],') > 0 && sl.indexOf('await matchListings(v, [...union.values()],') < sl.indexOf("await v.chainChecked('locks');"));
   assert.ok(sl.indexOf("await v.chainChecked('locks');") < sl.indexOf('\n}\n'), 'in syncListings, after the whole list was read');
+  assert.match(sl, /indexers\.slice\(1\)\.map\(\(i\) => i\.listings\(\)\)/, 'the lists of every indexer');
+  assert.match(sl, /if \(others\.every\(\(r\) => r\.status === 'fulfilled'\)\) await v\.chainChecked\('locks'\);/, 'and every one of them read');
   assert.match(src('ui/vault-panel.js'), /Vault\.fromWords\(localStorage, words\.value, wpass\.value, \{ restored: true \}\)/);
   assert.match(src('sync.js'), /notes, from: keep,/);
 });

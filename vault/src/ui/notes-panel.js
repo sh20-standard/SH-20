@@ -134,7 +134,8 @@ async function syncOnce({ full = false } = {}) {
     failed = m.failed;
     await s.scanned(failed[0]?.pos ?? null);
     // every leaf read and matched: a restored vault knows the public-note keys it used (AUDIT §8.9)
-    if (r.from === 0 && !failed.length) await st.vault.chainChecked('notes');
+    // and no other indexer disagrees with the state those leaves come from
+    if (r.from === 0 && !failed.length && !st.sync.agreement.disagree.length) await st.vault.chainChecked('notes');
     await checkOwned(s);
     refused = await settleRefused(s);
     await syncListings();

@@ -33,9 +33,15 @@ export async function syncListings() {
     const l = byTxid.get(rec.listTxid);
     if (l && l.state !== rec.state) await v.updateListing(rec.id, { state: l.state });
   }
+  // the lock keys are looked for in the lists of every indexer (AUDIT §8.9): one that leaves a listing
+  // out cannot hide that its key is used, as long as another reports it
+  const others = await Promise.allSettled(indexers.slice(1).map((i) => i.listings()));
+  const union = new Map(all.filter((l) => l.listTxid).map((l) => [l.listTxid, l]));
+  for (const r of others) if (r.status === 'fulfilled' && Array.isArray(r.value)) for (const l of r.value) if (l?.listTxid && !union.has(l.listTxid)) union.set(l.listTxid, l);
   // found again by its lock key: its terms come from the LIST on chain, not from the indexer's word
-  await matchListings(v, all, async (l) => listingFromChain(l.listTxid, await esplora.txHex(l.listTxid), { ...l, amount: String(l.amount), price: String(l.price) }));
-  await v.chainChecked('locks'); // the whole list was read: a restored vault may reserve lock keys again
+  await matchListings(v, [...union.values()], async (l) => listingFromChain(l.listTxid, await esplora.txHex(l.listTxid), { ...l, amount: String(l.amount), price: String(l.price) }));
+  // every list read: a restored vault may reserve lock keys again
+  if (others.every((r) => r.status === 'fulfilled')) await v.chainChecked('locks');
 }
 
 /**
