@@ -272,7 +272,7 @@ Two points are not gaps of the text but decide whether the two indexers can be c
   refused) and the vectors' `test` rule. The PLONK verifier lives in `circuit/`, outside what this clean room reads.
   Until one is wired in behind `SpendVerifier`, `indexer-rs` agrees with a reference indexer run without a verifier
   and leaves it at the first valid spend (a TRANSFER, a BURN, a LIST, or a DEPLOY, which burns `D`).
-  **Done (2026-11-24):** `--verifier plonk-bn254-hermez` is the verifier of `circuit/` itself, called as a library
+  **Done (2026-11-23):** `--verifier plonk-bn254-hermez` is the verifier of `circuit/` itself, called as a library
   through the interface `circuit/README.md` gives and under the key SPEC-WIRE §4 pins; `circuit/src` stays unread.
   `indexer-rs` replays `indexer/vectors/plonk-v0.3.json`: the three verifier calls with their nine inputs and their
   answers, and every root, `eventsH` and digest. Nothing was found open in the spec on the way: "Verifier inputs"
