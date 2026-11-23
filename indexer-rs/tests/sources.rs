@@ -333,6 +333,41 @@ fn follow_command_names_its_verifier() {
     }
 }
 
+/// `follow --verifier plonk-bn254-hermez` over the chain of `indexer/vectors/plonk-v0.3.json`:
+/// the digests of the vectors, the name `docs/API.md` gives the verifier, and in the API what
+/// the accepted TRANSFER and BURN left.
+#[test]
+fn follow_command_checks_real_proofs() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../indexer/vectors/plonk-v0.3.json");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let api = http_server(esplora(Chain::new(chain_of(&v["blocks"]))));
+    let args = ["--esplora", api.as_str(), "--activation", "1", "--deploy-burn", "0", "--maturity", "0"];
+    let running = start(&[&args[..], &["--verifier", "plonk-bn254-hermez"]].concat());
+    let s = wait_for(&running, "block 5", |s| s["height"] == 5);
+    let after = v["after"].as_array().unwrap();
+    assert_eq!(s["digest"], after[4]["digest"]);
+    assert_eq!((&s["verifier"], &s["nullifiers"], &s["leaves"]), (&json!("plonk-bn254-hermez"), &json!(4), &json!(8)));
+    for a in after {
+        let (status, block) = http_get(&format!("{}/block/{}", running.url, a["height"]));
+        assert_eq!(status, 200);
+        for key in ["root", "digest", "eventsH"] {
+            assert_eq!(block[key], a[key], "{key} of block {}", a["height"]);
+        }
+    }
+    let gene = http_get(&format!("{}/token/GENE", running.url)).1;
+    assert_eq!((&gene["burned"], &gene["pool"]), (&v["final"]["gene"]["burned"], &v["final"]["gene"]["pool"]));
+    // the tampered TRANSFER: refused, and the good one of the same block accepted
+    let refused = v["rejected"][0]["txid"].as_str().unwrap();
+    let tx = http_get(&format!("{}/tx/{refused}", running.url)).1;
+    assert_eq!((&tx["event"], tx["rejected"].is_string()), (&Value::Null, true));
+    let accepted = v["verifierCalls"][1]["txid"].as_str().unwrap();
+    let tx = http_get(&format!("{}/tx/{accepted}", running.url)).1;
+    assert_eq!(
+        (&tx["event"]["type"], &tx["rejected"], tx["notes"].as_array().unwrap().len()),
+        (&json!("TRANSFER"), &Value::Null, 3)
+    );
+}
+
 /// What the command refuses to start with, and how it ends when it must stop.
 #[test]
 fn follow_command_errors() {

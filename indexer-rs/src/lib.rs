@@ -21,4 +21,4 @@ pub use chain::{Block, Tx, TxIn, TxOut};
 pub use envelope::{DecodeError, Envelope, Ticker};
 pub use events::Event;
 pub use state::{BlockResult, Indexer, ListingStatus, Note, NoteKind, Profile, PublicKind};
-pub use verifier::{PublicInputs, RejectAll, SpendVerifier, TestVerifier};
+pub use verifier::{PlonkVerifier, PublicInputs, RejectAll, SpendVerifier, TestVerifier};

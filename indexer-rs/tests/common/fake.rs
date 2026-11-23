@@ -82,6 +82,11 @@ fn with_hashes(blocks: &[Value], prev: String, branch: u8, noisy: bool) -> Vec<S
     list
 }
 
+/// The blocks of another vectors file (`blocks` at its top), as a chain from block 1.
+pub fn chain_of(blocks: &Value) -> Vec<SourceBlock> {
+    with_hashes(blocks.as_array().unwrap(), block_hash(0, 0), 0, true)
+}
+
 /// Blocks 1 to 17 of the scenario.
 pub fn scenario(v: &Value, noisy: bool) -> Vec<SourceBlock> {
     with_hashes(v["scenario"]["blocks"].as_array().unwrap(), block_hash(0, 0), 0, noisy)
