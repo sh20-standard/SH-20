@@ -18,11 +18,12 @@ Node 20 or newer, no dependencies.
 
 ```sh
 (cd ../circuit && ./build-wasm.sh)   # optional: the spend verifier; the 4 tests that need it are skipped without it
-npm test                  # 59 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, API, real proofs
+npm test                  # 68 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, block file, API, real proofs
 npm run vectors           # regenerates vectors/v0.3.json (deterministic)
 node bin/replay.js <dir>  # replays a folder of `bitcoin-cli getblock <hash> 3` JSON files
 node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser U --rpcpass P --activation H   # live, own node
 node bin/follow.js --esplora https://mempool.space/signet/api --activation H             # live, Esplora
+node bin/follow.js … --data ~/sh20-js        # keeps the blocks read: a restart applies them again from disk
 ```
 
 The live follower serves a read-only JSON API for wallets: see [`docs/API.md`](../docs/API.md).
@@ -39,11 +40,12 @@ The live follower serves a read-only JSON API for wallets: see [`docs/API.md`](.
 | `src/notes.js` | the note leaf formula |
 | `src/indexer.js` | the state machine: tickers, mints, team unlocks, spends, listings, digest, rollback |
 | `src/events.js` | the byte encoding of accepted events, hashed into the digest (`SPEC-WIRE.md` §6) |
-| `src/adapters/bitcoind.js` | Bitcoin Core `getblock 2` JSON → indexer blocks |
+| `src/adapters/bitcoind.js` | Bitcoin Core `getblock 3` JSON → indexer blocks |
 | `src/adapters/plonk.js` | the pinned spend verifier (WebAssembly build of `circuit/`), keyed by the pinned digest |
 | `src/follower.js` | live chain follower (Bitcoin Core RPC or Esplora) with reorg handling |
+| `src/blockfile.js` | the blocks a follower read, kept on disk so that a restart applies them again (`follow.js --data`) |
 | `src/api.js` | read-only HTTP API (`docs/API.md`) |
-| `bin/` | `follow.js`, `replay.js`, `vectors.js` |
+| `bin/` | `follow.js`, `replay.js`, `vectors.js`; `fuzz.js` and `api-diff.js` against `indexer-rs`, on chains from `chain-gen.js` served by `esplora-fake.js` |
 
 ## What is still missing
 

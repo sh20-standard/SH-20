@@ -24,13 +24,14 @@ contributors: the standard needs none (hard requirement 2), and a default of our
    1000`, `N = 6`, `W = 100`, `K_min = 1`, genesis `SH20` (`indexer/src/constants.js`). The vault
    names any indexer whose `/status` reports another profile, and acts on nothing it says.
 2. **A signet node.** Bitcoin Core with `-signet -server`, not pruned: both indexers read every block
-   from `A` on with `getblock <hash> 3` (each input's spent output and its height), and the reference
-   replays from `A` on every restart. No `-txindex`. The RPC port is 38332.
+   from `A` on with `getblock <hash> 3` (each input's spent output and its height). With `--data`, a
+   restart applies the blocks kept on disk again instead of asking the node for them. No `-txindex`.
+   The RPC port is 38332.
 3. **Two indexers on that node**, the reference and the clean room, with the same `A`:
 
    ```sh
    node indexer/bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser U --rpcpass P \
-     --activation A --verifier vault/prover/sh20_circuit.wasm            # API on 127.0.0.1:8020
+     --activation A --verifier vault/prover/sh20_circuit.wasm --data ~/sh20-js   # API on 127.0.0.1:8020
    indexer-rs/target/release/sh20-indexer-rs follow --rpc http://127.0.0.1:38332 \
      --rpccookie ~/.bitcoin/signet/.cookie --activation A --deploy-burn 1000 \
      --verifier <its PLONK verifier> --data ~/sh20-rs                    # API on 127.0.0.1:8621

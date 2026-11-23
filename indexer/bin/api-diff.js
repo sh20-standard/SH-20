@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { chain, blockJson } from './chain-gen.js';
+import { fakeEsplora } from './esplora-fake.js';
 
 const arg = (name, dflt) => {
   const i = process.argv.indexOf(name);
@@ -32,60 +33,15 @@ const [REORG_DEPTH, REORG_GROW] = (arg('--reorg', '') || '0,0').split(',').map(N
 const here = dirname(fileURLToPath(import.meta.url));
 const PROFILE = ['--activation', '1', '--deploy-burn', '1000', '--window', '12', '--min-depth', '1', '--maturity', '3', '--verifier', 'test', '--network', 'regtest'];
 
-// The chain, as an Esplora API would serve it; `blocks` is what it serves now (the fork, after a reorg).
+// The chain, as an Esplora API would serve it (bin/esplora-fake.js); `blocks` is what it serves now (the fork, after a reorg).
 let blocks = chain(SEED, { blocks: BLOCKS, missingHeights: false }).map((b) => JSON.parse(blockJson(b)));
-const toSats = (btc) => Math.round(Number(btc) * 1e8);
-const byHash = new Map();
-const spentHeight = new Map(); // the output a DEPLOY spends → the height that confirmed it
+const esplora = await fakeEsplora(blocks);
 const serve = (list) => {
   blocks = list;
-  for (const b of list) {
-    byHash.set(b.hash, b);
-    for (const t of b.tx) if (t.vin[0]?.prevout?.height !== undefined) spentHeight.set(t.vin[0].txid, t.vin[0].prevout.height);
-  }
+  esplora.serve(list);
 };
-serve(blocks);
-const esploraTx = (t) => ({
-  txid: t.txid,
-  vin: t.vin.map((i) => (i.coinbase ? { is_coinbase: true, witness: i.txinwitness ?? [] } : { txid: i.txid, vout: i.vout, is_coinbase: false, witness: i.txinwitness ?? [] })),
-  vout: t.vout.map((o) => ({ scriptpubkey: o.scriptPubKey.hex, value: toSats(o.value) })),
-});
-const esplora = createServer((req, res) => {
-  const send = (code, body, text = false) => {
-    res.writeHead(code, { 'content-type': text ? 'text/plain' : 'application/json' });
-    res.end(text ? String(body) : JSON.stringify(body));
-  };
-  const u = req.url;
-  let m;
-  if (u === '/blocks/tip/height') return send(200, blocks.at(-1).height, true);
-  if (u === '/blocks/tip/hash') return send(200, blocks.at(-1).hash, true);
-  if ((m = u.match(/^\/block-height\/(\d+)$/))) {
-    const b = blocks.find((x) => x.height === Number(m[1]));
-    return b ? send(200, b.hash, true) : send(404, 'Block not found', true);
-  }
-  if ((m = u.match(/^\/block\/([0-9a-f]{64})$/))) {
-    const b = byHash.get(m[1]);
-    if (!b) return send(404, 'Block not found', true);
-    const prev = blocks.find((x) => x.height === b.height - 1) ?? [...byHash.values()].find((x) => x.height === b.height - 1);
-    return send(200, { id: b.hash, height: b.height, tx_count: b.tx.length, previousblockhash: prev ? prev.hash : '00'.repeat(32) });
-  }
-  if ((m = u.match(/^\/block\/([0-9a-f]{64})\/txs(?:\/(\d+))?$/))) {
-    const b = byHash.get(m[1]);
-    if (!b) return send(404, 'Block not found', true);
-    const start = Number(m[2] ?? 0);
-    return send(200, b.tx.slice(start, start + 25).map(esploraTx));
-  }
-  if ((m = u.match(/^\/block\/([0-9a-f]{64})\/txids$/))) return byHash.has(m[1]) ? send(200, byHash.get(m[1]).tx.map((t) => t.txid)) : send(404, 'Block not found', true);
-  if ((m = u.match(/^\/tx\/([0-9a-f]{64})\/status$/))) {
-    const h = spentHeight.get(m[1]);
-    return h === undefined ? send(404, 'Transaction not found', true) : send(200, { confirmed: true, block_height: h, block_hash: blocks.find((x) => x.height === h)?.hash });
-  }
-  unknown.add(u.replace(/[0-9a-f]{64}/g, ':hash').replace(/\d+$/, ':n'));
-  send(404, 'not served here', true);
-});
-const unknown = new Set();
-await new Promise((r) => esplora.listen(0, '127.0.0.1', r));
-const ESPLORA = `http://127.0.0.1:${esplora.address().port}`;
+const unknown = esplora.unknown;
+const ESPLORA = esplora.url;
 
 const portOf = async () => {
   const s = createServer();

@@ -2,7 +2,7 @@
 // Follows a chain live and serves the read-only API.
 //
 //   node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS --activation H [--port 8020]
-//   node bin/follow.js --esplora https://mempool.space/signet/api --activation H [--port 8020]
+//   node bin/follow.js --esplora https://mempool.space/signet/api --activation H [--port 8020] [--data <folder>]
 //
 // Your own node (--rpc) is the trust-minimised choice: an Esplora server is
 // trusted to name the best chain, even though every envelope is re-checked here.
@@ -12,6 +12,7 @@
 import { Indexer } from '../src/indexer.js';
 import { BitcoindSource, EsploraSource, Follower } from '../src/follower.js';
 import { listen } from '../src/api.js';
+import { BlockFile } from '../src/blockfile.js';
 import { plonkVerifier } from '../src/adapters/plonk.js';
 
 const args = process.argv.slice(2);
@@ -22,7 +23,7 @@ const opt = (name, def) => {
 
 const activationHeight = Number(opt('activation', NaN));
 if (!Number.isInteger(activationHeight)) {
-  console.error('usage: node bin/follow.js (--rpc URL [--rpcuser U --rpcpass P] | --esplora URL) --activation HEIGHT [--deploy-burn D] [--window W] [--min-depth K] [--maturity N] [--port 8020] [--host 127.0.0.1] [--network signet] [--confirmations 0] [--interval 15] [--verifier sh20_circuit.wasm [--vk spend.vk] | --verifier test]');
+  console.error('usage: node bin/follow.js (--rpc URL [--rpcuser U --rpcpass P] | --esplora URL) --activation HEIGHT [--deploy-burn D] [--window W] [--min-depth K] [--maturity N] [--port 8020] [--host 127.0.0.1] [--network signet] [--confirmations 0] [--interval 15] [--data <folder>] [--verifier sh20_circuit.wasm [--vk spend.vk] | --verifier test]');
   process.exit(1);
 }
 
@@ -47,9 +48,13 @@ for (const [flag, key, big] of [['deploy-burn', 'deployBurn', true], ['window', 
   if (opt(flag) !== undefined) profile[key] = big ? BigInt(opt(flag)) : Number(opt(flag));
 }
 const indexer = new Indexer({ profile, verifier });
+// --data <folder>: the blocks read are kept in <folder>/blocks.jsonl (src/blockfile.js), and a restart applies them
+// again from there instead of asking the source for every block since the activation height.
+const held = opt('data') ? BlockFile.open(opt('data'), activationHeight) : null;
 const follower = new Follower({
   indexer,
   source,
+  file: held?.file ?? null,
   startHeight: activationHeight,
   confirmations: Number(opt('confirmations', 0)),
   log: (r) => {
@@ -58,6 +63,13 @@ const follower = new Follower({
     else if (r.events.length || r.rejected.length) console.log(`${r.height} accepted=${r.events.length} rejected=${r.rejected.length} digest=${r.digest}`);
   },
 });
+
+if (held) {
+  const t0 = Date.now();
+  follower.restore(held.blocks);
+  const last = held.blocks.at(-1)?.height;
+  console.log(`block file: ${held.blocks.length} blocks${last === undefined ? '' : `, up to block ${last}`}, applied in ${Date.now() - t0} ms${held.dropped ? ` (${held.dropped} lines left out)` : ''}`);
+}
 
 const server = await listen(indexer, { port: Number(opt('port', 8020)), host: opt('host', '127.0.0.1'), network });
 console.log(`SH-20 API on http://${server.address().address}:${server.address().port} (verifier: ${indexer.verifier.name})`);
