@@ -41,6 +41,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `indexer-rs/` | a second indexer in Rust, written from the spec alone (clean room): `cargo test --release` replays the vectors |
 | `docs/SPEC-GAPS.md` | what the clean-room indexer found open in the spec, and where each point is now settled |
 | `docs/AUDIT.md` | the dossier for an external zero-knowledge auditor: scope, the relation constraint by constraint, threat model, open doubts; §8 is a first reading of the vault's cryptography, with its findings |
+| `docs/AUDIT-PROMPT.md` | the audit we run ourselves, one part per session (`/audit circuit`, `verifier`, `sealing`, `vault`, `indexer`): the attacker, the method, the severities, the report it leaves in `docs/audit/` |
 | `docs/PLAN.md` | the plan from here to mainnet: who does what, in which order, and the decisions of 2026-11-23 |
 | `docs/SIGNET.md` | the public signet, step by step: what must be true first, the launch, what testers do, when the run stops |
 | `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` and `indexer-rs follow` (for the vault, the explorer and relayers): one JSON shape for both, checked by `indexer/bin/api-diff.js` |
