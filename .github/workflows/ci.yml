@@ -131,6 +131,8 @@ jobs:
         run: npm test
       - working-directory: vault
         run: npm test
+      - working-directory: relayer
+        run: npm test
 
   vault-regtest:
     name: vault, the whole flow on Bitcoin Core regtest (headless Chrome)

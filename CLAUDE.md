@@ -51,6 +51,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `circuit/js/` | what a wallet computes, in dependency-free JavaScript: the witness of a spend, and the addresses, sealing and scanning of `SPEC-NOTES.md`. Two entry points with the same names and the same vectors: `index.js` (synchronous, `node:crypto`) and `webcrypto.js` (asynchronous, WebCrypto, for browsers). Checked against vectors written by the Rust models (`cd circuit/js && npm test`, 48 tests) |
 | `circuit/circom/` | the same relation in circom, used only to cross-check the Rust circuit |
 | `circuit/web/` | the phone test page, and the host side of the threaded WebAssembly prover |
+| `relayer/` | a minimal relayer: takes proved TRANSFERs over HTTP, checks them as an indexer would (its fee output, the proof), and publishes them in batches from its own coins ([`docs/RELAYER.md`](docs/RELAYER.md)) |
 
 ```sh
 cd indexer
@@ -143,9 +144,9 @@ through `vault/src/secp256k1.js` (no `BigInt`, no division, no branch or index o
 what an interpreter still showed removed), the vault locks itself, and a restored vault checks its counters before it
 reserves an index. 8.10 lists what is so by design.
 
-Not done: an external audit (our own, `docs/AUDIT-PROMPT.md`, has run its part `circuit`: no finding above a Note, `docs/audit/2026-11-23-circuit.md`); a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the
-circuit session; its reference code and vectors are in `circuit/js`); a real wallet signing in the vault; a relayer; the
-profile constants (activation height, `D`); a public signet run.
+Not done: an external audit (our own, `docs/AUDIT-PROMPT.md`, has run its part `circuit`: no finding above a Note, `docs/audit/2026-11-23-circuit.md`, and the code audit of `indexer`, `docs/audit/2026-11-23-code-indexer.md`); a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the
+circuit session; its reference code and vectors are in `circuit/js`); a real wallet signing in the vault; the vault sending through a relayer (the relayer itself exists, #65); the
+profile constant `A`; a public signet run.
 
 ## Next task: the clean redeploy, then the public signet
 
@@ -166,7 +167,9 @@ claims exist. What is left before people can try it, in order (review of 2026-11
      and is paid in tokens by the third output. Specified (2026-11-20, `SPEC-WIRE.md` §3): two or more TRANSFERs in the
      witness of one transaction are a batch, applied in tapscript order, each accepted or refused alone; no count limit
      beyond Bitcoin's own; every other type stays one per transaction. Vectors: block 17 and four carrier cases.
-     Still to build: the relayer itself (it collects proved TRANSFERs, pays the fees, and is paid by their third output).
+     The relayer exists (#65, `relayer/`, `docs/RELAYER.md`: it checks each TRANSFER as an indexer would, its own fee
+     output and the proof last, and publishes batches from its own coins). Still to build: the vault sending through
+     one, limits per sender, a queue that survives a restart.
    - **Differential fuzzing: running (2026-11-21).** `indexer/bin/fuzz.js` makes random chains (valid, damaged and cut
      envelopes of every type, both carriers, batches, listings bought, closed and claimed, refused proofs, reused
      nullifiers, anchors at and past the window, DEPLOY commits old enough or not, missing heights), applies them in the
@@ -191,7 +194,9 @@ Rules that stay in force for the circuit and the vault:
    or leave the domain at 2^17. On hold (maintainer, 2026-11-19).
 4. **Keep it honest.** Any change to the gates changes the keys: rebuild `circuit/artifacts/spend.pk` and `spend.vk`
    (`sh20-circuit pk`, `keygen`), update `VK_DIGEST` and `PK_SHA256` in `circuit/src/lib.rs`, `indexer/src/constants.js`,
-   `docs/SPEC-WIRE.md` §4, and regenerate `indexer/test/fixtures/plonk-scenario.json` (`sh20-circuit scenario`).
+   `indexer-rs/src/verifier.rs` (its own pin of the digest), `docs/SPEC-WIRE.md` §4, regenerate
+   `indexer/test/fixtures/plonk-scenario.json` (`sh20-circuit scenario`) and then `npm run vectors` in `indexer/`
+   (`plonk-v0.3.json`), and rebuild `vault/prover/*.wasm` (`vault/tools/prover.sh`).
    Then run `circuit/bench/cross-check.sh`: hard requirement 4 says the verifier stays cross-checked against snarkjs.
    `spend.pk` is 8.4 MB of binary: commit a new one only when the gates change (maintainer, 2026-11-18), never for a rebuild
    that gives the same bytes.
