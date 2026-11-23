@@ -1,0 +1,16 @@
+{
+  "name": "sh20-relayer",
+  "version": "0.3.0",
+  "private": true,
+  "description": "SH-20 relayer: publishes other people's proved TRANSFERs in batches, paid in tokens by their third output (docs/RELAYER.md, spec draft v0.3)",
+  "type": "module",
+  "license": "MIT",
+  "bin": { "sh20-relayer": "bin/relayer.js" },
+  "scripts": {
+    "test": "node --test 'test/*.test.js'",
+    "start": "node bin/relayer.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
