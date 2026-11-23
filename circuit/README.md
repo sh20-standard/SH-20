@@ -470,6 +470,39 @@ cmp build/spend.pk artifacts/spend.pk
 Library entry points: `load_key`, `keygen`, `prove`, `verify` in `src/lib.rs`; the C ABI of the
 WebAssembly modules is in `src/ffi.rs`. `artifacts/spend.vk` is the verifying key alone, for verifiers.
 
+### The verifier as a library
+
+For a program that checks spends and proves none (a second indexer, a relayer), written against this
+section rather than against `src/`. It stays true while `VK_DIGEST` does.
+
+```toml
+sh20-circuit = { path = "../circuit", default-features = false }   # no thread pool, no wallet code
+```
+
+| Item | What it is |
+| --- | --- |
+| `sh20_circuit::VerifyingKey::from_bytes(&[u8]) -> Result<VerifyingKey, String>` | the key of `artifacts/spend.vk` (712 bytes) |
+| `VerifyingKey::digest(&self) -> [u8; 32]` | `SHA256("sh20/v0/vk" ‖ key)`; refuse a key whose hex is not `sh20_circuit::VK_DIGEST`, the digest of `docs/SPEC-WIRE.md` §4 |
+| `sh20_circuit::Fr`, `sh20_circuit::N_PUBLIC` (9), `sh20_circuit::PROOF_BYTES` (480) | the scalar field of BN254, the number of public inputs, the size of a proof |
+| `sh20_circuit::plonk::fr_from_bytes(&[u8]) -> Option<Fr>` | 32 bytes, little-endian as on the wire; `None` for anything else or for a value `≥ r` |
+| `sh20_circuit::verify(&VerifyingKey, &[Fr; N_PUBLIC], &[u8]) -> bool` | the check: `false` for a proof of another length, a point that is not on the curve, a scalar `≥ r`, or a pairing that fails; it never panics on its input |
+
+The nine public inputs, in this order (`docs/SPEC-WIRE.md` §4): `R[anchorHeight], nf0, nf1, leaf0,
+leaf1, leaf2, bodyHash, vPub, tPub`, with `vPub` and `tPub` the field elements of their integers
+(`Fr::from(v)`). The proof is the last 480 bytes of the spend section, as the envelope carries it.
+
+```rust
+use sh20_circuit::{plonk::fr_from_bytes, verify, VerifyingKey, VK_DIGEST};
+let vk = VerifyingKey::from_bytes(&std::fs::read("circuit/artifacts/spend.vk")?)?;
+assert_eq!(hex::encode(vk.digest()), VK_DIGEST);
+let ok = verify(&vk, &publics, &proof); // publics: [Fr; 9] in the order above
+```
+
+`indexer/vectors/plonk-v0.3.json` is a chain whose spends carry real proofs: every call to the verifier
+with its nine inputs and the answer it must get (a TRANSFER and a BURN accepted, a TRANSFER with one bit
+of its proof flipped refused), and the root, `eventsH` and digest after each block. Checked on
+2026-11-24 with this interface from a separate crate (`default-features = false`): the three answers match.
+
 Reproducing the measurements (`bench/`, needs `npm ci` there, and circom 2.2.3 for the circom rows):
 
 ```sh
