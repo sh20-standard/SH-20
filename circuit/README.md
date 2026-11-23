@@ -10,9 +10,9 @@ behind the choice of proof system.
 | Proof system | PLONK over BN254 with KZG commitments (ePrint 2019/953, three wires, no custom gates) |
 | Setup | none of ours: the public Hermez `powersOfTau28_hez_final_18.ptau`, 131,078 powers of it |
 | Proof | **480 bytes** (9 G1 points, 6 scalars) |
-| Circuit | 86,248 gates, domain 2^17, 9 public inputs |
-| Verifying key | 712 bytes, digest `f48b551776188b652259ac42ff3d064ea61e9dd0d4b48addb825085ab1237745` |
-| Proving key | `artifacts/spend.pk`, 8.4 MB (the verifying key and the SRS powers), SHA-256 `3625deb6e9512e57b530f60abab90e57e2f9648c741e187cb0b9f0fb51d4688b`; loads in 0.2 s, 1.4 s in WebAssembly |
+| Circuit | 86,250 gates, domain 2^17, 9 public inputs |
+| Verifying key | 712 bytes, digest `64eaf3fe8e0d01ca2a687c3ea8ece8149926f056f0a812d4ff0c6707513b31f4` |
+| Proving key | `artifacts/spend.pk`, 8.4 MB (the verifying key and the SRS powers), SHA-256 `709d46f83983f7b8956233b32694df7ca65a3ed9172a071666c334b9d1f8a3b7`; loads in 0.2 s, 1.4 s in WebAssembly |
 | Proving time, native | 1.8 s on a laptop (10 threads); 9.6 s on one thread |
 | Proving time, WebAssembly | 25 s on one thread; 13 s on 2 threads, 7.2 s on 4, 5.6 s on 6, 4.4 s on 10 |
 | Proving time, on a phone | iPhone 18 Pro Max, Safari: 5.7 s on 6 threads, 7.4 s on 4, 15.5 s on one |
@@ -195,7 +195,9 @@ in about 2 ms. Times are on one thread, the circuits proved in turn and the best
 laptop was busy that day, and one thread is what stayed steady (today's circuit: 9.9 s, 9.6 s in
 the table at the top). The last two rows are from a second run, compared with today's circuit in
 that run (9.7 s). Memory is the peak of the whole process, key generation included, on one thread;
-on ten threads for the last two rows.
+on ten threads for the last two rows. The gate counts of this section are those of that day: since
+2026-11-23 a spend has two more (`nf0 ≠ nf1`; six with three inputs), which moves no row to
+another domain.
 
 | Circuit | Gates | Domain | Powers of tau | Proving, one thread | Against today | Peak memory |
 | --- | ---: | --- | ---: | ---: | ---: | ---: |
@@ -394,8 +396,8 @@ and nonce, `ct_j`. The wire carries `pk_eph` once, `leaf0 ‖ ct0`, `leaf1 ‖ c
 **What stays.**
 
 - **The circuit and its keys.** The circuit sees `bodyHash` and the three leaves, never the layout
-  of the body. The 86,248 gates, the nine public inputs, `artifacts/spend.pk` and `spend.vk`, the
-  digest `f48b5517…b1237745`, the 480-byte proof, the snarkjs cross-check and every proving time
+  of the body. The 86,250 gates, the nine public inputs, `artifacts/spend.pk` and `spend.vk`, the
+  digest `64eaf3fe…513b31f4`, the 480-byte proof, the snarkjs cross-check and every proving time
   above stay as they are. No key is rebuilt.
 - **What the signature covers.** `bodyHash = SHA256("sh20/v0/body" ‖ body) mod r`, over the
   envelope up to the proof: `pk_eph`, both `ct` and the three leaves, as today.
@@ -417,7 +419,7 @@ ticker and amount as what the relayer receives.
 
 ## How the result is checked
 
-- `cargo test --release`: 38 tests (three of them, `tests/audit.rs`, from the audit of 2026-11-23). Model against the indexer's constants; 34 adversarial witnesses
+- `cargo test --release`: 38 tests (three of them, `tests/audit.rs`, from the audit of 2026-11-23). Model against the indexer's constants; 35 adversarial witnesses
   (inflation, wrong ticker, double-spend attempts, bad ranges, wrong or swapped signatures, aliased
   keys, points off the curve) rejected by the gates; proofs end to end with every public input and
   proof byte bound; the shipped proving key reproduced by key generation.
@@ -434,7 +436,7 @@ ticker and amount as what the relayer receives.
 - **A second statement of the relation.** `circom/spend.circom` states the relation with circomlib's
   Poseidon, EdDSA and BabyJubJub. A witness built by the Rust model satisfies it and yields the
   same nine public signals (`bench/circom-check.mjs`), and the two agree on every honest and every
-  adversarial witness of `src/fixture.rs`: 5 accepted by both, 34 refused by both
+  adversarial witness of `src/fixture.rs`: 5 accepted by both, 35 refused by both
   (`bench/circom-cases.mjs`).
 - **The reference indexer.** `indexer/test/plonk.test.js` replays a chain with a real TRANSFER and a
   real BURN and verifies them through the WebAssembly module.
@@ -501,7 +503,7 @@ let ok = verify(&vk, &publics, &proof); // publics: [Fr; 9] in the order above
 `indexer/vectors/plonk-v0.3.json` is a chain whose spends carry real proofs: every call to the verifier
 with its nine inputs and the answer it must get (a TRANSFER and a BURN accepted, a TRANSFER with one bit
 of its proof flipped refused), and the root, `eventsH` and digest after each block. Checked on
-2026-11-24 with this interface from a separate crate (`default-features = false`): the three answers match.
+2026-11-23 with this interface from a separate crate (`default-features = false`): the three answers match.
 
 Reproducing the measurements (`bench/`, needs `npm ci` there, and circom 2.2.3 for the circom rows):
 
@@ -547,7 +549,7 @@ RAYON_NUM_THREADS=1 cargo run --release --example batch_cost -- pot18.ptau 1x2:3
    memory with it.
 2. **Memory**: 224 MB at peak. The wire evaluations and the key file are still held longer than
    needed; there is room below 200 MB.
-3. **Fewer gates**: the circuit is 86,248 gates and a 2^16 domain, which would halve the proving
+3. **Fewer gates**: the circuit is 86,250 gates and a 2^16 domain, which would halve the proving
    time, holds 65,536. Sparse Poseidon rounds, windowed fixed-base multiplication and cheaper
    comparisons should reach about 66,600 (an estimate, not yet built). That is still above the limit,
    and the three outputs stay (the third pays a relayer in tokens), so the last thousand gates have to

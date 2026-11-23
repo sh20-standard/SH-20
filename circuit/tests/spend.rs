@@ -60,13 +60,13 @@ fn the_gates_do_not_depend_on_the_witness() {
     println!("spend circuit: {} gates, {} variables", a.n_gates(), a.n_vars());
 }
 
-/// The witnesses of `fixture::adversarial`: 28 on a transfer (7 inflation, 2 ticker, 8 membership and
+/// The witnesses of `fixture::adversarial`: 29 on a transfer (7 inflation, 2 ticker, 9 membership and
 /// nullifiers, 7 authorisation, 2 outputs, 2 points off the curve), 3 on a burn, 3 on a dummy input.
 /// bench/cross-check.sh gives the same list to circom's statement of the relation.
 #[test]
 fn adversarial_witnesses_are_rejected() {
     let cases = fixture::adversarial(&mut OsRng);
-    assert_eq!(cases.len(), 34);
+    assert_eq!(cases.len(), 35);
     let mut names: Vec<&str> = cases.iter().map(|(name, _)| *name).collect();
     names.sort_unstable();
     names.dedup();
@@ -84,4 +84,5 @@ fn adversarial_witnesses_are_rejected() {
     assert_eq!(tag("signature R off the curve").as_deref(), Some("in0 signature"));
     assert_eq!(tag("output worth more than the inputs").as_deref(), Some("out0 leaf"));
     assert_eq!(tag("value taken out without a public amount").as_deref(), Some("public value"));
+    assert_eq!(tag("one note as both inputs, counted twice").as_deref(), Some("nullifiers distinct"));
 }

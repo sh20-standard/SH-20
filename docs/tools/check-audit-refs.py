@@ -77,6 +77,8 @@ CITES = [
     ("H(npk'_k, rho'_k))` | l. {}–{} |", (SPEND, 'cs.at(format!("out{k} value"))'), (SPEND, "cs.assert_eq(leaf, out_leaf_k);")),
     ("`vPub·(t − tPub) = 0` | l. {}–{} |", (SPEND, 'cs.at("public value")'), (SPEND, "cs.assert_mul_zero(v_pub, dt);")),
     ("+ vPub` in `F` | l. {}–{} |", (SPEND, 'cs.at("conservation")'), (SPEND, "cs.assert_eq(sum_in, sum_out);")),
+    ("`nf_0 ≠ nf_1` | l. {}–{} |", (SPEND, 'cs.at("nullifiers distinct")'), (SPEND, "cs.assert_nonzero(nf_diff);")),
+    ("`Cs::assert_nonzero` (`cs.rs` l. {})", (CS, "pub fn assert_nonzero(")),
     ("(`Cs::gate`, `cs.rs` l. {})", (CS, "pub fn gate(")),
     # §2 The rules an indexer adds
     ("`codec.js` `fr()` l. {};", (CODEC, "fr() {")),
@@ -202,6 +204,7 @@ TESTS = [
     (T + "spend.rs", "the_gates_do_not_depend_on_the_witness"),
     (T + "spend.rs", "leaf_tag_matches_the_indexer"),
     (T + "spend.rs", "ticker_ids_match_the_indexer"),
+    (T + "audit.rs", "audit_one_note_as_both_inputs_is_refused"),
     (T + "constraints.rs", "every_variable_alone_is_pinned"),
     (T + "constraints.rs", "every_choice_of_the_prover_reaches_a_check"),
     (T + "constraints.rs", "the_probe_sees_a_missing_check"),

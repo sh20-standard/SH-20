@@ -91,7 +91,7 @@ for each output `k ∈ {0, 1, 2}`: `v'_k, npk'_k, rho'_k`.
 ### The relation, and where each line is enforced
 
 All in `synthesize`, [`circuit/src/spend.rs`](../circuit/src/spend.rs) l. 36. "Gates" is the output
-of `sh20-circuit info`; the circuit has 86,248, on a domain of 2^17 rows.
+of `sh20-circuit info`; the circuit has 86,250, on a domain of 2^17 rows.
 
 | # | Constraint | `spend.rs` | Gadget (`gadgets.rs`) | Gates |
 | --- | --- | --- | --- | ---: |
@@ -103,16 +103,21 @@ of `sh20-circuit info`; the circuit has 86,248, on a domain of 2^17 rows.
 | C5 | `0 ≤ index_i < 2^32` and `(Root(leaf_i, index_i, path_i) − root)·(1 − [v_i = 0]) = 0` | l. 69–77 | `to_bits`, `merkle_root` (l. 285), `Cs::is_zero` (`cs.rs` l. 192) | 20,131 each |
 | C6 | `nf_i = H_3(nk_i, leaf_i, index_i)` | l. 79–81 | `poseidon_vars`, `Cs::assert_eq` | 1,017 each |
 | C7 | EdDSA under `Ak_i` over `m`: `Ak_i ∈ E` and `R8_i ∈ E`; `0 ≤ S_i < l`; `h_i = H_5(R8_i.x, R8_i.y, Ak_i.x, Ak_i.y, m)` taken as its integer below `r`; `(4·Ak_i).x ≠ 0`; `S_i·B8 = R8_i + h_i·(8·Ak_i)` | l. 83–86 | `eddsa_verify` (l. 261): `assert_on_curve` (l. 173), `scalar_bits`, `fixed_mul`, `canonical_bits_254` (l. 145), `ec_add` (l. 184), `var_mul` (l. 243) | 11,712 each |
-| C8 | `0 ≤ v'_k < 2^64` and `leaf'_k = H(H(head, v'_k), H(npk'_k, rho'_k))` | l. 93–100 | `range`, `note_leaf` | 1,997 each |
-| C9 | `0 ≤ vPub < 2^64` and `vPub·(t − tPub) = 0` | l. 104–108 | `range`, `Cs::assert_mul_zero` | 129 |
-| C10 | `v_0 + v_1 = v'_0 + v'_1 + v'_2 + vPub` in `F` | l. 110–113 | `Cs::add`, `Cs::lc`, `Cs::assert_eq` | 5 |
+| C8 | `0 ≤ v'_k < 2^64` and `leaf'_k = H(H(head, v'_k), H(npk'_k, rho'_k))` | l. 98–105 | `range`, `note_leaf` | 1,997 each |
+| C9 | `0 ≤ vPub < 2^64` and `vPub·(t − tPub) = 0` | l. 109–113 | `range`, `Cs::assert_mul_zero` | 129 |
+| C10 | `v_0 + v_1 = v'_0 + v'_1 + v'_2 + vPub` in `F` | l. 115–118 | `Cs::add`, `Cs::lc`, `Cs::assert_eq` | 5 |
+| C11 | `nf_0 ≠ nf_1` | l. 92–94 | `Cs::sub`, `Cs::assert_nonzero` (`cs.rs` l. 187) | 2 |
 
 C10 is an equation in `F`; with C2, C8 and C9 both sides are below `2^66`, so it is an equation
 between integers. An input with `v_i = 0` is a dummy: C5 lets it skip membership, and it still has a
-nullifier (C6) and a signature (C7). `t` and `tPub` are not range-checked: `t` only reaches the
-tree through leaves that already carry it, and `tPub` is chosen by the indexer. `Ak_i` is on the
-curve but not necessarily in its prime subgroup: C7 refuses the eight points of order dividing 8 and
-nothing else (§6.4).
+nullifier (C6) and a signature (C7). C11 is the one constraint between the two inputs: without it
+one note could be both, counted twice in C10 with `nf_0 = nf_1`, and only R3 refused that (our audit
+of 2026-11-23, [`audit/2026-11-23-circuit.md`](audit/2026-11-23-circuit.md), circuit-1; the gates
+were added the same day, after the two inputs and before the outputs). It holds for dummies as for
+any input: a wallet's two dummies are two notes (`SPEC-NOTES.md` §3). `t` and `tPub` are not
+range-checked: `t` only reaches the tree through leaves that already carry it, and `tPub` is chosen
+by the indexer. `Ak_i` is on the curve but not necessarily in its prime subgroup: C7 refuses the
+eight points of order dividing 8 and nothing else (§6.4).
 
 ### What each gadget is claimed to enforce
 
@@ -129,6 +134,7 @@ no custom gates and no lookups.
 | `fixed_mul(bits, B)` | `Σ bit_i·2^i·B` for a constant `B`, by adding constants `2^i·B` | boolean bits; the accumulator stays on the curve |
 | `var_mul(bits, P)` | `(Σ bit_i·2^i)·P` by double-and-add from the top bit, with the same unified addition for doubling | boolean bits |
 | `Cs::is_zero(x)` | `out = 1 − x·inv`, `x·out = 0`, hence `out = [x = 0]`; `inv` is free when `x = 0` | — |
+| `Cs::assert_nonzero(x)` | `x·inv = 1`, hence `x ≠ 0`; `inv` is `1/x` and nothing else | — |
 | `poseidon` | the permutation of `circuit/src/poseidon.rs`, three gates per S-box, constants folded into the linear layer | the constants (test `poseidon_matches_circomlibjs_for_every_width`) |
 | `merkle_root` | `(left, right) = bit ? (sibling, cur) : (cur, sibling)` at each level | boolean index bits |
 | public inputs | row `i < 9` has `qL = 1` and the verifier adds `−x_i·L_i` | `Cs::public_input` asserts they come before every other gate |
@@ -144,7 +150,7 @@ A proof alone does not make a spend valid. [`indexer/src/indexer.js`](../indexer
 | --- | --- | --- |
 | R1 | field elements on the wire are below `r`, envelopes re-serialise to the same bytes, no trailing byte | `codec.js` `fr()` l. 57; `sh20_verify` refuses a public input that is not canonical (`ffi.rs` l. 133) |
 | R2 | `H − 100 ≤ anchorHeight ≤ H − 1`; `root` is the root after that block, or the empty root before activation | `_checkSpend` l. 270–274 |
-| R3 | nullifiers non-zero, different from each other, never seen; then recorded | l. 275–278, `_commitSpend` l. 291 |
+| R3 | nullifiers non-zero, different from each other (C11 holds it in the proof as well; the indexer checks it first), never seen; then recorded | l. 275–278, `_commitSpend` l. 291 |
 | R4 | output leaves non-zero; room for three leaves | l. 279–281 |
 | R5 | `m` is computed by the indexer from the bytes before the proof | l. 282 |
 | R6 | `(vPub, tPub)` come from the envelope type: TRANSFER `(0, 0)`, BURN `(vPub, t(ticker))`, LIST `(amount, t(ticker))`, DEPLOY with `D > 0` `(D, t("SH20"))` | l. 229, 395, 410, 353 |
@@ -162,7 +168,7 @@ PLONK as in ePrint 2019/953 §8 (three wires, selectors `qM qL qR qO qC`, coset 
   pinned by BLAKE2b-512 (`srs.rs` l. 21). Keys are a deterministic function of the gates and these
   powers (`keys.rs` `setup`, l. 160): no circuit ceremony.
 - **Verifying key.** 712 bytes; `SHA256("sh20/v0/vk" ‖ key)` =
-  `f48b551776188b652259ac42ff3d064ea61e9dd0d4b48addb825085ab1237745`, pinned in `circuit/src/lib.rs`,
+  `64eaf3fe8e0d01ca2a687c3ea8ece8149926f056f0a812d4ff0c6707513b31f4`, pinned in `circuit/src/lib.rs`,
   `indexer/src/constants.js` and `SPEC-WIRE.md` §4.
 - **Proof decoding** (`plonk/mod.rs` l. 115). Exactly 480 bytes: nine G1 points as `x` little-endian
   with bit 255 for the larger `y`, `x` below the base-field modulus and on the curve, no encoding for
@@ -199,7 +205,7 @@ consensus, the victim's device.
 | Goal | Statement | Rests on |
 | --- | --- | --- |
 | G1, no inflation | for every ticker, the sum of unspent note amounts never exceeds what was issued in public and not taken out in public | C1 (one `t`), C2, C8, C9, C10; C4 and C5 (the inputs exist in the tree); R2, R6; soundness of the proof; and the public rules for MINT, TAKE, CLAIM |
-| G2, no double spend | a note is consumed at most once | C3 and C4 (one `nk` per note: `NK` is inside `npk`, and `nk < l`); C5 and C6 (the position is the one in the tree); R1, R3 |
+| G2, no double spend | a note is consumed at most once | C3 and C4 (one `nk` per note: `NK` is inside `npk`, and `nk < l`); C5 and C6 (the position is the one in the tree); C11 (not twice in one spend); R1, R3 |
 | G3, no theft | only the holder of a note's two secrets moves it, and only to the outputs it chose | C4 (`npk` binds `Ak` and `NK`), C6 (needs `nk`), C7 (a signature over `m`), R5 (`m` covers every byte before the proof), and that every value an envelope gives away is named in those bytes: the output leaves, `payScript`, and for a LIST the key of its lock (R10). Until PR #20 the lock was not: §6.1 |
 | G4, no link | from what is published, nobody learns which notes a spend consumed, who receives the outputs, their amounts, or the ticker of a TRANSFER | zero-knowledge of the proof; `nf` is a PRF under `nk`, which the sender of the note does not have; sealing (`SPEC-NOTES.md` §3, §6) |
 
@@ -222,18 +228,18 @@ would tell the indexer which notes are its own. None of this is cryptographicall
 
 | Defence | Test | What the test does not show |
 | --- | --- | --- |
-| the relation rejects bad witnesses | `T/spend.rs` `adversarial_witnesses_are_rejected`: the 34 witnesses of `fixture::adversarial` — 28 on a transfer (7 inflation, 2 ticker, 8 membership and nullifiers, 7 authorisation, 2 outputs, 2 points off the curve), 3 on a BURN, 3 on a dummy input | each case alters witness *inputs* and re-runs the honest synthesis; the next two rows are the tests that touch single variables |
+| the relation rejects bad witnesses | `T/spend.rs` `adversarial_witnesses_are_rejected`: the 35 witnesses of `fixture::adversarial` — 29 on a transfer (7 inflation, 2 ticker, 9 membership and nullifiers, 7 authorisation, 2 outputs, 2 points off the curve), 3 on a BURN, 3 on a dummy input. `T/audit.rs` `audit_one_note_as_both_inputs_is_refused`: one note as both inputs breaks one gate, C11's, and the same dummy twice is refused there too | each case alters witness *inputs* and re-runs the honest synthesis; the next two rows are the tests that touch single variables |
 | honest spends satisfy it | `valid_spends_satisfy_the_circuit` (transfer, dummies, burn, largest amounts) | — |
 | the gates are the same for every witness | `the_gates_do_not_depend_on_the_witness` | — |
-| no variable is free, alone | `T/constraints.rs` `every_variable_alone_is_pinned`: each of the 86,301 variables of five honest assignments is moved to up to five other values, everything else left as it is (about 418,000 changes per assignment); a gate must break. Free: only the inverse witness of `v = 0` for a dummy input (0, 1, 0, 2 and 1 variables on the five assignments) | one variable at a time |
-| every choice of the prover reaches a check | `T/constraints.rs` `every_choice_of_the_prover_reaches_a_check`: each of the 7,608 variables no gate defines (witness, bits, inverses, quotients) is changed, every variable a later gate defines is recomputed, and a gate must still fail (about 31,000 changes per assignment). Free: for a dummy input, its 32 Merkle siblings and that inverse witness (0, 33, 0, 66, 33), which is what "a dummy skips membership" means. `the_probe_sees_a_missing_check` shows the test catches a forgotten comparison | one choice at a time; advice the prover could adapt together (bits with the value they decompose) is only covered where the next row does it by hand |
+| no variable is free, alone | `T/constraints.rs` `every_variable_alone_is_pinned`: each of the 86,303 variables of five honest assignments is moved to up to five other values, everything else left as it is (about 418,000 changes per assignment); a gate must break. Free: only the inverse witness of `v = 0` for a dummy input (0, 1, 0, 2 and 1 variables on the five assignments) | one variable at a time |
+| every choice of the prover reaches a check | `T/constraints.rs` `every_choice_of_the_prover_reaches_a_check`: each of the 7,609 variables no gate defines (witness, bits, inverses, quotients) is changed, every variable a later gate defines is recomputed, and a gate must still fail (about 31,000 changes per assignment). Free: for a dummy input, its 32 Merkle siblings and that inverse witness (0, 33, 0, 66, 33), which is what "a dummy skips membership" means. `the_probe_sees_a_missing_check` shows the test catches a forgotten comparison | one choice at a time; advice the prover could adapt together (bits with the value they decompose) is only covered where the next row does it by hand |
 | the gadgets at their limits | `T/gadgets.rs`: `on_curve_accepts_the_curve_and_nothing_else`; `ranges_end_where_they_say` (`range`, `scalar_bits` at `l − 1` and `l`, `canonical_bits_254` at `r − 1` and around `r_hi`); `the_second_decomposition_of_a_field_element_is_refused` (a prover writes the bits of `x + r` and adjusts every other choice of the gadget: only the last gate of the comparison refuses it) | five gadget instances, not all; the hand-made assignment is for one gadget |
 | a bad witness has no proof; every public input and proof byte is bound | `rejected_witnesses_have_no_proof`, `transfer_burn_and_dummies_prove_and_verify`, `T/plonk.rs` `prove_and_verify` | sampled bytes, real proofs only |
 | the model agrees with the indexer's constants | `leaf_tag_matches_the_indexer`, `ticker_ids_match_the_indexer` | — |
 | Poseidon is circomlib's | `T/vectors.rs` `poseidon_matches_circomlibjs_for_every_width`; `I/primitives.test.js` | one vector per width, from circomlibjs |
 | small-order keys do not sign | `T/gadgets.rs` `keys_of_small_order_do_not_sign`: the circuit's `eddsa_verify` refuses the eight points of order dividing 8 and points off the curve; `T/vectors.rs` `small_order_keys_do_not_verify` on the model | a key `A + T` with `T` of small order is accepted and is simply another key: `a_key_outside_the_prime_subgroup_still_signs_for_its_owner` states it |
 | a second verifier agrees | `bench/cross-check.sh`: snarkjs verifies a spend proof made here and rejects a tampered input; this verifier accepts a snarkjs proof and rejects tampered ones (also `a_proof_made_by_snarkjs_is_accepted`) | the snarkjs proof is of a toy circuit (`circom/cubic.circom`), not of the spend relation |
-| a second statement of the relation agrees | `bench/cross-check.sh` step 3: circomlib's `spend.circom` accepts a witness built by the Rust model, with the same nine public signals. Step 4 (`bench/circom-cases.mjs`): the five honest witnesses of `fixture::valid` are accepted by both, and the 34 adversarial ones refused by both, at matching places (`--verbose` prints circom's failed assertion next to the part of the relation the Rust circuit names) | altered inputs through an honest computation on both sides; not an equivalence of the two constraint systems |
+| a second statement of the relation agrees | `bench/cross-check.sh` step 3: circomlib's `spend.circom` accepts a witness built by the Rust model, with the same nine public signals. Step 4 (`bench/circom-cases.mjs`): the five honest witnesses of `fixture::valid` are accepted by both, and the 35 adversarial ones refused by both, at matching places (`--verbose` prints circom's failed assertion next to the part of the relation the Rust circuit names) | altered inputs through an honest computation on both sides; not an equivalence of the two constraint systems |
 | the keys are the pinned ones and reproducible | `shipped_key_is_reproducible` (key generation gives `artifacts/spend.pk` byte for byte, the SRS is a consistent sequence of powers), `a_key_file_that_is_not_the_pinned_one_is_refused`; `I/plonk.test.js` `a verifying key other than the pinned one is refused` | that the powers are Hermez' is shown by rebuilding from the pinned file (§5), not by a test |
 | real proofs through the indexer | `I/plonk.test.js`: `real TRANSFER and BURN proofs are accepted, and only once`, `a proof does not carry over to an altered envelope`, `a TRANSFER proof cannot be replayed as a BURN` | no real LIST or DEPLOY-burn proof |
 | the rules around a proof | `I/indexer.test.js` `TRANSFER: anchor window, nullifiers, proof`; `the default verifier accepts no proof at all`; `I/codec.test.js` `strict parsing rejects malformed envelopes`, `carrier rules: one envelope per transaction` | with a test verifier that accepts a tag |
@@ -260,10 +266,10 @@ curl -L -o pot18.ptau https://circom.info/powersOfTau28_hez_final_18.ptau
 cargo build --release --bin sh20-circuit
 B=target/release/sh20-circuit
 $B srs pot18.ptau build/pot18-2p17.srs      # 131078 powers, sha256 e97b92f3…3852a238
-$B keygen build/pot18-2p17.srs build/spend.vk   # vk digest f48b5517…b1237745
-$B pk build/pot18-2p17.srs build/spend.pk       # sha256 3625deb6…51d4688b
+$B keygen build/pot18-2p17.srs build/spend.vk   # vk digest 64eaf3fe…513b31f4
+$B pk build/pot18-2p17.srs build/spend.pk       # sha256 709d46f8…d1f8a3b7
 cmp build/spend.vk artifacts/spend.vk && cmp build/spend.pk artifacts/spend.pk
-$B info                                      # 86248 gates, and the gates of each part of the relation
+$B info                                      # 86250 gates, and the gates of each part of the relation
 ```
 
 The three digests are constants of `circuit/src/lib.rs` (`SRS_SHA256`, `VK_DIGEST`, `PK_SHA256`).
@@ -273,7 +279,7 @@ The three digests are constants of `circuit/src/lib.rs` (`SRS_SHA256`, `VK_DIGES
 ```sh
 cd circuit && cargo test --release           # 38 tests
 ./build-wasm.sh                              # needs the targets wasm32-unknown-unknown and wasm32-wasip1-threads
-cd ../indexer && npm test                    # 61 tests; those of plonk.test.js need the module just built
+cd ../indexer && npm test                    # 72 tests; those of plonk.test.js need the module just built
 cd ../circuit/js && npm test                 # 48 tests
 npm run test:browser                         # the WebCrypto primitives in headless Chrome
 ```
@@ -298,7 +304,7 @@ PTAU=$PWD/pot18.ptau bench/cross-check.sh    # needs circom on the PATH
 
 Expected: `snarkjs verify = true, tampered = false`; `accepted; a tampered public input is
 rejected`; `circom accepts the Rust witness; public signals identical`; `5 honest witnesses
-accepted by both, 34 adversarial witnesses refused by both`.
+accepted by both, 35 adversarial witnesses refused by both`.
 
 **A static analyser on the circom statement.** circomspect 0.9.0 (`cargo install circomspect`):
 
@@ -406,9 +412,10 @@ Where a missing or wrong gate would be most costly, for someone reading the gate
 
 ### 6.3 The second implementation agrees on more than before, still not on everything
 
-`spend.circom` now gets the same 39 witnesses as the Rust circuit: the five honest ones are
-accepted by both, and the 34 adversarial ones are refused by both, at matching places
-(`bench/cross-check.sh`, step 4). The on-curve checks are in both (`BabyCheck` on `Ak` and `R8`).
+`spend.circom` now gets the same 40 witnesses as the Rust circuit: the five honest ones are
+accepted by both, and the 35 adversarial ones are refused by both, at matching places
+(`bench/cross-check.sh`, step 4). The on-curve checks are in both (`BabyCheck` on `Ak` and `R8`),
+and so is `nf_0 ≠ nf_1` (`NonZero` in `templates.circom`).
 
 That is agreement on altered inputs run through an honest computation of the rest, on each side.
 It is not an equivalence of the two constraint systems, and the two are built differently:
@@ -515,7 +522,8 @@ width.
 
 The verifying-key digest moves with any change to the gates, and is not frozen. The fix of 6.1
 added 32 bytes to a LIST (PR #20); the on-curve checks of 6.4 changed the key, from
-`da847145…a302492d` to `f48b5517…b1237745`. `SPEC-WIRE.md` §7 lists what else is open.
+`da847145…a302492d` to `f48b5517…b1237745`; C11 (2026-11-23) changed it again, to
+`64eaf3fe…513b31f4`. `SPEC-WIRE.md` §7 lists what else is open.
 
 ## 8. Vault
 

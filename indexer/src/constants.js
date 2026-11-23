@@ -28,7 +28,7 @@ export const OUT_BYTES = 32 + 32 + 28; // leaf | pk_eph (X25519) | ct (v u64, ti
 /** A spend proof: PLONK over BN254, 9 G1 points and 6 scalars (docs/SPEC-WIRE.md §4). */
 export const PROOF_BYTES = 480;
 /** SHA-256("sh20/v0/vk" ‖ verifying key) of the spend circuit on the Hermez setup (draft v0.1). */
-export const SPEND_VK_DIGEST = 'f48b551776188b652259ac42ff3d064ea61e9dd0d4b48addb825085ab1237745';
+export const SPEND_VK_DIGEST = '64eaf3fe8e0d01ca2a687c3ea8ece8149926f056f0a812d4ff0c6707513b31f4';
 export const PAYSCRIPT_MAX = 34;
 export const MIN_LOCK_SATS = 330n;
 /** At most this many mints in one MINT envelope (one note of k × lim, paid k × price). */

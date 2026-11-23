@@ -107,8 +107,8 @@ Done in `circuit/` (2026-11-18):
 - The proof system was chosen by measurement: **PLONK-KZG on the Hermez `pot18` setup, 480-byte proofs**.
   Halo2 (2,080 bytes as Tacit lays it out, 800 at the very least), fflonk (608 bytes, and it needs more powers than `pot18` holds)
   and snarkjs' own PLONK prover (73–80 s) were measured and set aside. Table and method: `circuit/README.md`.
-- The relation of `docs/SPEC-WIRE.md` §4 as 86,248 PLONK gates (domain 2^17), with its reference model, a prover, a verifier,
-  deterministic key generation and the pinned digest `f48b5517…b1237745`.
+- The relation of `docs/SPEC-WIRE.md` §4 as 86,250 PLONK gates (domain 2^17), with its reference model, a prover, a verifier,
+  deterministic key generation and the pinned digest `64eaf3fe…513b31f4`.
 - Measured on an M1 Pro laptop: proving 1.8 s (10 threads), 9.6 s (1 thread); as WebAssembly 25 s on one thread,
   7.2 s on 4 threads, 4.4 s on 10; verification 1.5 ms; TRANSFER reveal transaction 340 vB.
 - The proving key is shipped (`circuit/artifacts/spend.pk`, 8.4 MB, pinned by SHA-256): it loads in 1.4 s in WebAssembly
@@ -117,12 +117,15 @@ Done in `circuit/` (2026-11-18):
   Workers on a shared memory. Prover memory: 224 MB.
 - A test page for phones (`circuit/web/`): threaded where the page is cross-origin isolated (by headers, or by its service
   worker), one thread otherwise. Checked in headless Chrome for each case.
-- Checks: 34 adversarial witnesses, refused by the Rust gates and by circomlib's statement of the relation alike; every
+- Checks: 35 adversarial witnesses, refused by the Rust gates and by circomlib's statement of the relation alike; every
   variable moved one at a time, alone and with what follows recomputed (free: only a dummy input's Merkle siblings and one
   inverse witness); the gadgets at their limits; and snarkjs both ways: its verifier accepts our proofs, our verifier
   accepts its proofs (`bench/cross-check.sh`).
-- Hardened before the signet (2026-11-19): `Ak` and `R8` are checked to be on the curve (16 gates, new keys, digest
-  `f48b5517…b1237745`). `docs/AUDIT.md` §6 says what that closes and what stays open.
+- Hardened before the signet (2026-11-19): `Ak` and `R8` are checked to be on the curve (16 gates, new keys).
+  `docs/AUDIT.md` §6 says what that closes and what stays open.
+- `nf0 ≠ nf1` is in the relation (maintainer, 2026-11-23; 2 gates, new keys, digest `64eaf3fe…513b31f4`): one note
+  cannot be both inputs of a spend, which until then only the indexers' rule refused
+  (`docs/audit/2026-11-23-circuit.md`, circuit-1). The indexers still check it, before the proof.
 - A wallet reference in dependency-free JavaScript (`circuit/js/`): note keys and `npk`, the nullifier, the body hash, the
   EdDSA-Poseidon signature. Its vectors are written by the Rust model (`circuit/src/vectors.rs`) and a test fails if they drift.
 
@@ -196,7 +199,8 @@ Rules that stay in force for the circuit and the vault:
    (`sh20-circuit pk`, `keygen`), update `VK_DIGEST` and `PK_SHA256` in `circuit/src/lib.rs`, `indexer/src/constants.js`,
    `indexer-rs/src/verifier.rs` (its own pin of the digest), `docs/SPEC-WIRE.md` §4, regenerate
    `indexer/test/fixtures/plonk-scenario.json` (`sh20-circuit scenario`) and then `npm run vectors` in `indexer/`
-   (`plonk-v0.3.json`), and rebuild `vault/prover/*.wasm` (`vault/tools/prover.sh`).
+   (`plonk-v0.3.json`), and rebuild `vault/prover/*.wasm` (`vault/tools/prover.sh`). `circom/spend.circom` and
+   `examples/batch_cost.rs` state the same relation: change them with it.
    Then run `circuit/bench/cross-check.sh`: hard requirement 4 says the verifier stays cross-checked against snarkjs.
    `spend.pk` is 8.4 MB of binary: commit a new one only when the gates change (maintainer, 2026-11-18), never for a rebuild
    that gives the same bytes.

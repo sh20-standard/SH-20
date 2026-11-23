@@ -9,7 +9,7 @@ pragma circom 2.1.6;
 //
 //   npk  = Poseidon(Ak.x, Ak.y, NK.x, NK.y)        Ak = per-note spend key, NK = nk·Base8
 //   leaf = H(H(H(TAG_LEAF, t), v), H(npk, rho))    H = Poseidon(2)
-//   nf   = Poseidon(nk, leaf, index)               0 ≤ nk < l, index < 2^32
+//   nf   = Poseidon(nk, leaf, index)               0 ≤ nk < l, index < 2^32, nf[0] ≠ nf[1]
 //   tree = Poseidon(2), depth 32
 //
 // Public inputs, in the order the verifier passes them:
@@ -119,6 +119,10 @@ template Sh20Spend(depth, nIn, nOut) {
 
         sumIn += inV[i];
     }
+
+    // one note is not both inputs: its value would count twice (the relation has two inputs)
+    component nfDiffer = NonZero();
+    nfDiffer.in <== nf[0] - nf[1];
 
     component outRange[nOut];
     component outH[nOut];
