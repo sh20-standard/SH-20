@@ -13,8 +13,8 @@ Done: the protocol (wire v0.3), two indexers that agree on every vector, on rand
 route through reorgs, a hardened circuit that proves in 6 seconds on a recent iPhone, a vault that mints,
 proves, sells and claims on regtest with every transaction checked by Bitcoin Core.
 
-What stops a launch today: the CI has no runner minutes left on the private repository; no real
-wallet has signed yet; the project has no account of its own. Since this plan was written, `indexer-rs`
+What stops a launch today: no real wallet has signed yet. The project has its account and its public copy since
+2026-11-24 (§2), where the CI runs again. Since this plan was written, `indexer-rs`
 verifies the real proofs (#66), a relayer exists (#65), and the relation refuses one note as both
 inputs, with new keys (#73): the keys of the signet are those of #73.
 
@@ -25,31 +25,47 @@ inputs, with new keys (#73): the keys of the signet are those of #73.
 | indexer-rs | The PLONK verifier, from the `circuit/` crate only, under the name `plonk-bn254-hermez` | done (#66): `indexer-rs` replays `indexer/vectors/plonk-v0.3.json` as the reference does |
 | coordination | `follow.js --data <folder>`: a restart goes on from the blocks it kept instead of replaying from `A` (the "Scale" item of `CLAUDE.md`) | done (2026-11-23): `test/blockfile.test.js`, `test/follow-data.test.js` |
 | coordination | The mirror (decision 3): its static profile in `docs/API.md`, then the step of `pages.yml` that builds it | done (2026-11-24): `docs/API.md`, "The static mirror"; `indexer/bin/mirror-check.js` builds both mirrors from a random chain and the explorer reads them in headless Chrome (CI) |
-| vault | Reading a mirror: no query string (`indexer/src/mirror-read.js` answers each route from the files), the mirror of the page's own origin first in the signet defaults | the regtest flow passes against a mirror |
+| vault | Reading a mirror: no query string (`indexer/src/mirror-read.js` answers each route from the files), the mirror of the page's own origin first in the signet defaults | done (#80): the regtest flow passes against the mirrors only; the signet defaults are the site's two mirrors, without a local indexer |
 | circuit | Nothing blocks on the circuit. The v0.4 transfer body (one ephemeral key, a bare leaf for the relayer: 92 bytes less) on paper, not in code | done (2026-11-23): `circuit/README.md`, "The transfer body of wire v0.4, on paper" |
-| everyone | No runner minutes until the move: run the CI's suites locally before pushing, and say which ones ran | — |
+| everyone | The working repository has no runner minutes: run the CI's suites locally before pushing, and say which ones ran; the CI runs on the public copy at each publication (§2) | — |
 
-## 2. The move: one sitting
+## 2. The public copy (done 2026-11-24)
 
-1. **maintainer**: an email address made for the project, opened over a VPN, linked to nothing of yours.
-   With it and over the same VPN, the GitHub account `sh20-standard` (done 2026-11-24: `SH-20` and `sh20` were
-   taken, and GitHub no longer takes Outlook or Hotmail addresses for new accounts): free plan, no payment method,
-   two-factor by an authenticator app. Then an empty public repository named `SH-20` (no README, no licence: the
-   history brings them).
-2. **maintainer**: connect Claude to that account, with access to `sh20-standard/SH-20`. Anthropic then knows that
-   both accounts are one person; GitHub and everyone else do not.
-3. **coordination**: no pull request left open on the old repository; `rewrite.sh` on its last `main`
-   (ready and checked on 2026-11-23: 213 commits, one author, every date in UTC, no session link, the
-   new address in `vault/RELEASES.md` and `vault/release.js`); pushed from the session, so that no
-   machine of ours touches the new repository; the CI green there.
-4. **every tab**: clones `sh20-standard/SH-20` and works there only.
-5. **maintainer**: archives the old repository, and deletes it once the new one is checked.
+The working repository stays private, and work goes on there as before: the tabs, their pull requests, the merges.
+The public repository, **github.com/sh20-standard/SH-20**, is a copy of its `main`, rewritten so that nothing in it
+points to a person: author and committer `SH-20 contributors <contributors@sh20.invalid>`, every date in UTC, no
+Claude session link, the working repository's address replaced by the public one. The maintainer's Claude account
+stays connected to his own GitHub (he works on other projects there; Claude connects one GitHub account at a time),
+so no session can push to the public copy: the maintainer pushes it.
+
+What was done:
+1. **maintainer**: an email address made for the project, opened over a VPN, linked to nothing of his. With it and
+   over the same VPN, the GitHub account `sh20-standard` (`SH-20` and `sh20` were taken, and GitHub no longer takes
+   Outlook or Hotmail addresses for new accounts): free plan, no payment method, two-factor by an authenticator app;
+   an empty public repository `SH-20`.
+2. **coordination**: the rewrite of `main` (273 commits), checked, as a bundle (one file).
+3. **maintainer**, over the VPN: the bundle cloned into a folder of his, and pushed with a token of `sh20-standard`
+   (a classic token with `public_repo` and `workflow`; the fine-grained token needed both permissions set by hand).
+   The public `main` is the rewrite's head, byte for byte; its CI started on the push.
+
+Each later publication, when there is something worth publishing (a batch of merges, a release, the launch):
+1. **coordination**: `.private/publish.sh <url of the working repository>`. It rewrites `main` with the same rules,
+   leaves `.private/` out, runs the same checks, and stops unless the public `main` is an ancestor of the new one:
+   the rewrite is deterministic (the same commits give the same hashes), so a publication only adds commits.
+   It writes `sh20-main.bundle`, sent to the maintainer.
+2. **maintainer**, over the VPN, in the folder of the first publication:
+   `git pull --ff-only <bundle> main`, then `git push https://sh20-standard@github.com/sh20-standard/SH-20.git main`.
+
+The CI runs on the public copy (a public repository's runners cost nothing), so each publication is tested there;
+the working repository has no runner minutes, and its pull requests are tested locally, as now. Pages and the
+mirror run on the public copy too (`pages.yml`). Issues and pull requests from outside arrive on the public copy:
+a change taken from one is applied in the working repository and comes back with the next publication.
 
 ## 3. Soft launch: one or two days, not announced
 
-1. **coordination**: `A` = the signet tip + 6 (about an hour), committed. **maintainer**: Settings → Pages →
+1. **coordination**: `A` = the signet tip + 6 (about an hour), committed and published (§2). **maintainer**: Settings → Pages →
    GitHub Actions; the variable `PAGES` = `on`.
-2. The mirror running, or, if it is not ready, a computer running both indexers (`docs/SIGNET.md`, step 3).
+2. The mirror running (`pages.yml`, every 10 minutes); a computer running both indexers as well, to compare (`docs/SIGNET.md`, step 3).
 3. **maintainer**, on a computer, with each of Xverse, UniSat and Leather set to signet: a MINT of SH20, a
    transfer received and one sent, a sale and a purchase. Each failure goes back with the vault's message.
    No DEPLOY (decision 7): the regtest flow already proves and signs one, in private, and a DEPLOY is the
@@ -80,7 +96,8 @@ from a workflow (`vault/RELEASES.md`, step 7).
 
 ## Decisions taken here (2026-11-23)
 
-1. **The account is `sh20-standard` (`SH-20` was taken), public from the first push.** A public repository gets GitHub's runners and
+1. **The account is `sh20-standard` (`SH-20` was taken), public from the first push; the work stays in a private
+   repository, published to it (§2).** A public repository gets GitHub's runners and
    Pages for nothing, so no payment method ties the account to a person; the signet is public anyway,
    and SH-20's answer to its competitors is code that anyone can run.
 2. **The batch target.** About 223 vB for each relayed transfer on signet (wire v0.3, unchanged); about

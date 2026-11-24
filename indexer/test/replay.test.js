@@ -118,3 +118,17 @@ test('follow.js takes the same command line as indexer-rs follow: A and D requir
   refused(follow([...esplora, '--activation', '1.5', '--deploy-burn', '1000']), /--activation: "1.5" is not a decimal integer/, 'A not whole');
   refused(follow([...esplora, '--activation', '1', '--deploy-burn', '1000', '--port', '70000']), /--port: 70000 is above 65535/, 'a port');
 });
+
+test('--help and -h print the usage with exit 0, and a verifier file that is not there ends with a message', () => {
+  for (const tool of ['replay.js', 'follow.js']) {
+    for (const flag of ['--help', '-h']) {
+      const r = spawnSync(process.execPath, [join(dirname(bin), tool), flag], { encoding: 'utf8' });
+      assert.equal(r.status, 0, `${tool} ${flag}`);
+      assert.match(r.stdout, /^usage: node bin\//, `${tool} ${flag}`);
+    }
+  }
+  const missing = join(tmpdir(), 'sh20-no-such-verifier.wasm');
+  refused(run([folder(blocks30), ...profile('--verifier', missing)]), /error: --verifier: no file .*sh20-no-such-verifier\.wasm/, 'replay.js, no verifier file');
+  const follow = spawnSync(process.execPath, [join(dirname(bin), 'follow.js'), '--esplora', 'http://127.0.0.1:1', '--activation', '1', '--deploy-burn', '1000', '--verifier', missing], { encoding: 'utf8' });
+  refused(follow, /error: --verifier: no file .*sh20-no-such-verifier\.wasm/, 'follow.js, no verifier file');
+});

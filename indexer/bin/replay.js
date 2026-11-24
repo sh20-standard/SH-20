@@ -64,9 +64,14 @@ if (blocks.at(-1).height < activationHeight) stop(`no block at or after the acti
 // --verifier test: the rule of the vectors (one proof, "valid-proof" padded with zeros, is valid), for differential runs
 // against indexer-rs, which has the same flag. Never for a real chain.
 const TEST_PROOF = Buffer.concat([Buffer.from('valid-proof'), Buffer.alloc(480 - 11)]);
-const verifier = opt('verifier') === 'test'
-  ? { name: 'test', verifySpend: (a) => Buffer.from(a.proof).equals(TEST_PROOF) }
-  : opt('verifier') ? plonkVerifier({ wasm: opt('verifier'), vk: opt('vk') }) : undefined;
+let verifier;
+try {
+  verifier = opt('verifier') === 'test'
+    ? { name: 'test', verifySpend: (a) => Buffer.from(a.proof).equals(TEST_PROOF) }
+    : opt('verifier') ? plonkVerifier({ wasm: opt('verifier'), vk: opt('vk') }) : undefined;
+} catch (e) {
+  stop(`--verifier: ${e.code === 'ENOENT' ? `no file ${e.path}` : e.message}`);
+}
 const ix = new Indexer({ profile: profileFrom(opt, { activationHeight }), verifier });
 const p = ix.profile;
 console.error(`profile: activation ${activationHeight}, D = ${p.deployBurn}, W = ${p.anchorWindow}, K_min = ${p.anchorMinDepth}, N = ${p.deployMaturity}`);

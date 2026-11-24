@@ -7,12 +7,12 @@ contributors: the standard needs none (hard requirement 2), and a default of our
 
 ## What must be true first
 
-| | Condition | State (2026-11-22) |
+| | Condition | State (2026-11-24) |
 | --- | --- | --- |
-| 1 | The clean redeploy: the repository `SH-20` on the project's own anonymous account `sh20-standard`, public, history rewritten (`docs/PLAN.md` §2) | the account exists (2026-11-24); waits on its empty repository and Claude's access to it |
-| 2 | The CI runs. On a public repository GitHub's runners cost nothing; on a private one a run costs about 27 runner minutes | the account's minutes ran out on 2026-11-22 (no job starts since 11:41 UTC) |
+| 1 | A public copy on the project's own anonymous account, history rewritten (`docs/PLAN.md` §2) | done (2026-11-24): `github.com/sh20-standard/SH-20`, published from the private working repository with `.private/publish.sh` |
+| 2 | The CI runs. On a public repository GitHub's runners cost nothing; on a private one a run costs about 27 runner minutes | on the public copy, at each publication; the working repository has none left, so its pull requests are tested locally |
 | 3 | `indexer-rs` verifies PLONK proofs. Without `--verifier plonk-bn254-hermez` it refuses every spend, and parts with the reference at the first TRANSFER | done (2026-11-23): the verifier of `circuit/` as a library; it replays `indexer/vectors/plonk-v0.3.json` |
-| 4 | An indexer that a phone can reach (below, "Phones") | the site's own mirror (`docs/PLAN.md`, decision 3): built by `pages.yml` and read by the explorer (2026-11-24); the vault to read it |
+| 4 | An indexer that a phone can reach (below, "Phones") | done (2026-11-24): the site's own mirror (`docs/PLAN.md`, decision 3), built by `pages.yml`; the explorer and the vault read it (#78, #80) |
 | 5 | The activation height `A` | fixed at launch (step 1) |
 
 ## Launch, in order
@@ -59,9 +59,11 @@ contributors: the standard needs none (hard requirement 2), and a default of our
 
 ## What a tester does
 
-- **On a computer.** Run an indexer of one's own: the vault's signet defaults already point at
-  `http://127.0.0.1:8020` (`vault/src/servers.js`): Chrome and Firefox let an https page read this
-  machine's own address over plain http (Safari is to be tried). Without
+- **On a computer.** The vault's signet defaults are the site's two mirrors, up to half an hour behind the
+  chain (`vault/src/servers.js`). For a fresher view, run an indexer of one's own and add
+  `http://127.0.0.1:8020` in the vault's Settings: Chrome and Firefox let an https page read this
+  machine's own address over plain http (Safari is to be tried). It is not a default, because an indexer that
+  is down would hold back what waits for every indexer (a restored vault's counters). Without
   a node: `node indexer/bin/follow.js --esplora https://mempool.space/signet/api --activation A
   --deploy-burn 1000 --verifier vault/prover/sh20_circuit.wasm` (the Esplora server is then trusted to name the best
   chain; every envelope is still checked here). The browser may ask before a public page reads this
@@ -82,8 +84,8 @@ https page cannot read a plain http address other than the device's own.
 
 Decided (`docs/PLAN.md`, decision 3) and built (2026-11-24): the site serves a mirror of both indexers
 itself, at `/api/js/` and `/api/rs/`, rebuilt every 10 minutes by `pages.yml` from the public code; it
-lags the chain by about 10 to 30 minutes (`docs/API.md`, "The static mirror"). The explorer reads it;
-until the vault does, phones measure the prover and the whole flow is tried on computers. Operators who run `follow.js` behind https can still offer it as a link
+lags the chain by about 10 to 30 minutes (`docs/API.md`, "The static mirror"). The explorer and the vault
+read it by default (#78, #80), so a phone needs nothing but the site. Operators who run `follow.js` behind https can still offer it as a link
 (`/vault/?indexer=https://…`): the vault asks before it uses servers from a link, and a default needs
 its operator's agreement and its host in `vault/test/signet.test.js` (`vault/RELEASES.md`, step 2).
 

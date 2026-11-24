@@ -55,7 +55,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 81 tests (4 check real proofs, with circuit/'s WebAssembly verifier or the copy in vault/prover/)
+npm test            # 82 tests (4 check real proofs, with circuit/'s WebAssembly verifier or the copy in vault/prover/)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 npm run fuzz        # random chains through both indexers (build indexer-rs first: cargo build --release)
 npm run bench       # timings of the hot paths: Poseidon, the tree, a replay, the codec, the API
@@ -154,17 +154,19 @@ Not done: an external audit (our own, `docs/AUDIT-PROMPT.md`, has run its part `
 circuit session; its reference code and vectors are in `circuit/js`); a real wallet signing in the vault; the vault sending through a relayer (the relayer itself exists, #65); the
 profile constant `A`; a public signet run.
 
-## Next task: the clean redeploy, then the public signet
+## Next task: the public signet
 
 The plan, with an owner and a test of done for each step: `docs/PLAN.md` (2026-11-23).
 
 The protocol, two indexers that agree on every vector, a hardened circuit and a vault that mints, proves, sells and
 claims exist. What is left before people can try it, in order (review of 2026-11-19):
 
-1. **Clean redeploy.** Move the repository to the project's own anonymous account (`sh20-standard`, created 2026-11-24; the repository stays `SH-20`, public: `docs/PLAN.md` §2), with the history rewritten: author and
-   committer `SH-20 contributors <contributors@sh20.invalid>` everywhere (the web merges of PRs carry a personal account's
-   email), and every date in UTC (a timezone is personal data).
-   Nothing public before this, and nothing pinned on IPFS from a personal machine (a pinning node announces its IP).
+1. **Public copy: done (2026-11-24).** The work stays in this private repository; `github.com/sh20-standard/SH-20` is a
+   copy of its `main`, rewritten so that nothing in it points to a person (one author and committer, `SH-20 contributors
+   <contributors@sh20.invalid>`, every date in UTC, no session link), pushed by the maintainer over a VPN. The CI and
+   Pages run there. To publish again: `.private/publish.sh` (`docs/PLAN.md` §2), which stops unless the push only adds
+   commits. `.private/` is left out of the copy: keep only the publishing tools in it. Nothing pinned on IPFS from a
+   personal machine (a pinning node announces its IP).
 2. **Public signet.** Fix the signet profile (`A`, `D`), run `indexer/bin/follow.js` and `indexer-rs`, publish the
    explorer and the vault release, and have a real wallet (Xverse, UniSat, Leather) sign a MINT, a transfer and a sale.
    Testers send the phone page's JSON: that is where mid-range and Android phones get measured.
@@ -291,7 +293,7 @@ private part that already proves and verifies, in open code.
 Still to fix before the signet: the activation height `A` (the tip + 6 at the soft launch, `docs/PLAN.md` §3).
 
 Decided (2026-11-23, `docs/PLAN.md`, the maintainer having left the choice to the plan): the account `sh20-standard` (`SH-20` was taken), public from the
-first push; the batch target is about 223 vB per relayed transfer on signet and about 200 vB in the next wire version, a
+first push, the work staying in a private repository published to it; the batch target is about 223 vB per relayed transfer on signet and about 200 vB in the next wire version, a
 transfer paying several people after the signet and the first audit, and 150 vB is dropped (it needs a relayer that sees its
 users' transfers); phones and the public explorer read a mirror the Pages site serves itself; no IPFS before mainnet; no
 Claude session links in commits; the contributors deploy no token on any network, SH20 being the project's only token
