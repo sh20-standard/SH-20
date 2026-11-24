@@ -79,3 +79,10 @@ test('vault-17: what only mainnet needs is keyed on IS_MAINNET, which a mainnet 
     assert.doesNotMatch(src(f), /CHAIN\.bitcoin === 'main'/, f);
   }
 });
+
+test('vault-14: a page that finds the other network\'s vault says so, and sends it to no words', () => {
+  const panel = src('ui/vault-panel.js');
+  assert.match(panel, /const other = Vault\.otherNetwork\(localStorage\);/);
+  assert.match(panel, /other \? h\('p', \{ class: 'warn', id: 'other-network' \}, `A \$\{other\} vault is stored on this device too;[^`]*Create it with new words, and do not restore the \$\{other\} words here/);
+  assert.doesNotMatch(src('keys.js'), /restore it from its 12 words/);
+});

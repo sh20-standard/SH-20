@@ -33,7 +33,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 208 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 209 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
@@ -237,7 +237,12 @@ vout n  change to the payer                                     only if above du
 - **The network follows the profile** (`src/profile.js` `CHAIN`): Bitcoin addresses (`btc.js`, `tb1…`
   on signet, `bc1…`, `1…`, `3…` on mainnet), SH-20 addresses (`tsh20…` or `sh20…`, SPEC-NOTES §2),
   what Xverse, UniSat and Leather are asked for, and the network a vault records: a vault or a backup
-  made on another network is not opened (its 12 words restore it).
+  made on another network is not opened. Each network has its own record (`sh20.vault.v0` for signet,
+  `sh20.vault.bitcoin.v0` for mainnet), so a page finds its own vault or none, and says when the other
+  network's is stored at its origin: that one stays, and this network's vault is made with new words
+  of its own. The page never sends a vault to its words on the other network: the same words give
+  the same keys on both, which would tie the two (docs/audit/2026-11-24-vault.md, vault-14;
+  docs/audit/2026-11-24-sealing.md, sealing-4).
 - **Default servers** (`src/servers.js`), for the profile the page follows: on signet, the two mirrors
   the site serves beside the page (`../api/js/` and `../api/rs/`, `docs/API.md`, "The static mirror")
   and mempool.space's signet Esplora; on mainnet, no indexer (Settings asks for one: your own

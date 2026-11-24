@@ -428,10 +428,20 @@ test('vault-14: a signet vault at the origin of a mainnet page is sent to its 12
     const { Vault: MainnetVault } = await built('keys.js');
     const origin = memStorage(); // one origin: a local copy served for signet, then for mainnet
     const signet = await Vault.fromWords(origin, WORDS, 'pass'); // the source tree's page: signet's network
+    // fixed: one record for each network (keys.js STORAGE_KEY): the mainnet page finds no vault of its own, and says
+    // that a signet one is stored here (ui/vault-panel.js), instead of sending it to the signet vault's words
+    assert.equal(MainnetVault.exists(origin), false);
+    assert.equal(MainnetVault.otherNetwork(origin), 'signet');
+    await assert.rejects(MainnetVault.open(origin, 'pass'), /no vault on this device/);
+    // its record, or its backup, read on the mainnet page: never sent to its words
+    const said = await MainnetVault.open(origin, 'pass', origin.getItem('sh20.vault.v0')).catch((e) => e.message);
+    assert.match(said, /made on signet, and this page follows mainnet: a vault holds the notes of one network\. Open it on a signet page; this network's vault is another one, made with new words of its own/);
+    assert.doesNotMatch(said, /restore it from its 12 words/);
+    // the mainnet vault is made beside it, and the signet one stays as it was
+    const own = await MainnetVault.create(origin, 'other pass');
     assert.equal(MainnetVault.exists(origin), true);
-    await assert.rejects(MainnetVault.open(origin, 'pass'), /made on signet, and this page follows mainnet: restore it from its 12 words instead/);
-    // what the message says to do is refused on that page: the other network's record is in the way, and the page removes none
-    await assert.rejects(MainnetVault.fromWords(origin, WORDS, 'pass', { restored: true }), /a vault already exists on this device/); // today
+    assert.equal((await Vault.open(origin, 'pass')).address, signet.address);
+    assert.notEqual((await own.opening(0)).npk, (await signet.opening(0)).npk, 'new words, other keys');
     // at an origin of its own the words do restore: the keys of the signet vault, now on mainnet (sealing-4)
     const mainnet = await MainnetVault.fromWords(memStorage(), WORDS, 'pass', { restored: true });
     assert.equal((await mainnet.opening(0)).npk, (await signet.opening(0)).npk);

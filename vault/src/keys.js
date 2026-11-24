@@ -34,7 +34,11 @@ export const RESTORE_SKIP = 10;
 export const LOCK_SKIP = 3;
 import { toHex, fromHex, toBase64, fromBase64, utf8, concat, u32le } from './bytes.js';
 
-export const STORAGE_KEY = 'sh20.vault.v0';
+// One record for each network (docs/audit/2026-11-24-vault.md, vault-14): a page finds its own network's vault or
+// none, never the other one's in its way. Signet (and the test chains) keep the key every vault has had so far.
+const keyFor = (bitcoin) => (bitcoin === 'signet' ? 'sh20.vault.v0' : `sh20.vault.${bitcoin}.v0`);
+export const STORAGE_KEY = keyFor(CHAIN.bitcoin);
+const NETWORK_NAMES = { signet: 'signet', bitcoin: 'mainnet' };
 const PBKDF2_ITER = 600000;
 // what a sync computes again each time from the local tree (ui/notes-panel.js checkOwned): never written
 const VOLATILE = ['pathAt', 'spent'];
@@ -137,6 +141,12 @@ export class Vault {
     return storage.getItem(STORAGE_KEY) !== null;
   }
 
+  /** The network of a vault stored at this origin for another network than the page's, or null (vault-14). */
+  static otherNetwork(storage) {
+    for (const [bitcoin, name] of Object.entries(NETWORK_NAMES)) if (bitcoin !== CHAIN.bitcoin && storage.getItem(keyFor(bitcoin)) !== null) return name;
+    return null;
+  }
+
   get encrypted() {
     return this.#key !== null;
   }
@@ -220,7 +230,12 @@ export class Vault {
     // its notes, listings and spends are those of one network: a vault (or a backup) of another is not
     // opened here. Its words are not bound to a network: restoring from them finds what it has on this one.
     const made = state.network ?? 'signet'; // a vault written before the network was recorded is a signet one
-    if (made !== CHAIN.bitcoin) throw new Error(`this vault was made on ${made === 'bitcoin' ? 'mainnet' : made}, and this page follows ${CHAIN.label}: restore it from its 12 words instead`);
+    // never "restore it from its words" (vault-14): the words give every network the same keys, and their notes,
+    // MINTs and listings would then be tied across the two chains (docs/audit/2026-11-24-sealing.md, sealing-4)
+    if (made !== CHAIN.bitcoin) {
+      const there = NETWORK_NAMES[made] ?? made;
+      throw new Error(`this vault was made on ${there}, and this page follows ${CHAIN.label}: a vault holds the notes of one network. Open it on a ${there} page; this network's vault is another one, made with new words of its own (the same words would give it the keys it has on ${there}, and tie the two)`);
+    }
     const v = new Vault(storage, state, fromHex(seed), key, salt ?? crypto.getRandomValues(new Uint8Array(16)), words, notes, written);
     v.missingNotes = missing;
     return v.#init();
