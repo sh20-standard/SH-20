@@ -675,7 +675,7 @@ tree's root (against the root rebuilt from the leaves) and on the digest at the 
 the count is shown next to the balance.
 
 Checked: `digestAgreement` (`consensus.js` l. 196), called at every sync (`ui/notes-panel.js`
-l. 135). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
+l. 157). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
 refuse. A balance is still shown when the indexers disagree, with the count marked as an error. What
 a disagreement stops is a mint (`crossCheck`), a TAKE (`listingCheck`) and, since #38, giving back
 the notes of a spend that looks refused (`refusalAgreed`, `consensus.js` l. 67). #38 also has the
@@ -696,7 +696,7 @@ outputs are still null); a note whose scan fails does not stop the others, and t
 from the first that failed until the vault has scanned it.
 
 Checked: `scanOutput` (`notekeys.js` l. 36) has no catch left; `matchNotes` (`match.js` l. 17)
-goes on past a note that throws, and `Sync.scanned(from)` (`sync.js` l. 156) makes the next sync
+goes on past a note that throws, and `Sync.scanned(from)` (`sync.js` l. 159) makes the next sync
 read again from the first of them. Tests "8.6 a scan that could not be made throws…" and "8.6 a
 note whose scan throws does not stop the others…". One case was left below the vault: `x25519` in
 `circuit/js/subtle.js` answered every `OperationError` or `DataError` of WebCrypto as a low-order

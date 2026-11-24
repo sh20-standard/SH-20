@@ -113,8 +113,20 @@ try {
   if (/no height|reports no|bad height|error/i.test(warnings)) throw new Error(`the sync failed: ${warnings}`);
   if (exceptions.length) throw new Error(`exceptions: ${exceptions.join(' | ')}`);
   step(`no error on screen${warnings.trim() ? ` (it shows: ${warnings.replace(/\s+/g, ' ').trim()})` : ''}`);
+
+  // a primary that says "no block" while another indexer has counted block A: the page does not believe it
+  const ahead = new Indexer({ profile: { ...DEFAULT_PROFILE, activationHeight: A }, verifier: { name: 'none', verifySpend: () => false } });
+  ahead.applyBlock({ height: A, hash: 'a'.repeat(64), txs: [] });
+  const server = await listen(ahead, { port: 0 });
+  await buildMirror({ api: `http://127.0.0.1:${server.address().port}`, out: join(dir, 'api', 'rs') });
+  server.close();
+  await send('Page.navigate', { url: PAGE });
+  await waitFor('#vault-body', /A vault exists/, 'the locked vault');
+  await evaluate(`(() => { document.querySelector('#vault-body input[type=password]').value = 'before A'; document.querySelector('#vault-body form').requestSubmit(); })()`);
+  await waitFor('#vault-body', /Unlocked/, 'the vault unlocked');
+  step(`/api/rs/ at block ${AT}, /api/js/ still before it: ${await waitFor('#sync-status', /cannot be right/, 'the refusal of a primary behind another indexer')}`);
   ws.close();
-  console.log(`\nOK: before block ${AT}, the signet release reads both mirrors, says where SH-20 starts and syncs without an error`);
+  console.log(`\nOK: before block ${AT}, the signet release reads both mirrors, says where SH-20 starts and syncs without an error; a primary that says it has no block while another indexer has one is not believed`);
 } catch (e) {
   failed = e;
 } finally {

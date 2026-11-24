@@ -87,8 +87,15 @@ export class Sync {
    * the height is null, and nothing is read or changed here.
    */
   async sync(api, { full = false, tries = 3 } = {}) {
-    if (full) this.reset();
     const status = await api.status();
+    if (status.height === null) {
+      // before block A (docs/API.md /status: no block counted yet): no leaf and no nullifier to read. Only
+      // for a sync that has never seen a block: an indexer that went back to none is not believed, and
+      // nothing is reset on its word (the caller also compares it with the chain and the other indexers)
+      if (this.height !== null) throw new Error(`the indexer says it has counted no block, after block ${this.height}: it is behind, restarted, or lying`);
+      return { height: null, digest: status.digest ?? null, root: null, notes: [], from: 0, leaves: 0, nullifiersKnown: false };
+    }
+    if (full) this.reset();
     // the tip must be the same after the reads as before (docs/API.md, "Reorgs" and "The static mirror":
     // a mirror rebuilt between two of its files, an indexer that took a block): else everything again
     const moved = async () => {
@@ -100,10 +107,6 @@ export class Sync {
       return this.sync(api, { full, tries: tries - 1 });
     };
     const H = status.height;
-    if (H === null) {
-      // before block A (docs/API.md /status: no block counted yet): no leaf and no nullifier to read
-      return { height: null, digest: status.digest ?? null, root: null, notes: [], from: 0, leaves: 0, nullifiersKnown: false };
-    }
     if (!Number.isInteger(H)) throw new Error('the indexer reports no height');
     if (this.height !== null && H < this.height - REORG_MARGIN) this.reset(); // indexer far behind us: start again
 

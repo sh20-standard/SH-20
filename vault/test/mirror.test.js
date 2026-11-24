@@ -179,3 +179,25 @@ test('before block A, the profile check: no genesis yet is not another profile, 
   assert.match(profileDiff({ ...on, height: null }).join(), /genesis not reported/, 'a /status without the field at all');
   assert.match(profileDiff({ ...on, height: PROFILE.activationHeight, genesis: null }).join(), /genesis not reported/, 'from block A on it must be there');
 });
+
+test('before block A, the sync believes "no block" only before it has seen one, and resets nothing on its word', async () => {
+  const at = (height) => ({ status: async () => ({ height, digest: 'd'.repeat(64), root: '0'.repeat(64), leaves: 0, activationHeight: 1 }), notes: async () => [], nullifiers: async () => [] });
+  const s = new Sync(memoryCache(), 'x');
+  assert.equal((await s.sync(at(null), { full: true })).height, null, 'never synced: before A');
+  s.height = 7; // as after a sync at block 7
+  s.leafHeights.push(3);
+  await assert.rejects(s.sync(at(null)), /says it has counted no block, after block 7/);
+  await assert.rejects(s.sync(at(null), { full: true }), /after block 7/, 'Rescan from zero: refused before anything is reset');
+  assert.equal(s.height, 7);
+  assert.deepEqual(s.leafHeights, [3], 'the local state is as it was');
+});
+
+test('before block A, the page: the primary\'s "no block" is checked against the chain\'s tip and the other indexers', () => {
+  const notes = readFileSync(new URL('../src/ui/notes-panel.js', import.meta.url), 'utf8');
+  const f = notes.slice(notes.indexOf('export async function beforeAProblem('));
+  assert.match(f, /esplora\.tipHeight\(\)/);
+  assert.match(f, /tip >= A/);
+  assert.match(f, /o\.value\.height !== null/);
+  assert.match(f, /o\.value\.digest !== mine\.value\.digest/);
+  assert.match(notes, /st\.sync = \{ height: null, problem: await beforeAProblem\(\) \};/);
+});

@@ -24,7 +24,9 @@ function spentText(n) {
 export function renderNotes() {
   const ss = st.sync;
   fill('sync-status', ss?.height === null
-    ? `SH-20 starts at block ${PROFILE.activationHeight.toLocaleString('en-US')}: the indexers have counted no block yet, so there is nothing to sync.`
+    ? ss.problem
+      ? h('span', { class: 'err', id: 'before-a-problem' }, `The primary indexer says SH-20 has not started, which cannot be right: ${ss.problem}. Nothing is shown from it; check the indexers in Settings.`)
+      : `SH-20 starts at block ${PROFILE.activationHeight.toLocaleString('en-US')}: the indexers have counted no block yet, so there is nothing to sync.`
     : ss
     ? [`Synced to block ${ss.height}: ${ss.leaves} leaves, rebuilt here; the root matches the indexer. `,
       ss.nullifiersKnown ? 'Spends from the full nullifier list.' : h('span', { class: 'err' }, 'This indexer has no /nullifiers yet: spends unknown.')]
@@ -112,6 +114,24 @@ async function settleRefused(s) {
 }
 
 /**
+ * Why the primary's "no block yet" (/status height null) cannot be right, or null: the chain's tip is at
+ * or past A (Esplora), or another indexer has counted blocks, or reports another digest before A.
+ */
+export async function beforeAProblem() {
+  const A = PROFILE.activationHeight;
+  const tip = await esplora.tipHeight().catch(() => null);
+  if (Number.isInteger(tip) && tip >= A) return `the chain is at block ${tip.toLocaleString('en-US')}, past block ${A.toLocaleString('en-US')} where SH-20 starts, but ${indexer.base} says it has counted no block`;
+  const [mine, ...others] = await Promise.allSettled(indexers.map((i) => i.status()));
+  for (const [k, o] of others.entries()) {
+    if (o.status !== 'fulfilled') continue;
+    const base = indexers[k + 1].base;
+    if (o.value.height !== null) return `${base} has counted blocks up to ${o.value.height}, but ${indexer.base} says it has none`;
+    if (mine.status === 'fulfilled' && o.value.digest !== mine.value.digest) return `${base} and ${indexer.base} disagree on the state before block ${A.toLocaleString('en-US')}`;
+  }
+  return null;
+}
+
+/**
  * Private sync: downloads every leaf and every spent nullifier (only what is
  * new since the cached block), rebuilds the tree here, then finds the vault's
  * notes, their Merkle paths and their spends on the device.
@@ -125,8 +145,10 @@ async function syncOnce({ full = false } = {}) {
   // a restored vault reads every leaf until it has checked its public-note keys (AUDIT §8.9)
   const r = await s.sync(indexer, { full: full || !!st.vault?.state.unchecked?.notes });
   if (r.height === null) {
-    // before block A: no note, no spend and no listing exists yet (a restored vault's counters stay unchecked)
-    st.sync = { height: null };
+    // before block A: no note, no spend and no listing exists yet (a restored vault's counters stay unchecked).
+    // The primary's word is checked against the chain's tip and the other indexers: one that says "no block"
+    // while the chain or another indexer is past A would hide the vault's notes behind "not started yet"
+    st.sync = { height: null, problem: await beforeAProblem() };
     renderAll();
     staticWarnings();
     return;
