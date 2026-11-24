@@ -8,10 +8,11 @@ import { verifyMintTerms } from '../deploy.js';
 import { buildMint, mintDepthProblem, mintProblems, mintsLeft } from '../mint.js';
 import { PROFILE, PROFILE_NAME } from '../profile.js';
 import { MINT_BATCH_MAX, PAY_MODE } from '../sh20.js';
-import { $, MAX_FEE_SATS, NO_INDEXER, busy, esplora, explorerTx, fill, h, indexer, indexers, noCoins, report, sats, short, st, units } from './context.js';
+import { $, MAX_FEE_SATS, NO_INDEXER, busy, esplora, explorerTx, fill, h, indexer, indexers, report, sats, short, st, units } from './context.js';
 import { processDeploys, renderDeploy } from './deploy-panel.js';
 import { renderNotes } from './notes-panel.js';
 import { renderAll } from './render.js';
+import { walletUtxos } from './spends.js';
 
 // ---- tokens ----------------------------------------------------------------------
 
@@ -161,9 +162,7 @@ async function prepareMint(shown, feeRate, k, out) {
   const source = await verifyMintTerms(esplora, token);
   const tip = await esplora.tipHeight();
   const w = st.wallet;
-  let utxos = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
-  if (!utxos) utxos = await esplora.utxos(w.address);
-  if (!utxos.length) throw new Error(noCoins(w.address));
+  const utxos = await walletUtxos(); // confirmed coins only (vault-2)
   const opening = await st.vault.opening(st.vault.state.next); // reserved only when signed
   const m = buildMint({ token, opening, payer: w, utxos, feeRate, tipHeight: tip, k });
 

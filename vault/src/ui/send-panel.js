@@ -10,6 +10,7 @@ import { broadcastDeployReveal, processDeploys, reproveDeploy } from './deploy-p
 import { renderMarket } from './market-panel.js';
 import { getSyncer } from './notes-panel.js';
 import { carry } from './spends.js';
+import { renderAll } from './render.js';
 import { agreementText } from '../consensus.js';
 
 // ---- send ------------------------------------------------------------------------
@@ -145,12 +146,29 @@ async function sendTransfer(out) {
 }
 
 /** Spends whose reveal may still need sending: their one-time key is in the vault. */
+// spends that are over, with nothing to do or to show: their notes are back (vault-2), or never left
+const CLOSED = ['replaced', 'not signed', 'given up'];
+
 export function renderPending() {
-  const open = (st.vault?.state.pending ?? []).filter((p) => p.status !== 'prepared' && p.status !== 'replaced');
+  const open = (st.vault?.state.pending ?? []).filter((p) => !CLOSED.includes(p.status));
   if (!open.length) return fill('pending-body');
   fill('pending-body', h('h3', {}, 'Spends sent from this vault'), h('div', { class: 'table-wrap' }, h('table', {},
     h('thead', {}, h('tr', {}, ['What', 'Status', 'Commit', 'Reveal', ''].map((x) => h('th', {}, x)))),
     h('tbody', {}, open.map((p) => {
+      if (p.status === 'prepared') {
+        // the wallet was asked and never answered (the page closed, the window was dismissed): nothing was signed
+        // or sent, and the notes are reserved until this spend is given up (vault-2)
+        const up = h('button', { type: 'button', class: 'small secondary', name: 'give-up' }, 'Give up');
+        up.addEventListener('click', busy(up, async () => {
+          if (!confirm(`Give up this ${p.kind}? The wallet never signed its commit, so nothing was sent; its notes come back to your balance.`)) return;
+          await st.vault.givePendingUp(p.id);
+          renderAll();
+        }));
+        return h('tr', {}, h('td', {}, p.kind), h('td', {}, 'prepared, never signed by the wallet: its notes stay reserved until you give it up'), h('td', {}, '—'), h('td', {}, '—'), h('td', {}, up));
+      }
+      if (/^expired/.test(p.status)) {
+        return h('tr', {}, h('td', {}, p.kind), h('td', {}, 'never mined, and its anchor left the window: no block can take it now; its notes are back'), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', { class: 'mono' }, short(p.revealTxid ?? '')), h('td', {}));
+      }
       if (p.status === 'anchor expired') {
         const re = h('button', { type: 'button', class: 'small', name: 'reprove' }, 'Prove again');
         re.addEventListener('click', busy(re, () => reproveDeploy(p)));

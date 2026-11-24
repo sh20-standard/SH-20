@@ -5,7 +5,7 @@ import { defaultCache } from '../cache.js';
 import { frHex } from '../fr.js';
 import { Sync } from '../sync.js';
 import { matchNotes, noteKeysSeen } from '../match.js';
-import { REFUSAL_DEPTH, refusedSpend } from '../send.js';
+import { refusalAt, refusedSpend } from '../send.js';
 import { $, NO_INDEXER, during, esplora, explorerTx, fill, h, indexer, indexers, report, short, st, staticWarnings, units } from './context.js';
 import { agreementText, digestAgreement, refusalAgreed } from '../consensus.js';
 import { balances } from './send-panel.js';
@@ -96,29 +96,31 @@ async function checkOwned(s, { rest = false } = {}) {
 }
 
 /**
- * Spends sent from this vault that the indexers refused (send.js refusedSpend): no nullifier was
- * recorded, so the notes they had reserved are given back. Only spends whose notes are all unspent
- * in the synced tree are looked up on Esplora. Returns the spends given back.
+ * Spends sent from this vault that can no longer take the notes they reserved (send.js refusedSpend): refused by
+ * the indexers, or never mined while their anchor left the window (vault-2). No nullifier was recorded, so the
+ * notes are given back. Only spends whose notes are all unspent in the synced tree are looked up on Esplora.
+ * Returns the spends given back, each with `expired` when it was never mined.
  */
 async function settleRefused(s) {
   const v = st.vault;
   const back = [];
-  for (const p of (v.state.pending ?? []).filter((x) => x.status === 'broadcast' && x.inputs?.length && x.revealTxid)) {
+  for (const p of (v.state.pending ?? []).filter((x) => ['signed', 'commit broadcast', 'broadcast'].includes(x.status) && x.inputs?.length)) {
     if (!p.inputs.every((id) => v.state.notes.find((n) => n.id === id)?.spent === 'no')) continue;
-    const rs = await esplora.txStatus(p.revealTxid).catch(() => null);
+    const rs = p.revealTxid ? await esplora.txStatus(p.revealTxid).catch(() => null) : null;
     const revealHeight = rs?.confirmed ? rs.block_height : null;
     if (!refusedSpend(p, v.state.notes, { revealHeight, syncHeight: s.height, nullifiersKnown: s.nullifiersKnown })) continue;
     // every indexer must agree, not only the primary this sync read: else the notes stay reserved, and the next sync asks again
     const inputs = v.state.notes.filter((n) => p.inputs.includes(n.id));
     const nfs = await Promise.all(inputs.map(async (n) => frHex(await v.nullifier(n))));
-    const agreed = await refusalAgreed(indexers, nfs, { atLeast: revealHeight + REFUSAL_DEPTH - 1 }); // their full lists, from block 0
+    const agreed = await refusalAgreed(indexers, nfs, { atLeast: refusalAt(p, revealHeight) }); // their full lists, from block 0
+    const expired = revealHeight === null;
     if (!agreed.ok) {
-      await v.updatePending(p.id, { refusal: `looks refused, but ${agreed.why}: its notes stay reserved` });
+      await v.updatePending(p.id, { refusal: `looks ${expired ? 'expired' : 'refused'}, but ${agreed.why}: its notes stay reserved` });
       continue;
     }
     await v.releaseInputs(p.inputs);
-    await v.updatePending(p.id, { status: 'refused by the indexers' });
-    back.push(p);
+    await v.updatePending(p.id, { status: expired ? 'expired: never mined, its anchor left the window' : 'refused by the indexers' });
+    back.push({ ...p, expired });
   }
   return back;
 }
@@ -203,6 +205,8 @@ async function syncOnce({ full = false } = {}) {
     $('warnings').append(h('div', { class: 'warn err' }, `${failed.length} note(s) could not be scanned, from leaf ${failed[0].pos} (${failed[0].error.message}). The others were; the next sync reads these again.`));
   }
   for (const p of refused) {
-    $('warnings').append(h('div', { class: 'warn' }, `The ${p.kind} of ${short(p.revealTxid)} was refused by the indexers: it spent none of your notes, and they are back in your balance (its network fees are lost).`));
+    $('warnings').append(h('div', { class: 'warn' }, p.expired
+      ? `The ${p.kind} of ${short(p.revealTxid ?? p.commitTxid ?? '')} was never mined, and its anchor is now out of the window: no block can take it any more. It spent none of your notes, and they are back in your balance.`
+      : `The ${p.kind} of ${short(p.revealTxid)} was refused by the indexers: it spent none of your notes, and they are back in your balance (its network fees are lost).`));
   }
 }

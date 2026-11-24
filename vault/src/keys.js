@@ -432,6 +432,20 @@ export class Vault {
     return id;
   }
 
+  /**
+   * Gives up spend `id` while it is still `prepared`: the wallet never signed its commit, so the vault never
+   * signed its reveal and its envelope went nowhere. Its notes come back, and the record keeps its one-time
+   * key (a commit a wallet broadcast anyway can still be swept). Returns false for any other status (vault-2).
+   */
+  async givePendingUp(id, status = 'given up') {
+    const p = (this.state.pending ?? []).find((x) => x.id === id);
+    if (!p || p.status !== 'prepared') return false;
+    p.status = status;
+    for (const n of this.state.notes) if ((p.inputs ?? []).includes(n.id) && n.status === 'spending') n.status = 'in tree';
+    await this.save();
+    return true;
+  }
+
   /** Gives back the notes a spend under way had reserved (a DEPLOY whose ticker was taken meanwhile). */
   async releaseInputs(ids = []) {
     for (const n of this.state.notes) if (ids.includes(n.id) && n.status === 'spending') n.status = 'in tree';

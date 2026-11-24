@@ -13,11 +13,22 @@ import { renderAll } from './render.js';
 
 export const txLink = (id) => h('p', {}, h('a', { href: explorerTx(id), target: '_blank', rel: 'noopener noreferrer', class: 'mono' }, id));
 
+/**
+ * The wallet's coins that pay a transaction of the vault: confirmed ones only, by Esplora's word (vault-2). A coin
+ * that is not confirmed can be replaced by whoever paid it, and what the vault funded with it is gone from every
+ * mempool, the reveal of a spend with it, its notes reserved. A wallet's own list (UniSat's coins that carry no
+ * inscription) is kept to the coins Esplora lists as confirmed at the address.
+ */
 export async function walletUtxos() {
   const w = st.wallet;
-  let utxos = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
-  if (!utxos) utxos = await esplora.utxos(w.address);
-  if (!utxos.length) throw new Error(noCoins(w.address));
+  const chain = await esplora.utxos(w.address);
+  const confirmed = new Set(chain.filter((u) => u.confirmed === true).map((u) => `${u.txid}:${u.vout}`));
+  const listed = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
+  const utxos = (listed ?? chain).filter((u) => confirmed.has(`${u.txid}:${u.vout}`)).map((u) => ({ ...u, confirmed: true }));
+  if (!utxos.length) {
+    if (chain.length) throw new Error(`the coins at ${w.address} are not confirmed yet: the vault pays from confirmed coins only, since an unconfirmed one can be replaced by whoever sent it, and the transaction with it. Wait for a block`);
+    throw new Error(noCoins(w.address));
+  }
   return utxos;
 }
 
@@ -74,7 +85,17 @@ async function carryOnce({ kind, out, feeRate, tip, plan, label, outputs, onReve
     return;
   }
   const pid = await st.vault.addPending({ ...pendingRecord(kind, cp, envelope, built.inputs), ...(deploy ? { deploy, anchorHeight: built.anchorHeight ?? null } : {}) });
-  const done = await signFunded(cp.commit);
+  let done;
+  try {
+    done = await signFunded(cp.commit);
+  } catch (e) {
+    // not signed: the envelope went nowhere (the vault signs the reveal only after the commit), so its notes come back now (vault-2)
+    await st.vault.givePendingUp(pid, 'not signed');
+    renderAll();
+    throw e;
+  }
+  // given up meanwhile from the list of spends: the notes are back, and nothing goes out
+  if (st.vault.state.pending.find((x) => x.id === pid)?.status !== 'prepared') throw new Error('given up while the wallet was signing: nothing was sent');
   const reveal = revealFor(cp, done.txid);
   await st.vault.updatePending(pid, { commitTxid: done.txid, commitHex: done.hex, revealHex: reveal.hex, revealTxid: reveal.txid, status: 'signed' });
   await onRevealed?.(reveal);
