@@ -195,4 +195,10 @@ end-to-end test replays a chain made the same way (`indexer/test/fixtures/plonk-
    skips a note. The text let any refusal of the library be read as "not for this wallet"; the reference did the same
    with every `OperationError` of WebCrypto (`docs/AUDIT.md` §8.6).
 
-Still to do: an outside review and the audit.
+2026-11-24, our own audit, part `sealing` ([`audit/2026-11-24-sealing.md`](audit/2026-11-24-sealing.md)). Nothing
+changed here. Three things are left to this document's owner. §4, "never asks an indexer about one of its own notes":
+true of what a wallet asks, not of how long it takes to answer (sealing-1 of that report). §1: whether the network
+should enter `m` (sealing-4: the same words give the same keys on signet and on mainnet). §2 and §4: whether an `IVK`
+or a `pk_eph` that is not a canonical encoding should be refused, as one of low order is (sealing-6, sealing-2).
+
+Still to do: an outside review.

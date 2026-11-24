@@ -28,7 +28,7 @@ is a `RangeError`, never silently reduced: `nk + l` is the same point as `nk` bu
 nullifier, and the circuit refuses it.
 
 ```sh
-npm test                # 48 tests, Node 20 or newer
+npm test                # 59 tests, Node 20 or newer
 npm run test:browser    # the WebCrypto primitives in headless Chrome
 ```
 

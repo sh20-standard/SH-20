@@ -48,7 +48,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
 | `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
 | `circuit/` | the spend circuit: PLONK prover and verifier in Rust, WebAssembly build, measurements ([`circuit/README.md`](circuit/README.md)) |
-| `circuit/js/` | what a wallet computes, in dependency-free JavaScript: the witness of a spend, and the addresses, sealing and scanning of `SPEC-NOTES.md`. Two entry points with the same names and the same vectors: `index.js` (synchronous, `node:crypto`) and `webcrypto.js` (asynchronous, WebCrypto, for browsers). Checked against vectors written by the Rust models (`cd circuit/js && npm test`, 48 tests) |
+| `circuit/js/` | what a wallet computes, in dependency-free JavaScript: the witness of a spend, and the addresses, sealing and scanning of `SPEC-NOTES.md`. Two entry points with the same names and the same vectors: `index.js` (synchronous, `node:crypto`) and `webcrypto.js` (asynchronous, WebCrypto, for browsers). Checked against vectors written by the Rust models (`cd circuit/js && npm test`, 59 tests) |
 | `circuit/circom/` | the same relation in circom, used only to cross-check the Rust circuit |
 | `circuit/web/` | the phone test page, and the host side of the threaded WebAssembly prover |
 | `relayer/` | a minimal relayer: takes proved TRANSFERs over HTTP, checks them as an indexer would (its fee output, the proof), and publishes them in batches from its own coins ([`docs/RELAYER.md`](docs/RELAYER.md)) |
@@ -62,7 +62,7 @@ npm run bench       # timings of the hot paths: Poseidon, the tree, a replay, th
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 3` JSON files> --deploy-burn D
 
 cd circuit
-cargo test --release    # 57 tests, with the shipped proving key (artifacts/spend.pk)
+cargo test --release    # 63 tests, with the shipped proving key (artifacts/spend.pk)
 ./build-wasm.sh         # two WebAssembly builds: one thread with no imports, and a thread pool over Web Workers
 bench/cross-check.sh    # snarkjs against our verifier, both ways (hard requirement 4)
 web/build.sh            # the phone test page, in web/dist/ (see circuit/web/README.md)
@@ -150,7 +150,7 @@ through `vault/src/secp256k1.js` (no `BigInt`, no division, no branch or index o
 what an interpreter still showed removed), the vault locks itself, and a restored vault checks its counters before it
 reserves an index. 8.10 lists what is so by design.
 
-Not done: an external audit (our own, `docs/AUDIT-PROMPT.md`, has run its part `circuit`: no finding above a Note, `docs/audit/2026-11-23-circuit.md`; its part `verifier`: four Low at the edges, none reachable from the chain, `docs/audit/2026-11-24-verifier.md`; and the code audit of `indexer`, `docs/audit/2026-11-23-code-indexer.md`); a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the
+Not done: an external audit (our own, `docs/AUDIT-PROMPT.md`, has run its part `circuit`: no finding above a Note, `docs/audit/2026-11-23-circuit.md`; its part `verifier`: four Low at the edges, none reachable from the chain, `docs/audit/2026-11-24-verifier.md`; its part `sealing`: one High and two Medium around the scan (what its timing tells an indexer, five `pk_eph` that Firefox refuses, the vault's record), none of which takes or forges a note, `docs/audit/2026-11-24-sealing.md`; and the code audit of `indexer`, `docs/audit/2026-11-23-code-indexer.md`); a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the
 circuit session; its reference code and vectors are in `circuit/js`); a real wallet signing in the vault; the vault sending through a relayer (the relayer itself exists, #65); the
 profile constant `A`; a public signet run.
 
