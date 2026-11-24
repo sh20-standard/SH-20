@@ -4,8 +4,9 @@
 import { finalizePsbt, sameUnsignedTx } from '../btc.js';
 import { loadProver, unloadProver } from '../prover.js';
 import { pendingRecord, planCarrier, proveSpend, revealFor } from '../send.js';
-import { PROFILE } from '../profile.js';
-import { MAX_FEE_SATS, esplora, explorerTx, h, noCoins, requireProfile, result, sats, st } from './context.js';
+import { IS_MAINNET, PROFILE } from '../profile.js';
+import { spendableCoins, unverifiedCoins } from '../coins.js';
+import { MAX_FEE_SATS, esplora, explorerTx, h, noCoins, requireProfile, result, sats, short, st } from './context.js';
 import { processDeploys } from './deploy-panel.js';
 import { renderAll } from './render.js';
 
@@ -14,22 +15,31 @@ import { renderAll } from './render.js';
 export const txLink = (id) => h('p', {}, h('a', { href: explorerTx(id), target: '_blank', rel: 'noopener noreferrer', class: 'mono' }, id));
 
 /**
- * The wallet's coins that pay a transaction of the vault: confirmed ones only, by Esplora's word (vault-2). A coin
- * that is not confirmed can be replaced by whoever paid it, and what the vault funded with it is gone from every
- * mempool, the reveal of a spend with it, its notes reserved. A wallet's own list (UniSat's coins that carry no
- * inscription) is kept to the coins Esplora lists as confirmed at the address.
+ * The wallet's coins that pay a transaction of the vault (coins.js spendableCoins): confirmed ones only, by
+ * Esplora's word (vault-2), and on mainnet plain ones only (vault-15): the wallet's own list of the coins that carry
+ * nothing, or, for a wallet that keeps its collectibles at another address, the coins above SMALL_COIN at the one
+ * it pays from. A wallet that does neither is refused on mainnet.
  */
 export async function walletUtxos() {
   const w = st.wallet;
   const chain = await esplora.utxos(w.address);
-  const confirmed = new Set(chain.filter((u) => u.confirmed === true).map((u) => `${u.txid}:${u.vout}`));
   const listed = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
-  const utxos = (listed ?? chain).filter((u) => confirmed.has(`${u.txid}:${u.vout}`)).map((u) => ({ ...u, confirmed: true }));
-  if (!utxos.length) {
-    if (chain.length) throw new Error(`the coins at ${w.address} are not confirmed yet: the vault pays from confirmed coins only, since an unconfirmed one can be replaced by whoever sent it, and the transaction with it. Wait for a block`);
-    throw new Error(noCoins(w.address));
-  }
+  const apart = !!w.otherAddress && w.otherAddress !== w.address;
+  const utxos = spendableCoins({ chain, listed, apart, mainnet: IS_MAINNET, wallet: w.adapter.name, address: w.address });
+  if (!utxos.length) throw new Error(noCoins(w.address));
+  // on mainnet, coins no list vouches for are spent only on the user's word, each time, naming them (unverifiedCoins)
+  const ask = unverifiedCoins({ listed, mainnet: IS_MAINNET, wallet: w.adapter.name, coins: utxos });
+  if (ask && !confirm(ask)) throw new Error('not spent: the coins were not confirmed as plain');
   return utxos;
+}
+
+/** The wallet's coins a transaction spends, as `txid:vout (value)`: named before the wallet is asked (vault-15). */
+export function coinsText(tx, utxos) {
+  return tx.vin
+    .map((i) => [i, utxos.find((u) => u.txid === i.txid && u.vout === i.vout)])
+    .filter(([, u]) => u)
+    .map(([i, u]) => `${short(i.txid)}:${i.vout} (${sats(u.value)})`)
+    .join(', ');
 }
 
 /** Has the wallet sign a PSBT the vault built, and checks it signed exactly that transaction. */
@@ -77,10 +87,11 @@ async function carryOnce({ kind, out, feeRate, tip, plan, label, outputs, onReve
     }
     proveS = ((performance.now() - t0) / 1000).toFixed(1);
   }
-  const cp = planCarrier({ envelope, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip, outputs, sweep });
+  const coins = await walletUtxos();
+  const cp = planCarrier({ envelope, payer: st.wallet, utxos: coins, feeRate, tipHeight: tip, outputs, sweep });
   const draft = revealFor(cp, '00'.repeat(32));
   const wait = deploy ? ` The reveal goes out once the commit is ${PROFILE.deployMaturity} blocks deep (SPEC-WIRE §5): keep the vault open, or come back.` : '';
-  if (!confirm(`${label}${proveS ? `: proved in ${proveS} s` : ''}. Commit ≈ ${cp.commit.vsizeEstimate} vB, reveal ${draft.vsize} vB, network fees ≈ ${sats(cp.commit.fee + draft.fee)}.${wait} Sign the commit with ${st.wallet.adapter.name}?`)) {
+  if (!confirm(`${label}${proveS ? `: proved in ${proveS} s` : ''}. Commit ≈ ${cp.commit.vsizeEstimate} vB, reveal ${draft.vsize} vB, network fees ≈ ${sats(cp.commit.fee + draft.fee)}.${wait} The commit spends ${coinsText(cp.commit.tx, coins)}. Sign it with ${st.wallet.adapter.name}?`)) {
     status('Not sent.');
     return;
   }

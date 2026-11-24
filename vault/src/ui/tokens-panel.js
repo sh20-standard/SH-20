@@ -12,7 +12,7 @@ import { $, MAX_FEE_SATS, NO_INDEXER, busy, esplora, explorerTx, fill, h, indexe
 import { processDeploys, renderDeploy } from './deploy-panel.js';
 import { renderNotes } from './notes-panel.js';
 import { renderAll } from './render.js';
-import { walletUtxos } from './spends.js';
+import { coinsText, walletUtxos } from './spends.js';
 
 // ---- tokens ----------------------------------------------------------------------
 
@@ -172,7 +172,8 @@ async function prepareMint(shown, feeRate, k, out) {
   sign.addEventListener('click', busy(sign, () => signAndSend(token, m, opening, out)));
   out.replaceChildren(
     h('dl', {},
-      h('dt', {}, 'Inputs'), h('dd', {}, `${m.tx.vin.length} from ${short(w.address)}`),
+      // each coin named, before the wallet is asked (vault-15)
+      h('dt', {}, 'Inputs'), h('dd', { id: 'mint-coins' }, `${m.tx.vin.length} from ${short(w.address)}: ${coinsText(m.tx, utxos)}`),
       h('dt', {}, 'Outputs'), h('dd', {}, m.tx.vout.map((o, i) => `#${i} ${scriptType(o.script)} ${sats(o.value)}`).join(' · ')),
       h('dt', {}, 'Size'), h('dd', {}, `≈ ${m.vsizeEstimate} vB (a plain P2TR payment is ≈ 154 vB)`),
       h('dt', {}, 'Network fee'), h('dd', {}, sats(m.fee)),

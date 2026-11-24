@@ -88,11 +88,12 @@ test('pre-flight refuses mints the indexer would reject (no refund)', async () =
   assert.throws(() => buildMint({ token: t, opening: OPEN0, payer: { address: WPKH }, utxos: [utxo(1e5)], feeRate: 1, tipHeight: c.next - 1 }), /opens at block 5/);
 });
 
-test('coin selection: smallest single input, no change when it would be dust, several inputs if needed', async () => {
+test('coin selection: largest single input, no change when it would be dust, several inputs if needed', async () => {
   const s = addressToScript(WPKH);
   const fixed = [{ value: 1000n, script: new Uint8Array(76).fill(0x6a) }];
-  const one = selectCoins([utxo(50000n, 0), utxo(5000n, 1), utxo(900n, 2)], fixed, 'p2wpkh', s, 1);
-  assert.deepEqual(one.picked.map((u) => u.value), [5000n]);
+  // the largest first: small coins are where an inscription or runes sit (vault-15)
+  const one = selectCoins([utxo(5000n, 1), utxo(50000n, 0), utxo(900n, 2)], fixed, 'p2wpkh', s, 1);
+  assert.deepEqual(one.picked.map((u) => u.value), [50000n]);
   assert.ok(one.change > 0n);
   const fee0 = BigInt(estimateVsize(['p2wpkh'], [fixed[0].script]));
   const exact = selectCoins([utxo(1000n + fee0 + 100n)], fixed, 'p2wpkh', s, 1);

@@ -33,7 +33,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 203 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 208 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
@@ -202,8 +202,14 @@ vout n  change to the payer                                     only if above du
 - payMode 1 burns the price **on the envelope output itself**, so a burn mint has no extra output.
 - Coins: confirmed ones only, by Esplora's word, a wallet's own list included (`ui/spends.js`
   `walletUtxos`): an unconfirmed coin can be replaced by whoever paid it, and the transaction funded
-  with it leaves every mempool. Of those, the smallest single UTXO that pays everything, else the
-  fewest UTXOs (largest first); the change output is dropped when it would be dust.
+  with it leaves every mempool. On mainnet, plain ones only (`src/coins.js`; vault-15): the
+  wallet's own list of the coins that carry nothing (UniSat's), or, for a wallet that keeps its
+  collectibles at an address of their own (Xverse, Leather), the coins above 10,000 sats at the
+  one it pays from, since the small coins are where an inscription or runes sit, and those only
+  after a dialog that names them, each time: nothing on the chain shows a collectible, and a payment
+  address can be sent one. A wallet that does neither is refused there, never spent from on a guess. Of those, the largest single UTXO that
+  pays everything, else the fewest UTXOs (largest first); the change output is dropped when it
+  would be dust. The mint screen and the dialog before a commit name each coin spent.
 - Before anything is signed, the vault checks what the indexers will check (window open at the
   next block, not sold out, `k` not above what is left, payment present), because a rejected mint is not refunded.
 - **The genesis token SH20** is part of the profile, not a DEPLOY (`/tokens` lists it first, with
