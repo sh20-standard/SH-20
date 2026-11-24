@@ -10,8 +10,17 @@
 // vault broadcasts through Esplora.
 
 import { toHex, fromHex, toBase64, fromBase64 } from './bytes.js';
+import { CHAIN } from './profile.js';
 
-const NET = 'signet';
+/**
+ * What each extension calls the profile's network (profile.js CHAIN.bitcoin): the one it is asked
+ * for and switched to. UniSat's older API has no chain to switch to, only getNetwork().
+ */
+export const WALLET_NETWORKS = Object.freeze({
+  signet: Object.freeze({ label: 'signet', xverse: 'Signet', unisat: 'BITCOIN_SIGNET', unisatLegacy: 'testnet', leather: 'signet' }),
+  bitcoin: Object.freeze({ label: 'mainnet', xverse: 'Mainnet', unisat: 'BITCOIN_MAINNET', unisatLegacy: 'livenet', leather: 'mainnet' }),
+});
+const NET = WALLET_NETWORKS[CHAIN.bitcoin];
 
 /**
  * JSON-RPC providers: Xverse resolves to { result } or { error }; Leather
@@ -38,22 +47,22 @@ export const WALLETS = [
     detect: () => !!xverseProvider(),
     async connect() {
       const p = xverseProvider();
-      const message = 'SH-20 vault: pay for mints on signet';
+      const message = `SH-20 vault: pay for mints on ${NET.label}`;
       // wallet_connect is the current method; getAccounts is the older one
       // the ordinals (taproot) address too: only ever a change address, for a cancel (market.js buildCancel)
-      const res = await rpc(p, 'wallet_connect', { addresses: ['payment', 'ordinals'], message, network: 'Signet' })
+      const res = await rpc(p, 'wallet_connect', { addresses: ['payment', 'ordinals'], message, network: NET.xverse })
         .catch(() => rpc(p, 'getAccounts', { purposes: ['payment', 'ordinals'], message }));
       let name = (await rpc(p, 'wallet_getNetwork', null).catch(() => null))?.bitcoin?.name ?? res?.network?.bitcoin?.name;
-      if (name && name !== 'Signet') {
-        await rpc(p, 'wallet_changeNetwork', { name: 'Signet' });
-        name = 'Signet';
+      if (name && name !== NET.xverse) {
+        await rpc(p, 'wallet_changeNetwork', { name: NET.xverse });
+        name = NET.xverse;
       }
       const accounts = Array.isArray(res) ? res : res?.addresses ?? [];
       // the payment address is P2WPKH or P2SH-P2WPKH depending on the user's setting; never the ordinals one
       const pay = accounts.find((a) => a.purpose === 'payment');
       if (!pay) throw new Error('Xverse returned no payment address');
       const other = accounts.find((a) => a.purpose === 'ordinals' && a.address !== pay.address);
-      return { address: pay.address, publicKey: pay.publicKey, network: name ?? NET, otherAddress: other?.address ?? null };
+      return { address: pay.address, publicKey: pay.publicKey, network: name ?? NET.label, otherAddress: other?.address ?? null };
     },
     async signPsbt(psbt, indexes, address) {
       const res = await rpc(xverseProvider(), 'signPsbt', { psbt: toBase64(psbt), signInputs: { [address]: indexes }, broadcast: false });
@@ -69,12 +78,12 @@ export const WALLETS = [
       const [address] = await u.requestAccounts();
       if (u.getChain) {
         const chain = await u.getChain();
-        if (chain?.enum !== 'BITCOIN_SIGNET') await u.switchChain('BITCOIN_SIGNET');
-      } else if ((await u.getNetwork()) !== 'testnet') {
-        throw new Error('this UniSat version cannot switch to signet');
+        if (chain?.enum !== NET.unisat) await u.switchChain(NET.unisat);
+      } else if ((await u.getNetwork()) !== NET.unisatLegacy) {
+        throw new Error(`this UniSat version cannot switch to ${NET.label}`);
       }
       const [addr] = await u.getAccounts();
-      return { address: addr ?? address, publicKey: await u.getPublicKey(), network: NET };
+      return { address: addr ?? address, publicKey: await u.getPublicKey(), network: NET.label };
     },
     async signPsbt(psbt, indexes, address) {
       const hex = await globalThis.unisat.signPsbt(toHex(psbt), {
@@ -99,15 +108,15 @@ export const WALLETS = [
     name: 'Leather',
     detect: () => !!globalThis.LeatherProvider,
     async connect() {
-      const res = await rpc(globalThis.LeatherProvider, 'getAddresses', { network: NET });
+      const res = await rpc(globalThis.LeatherProvider, 'getAddresses', { network: NET.leather });
       // pay from the native segwit address; the taproot one is for collectibles
       const pay = (res.addresses ?? []).find((a) => a.symbol === 'BTC' && a.type === 'p2wpkh');
       if (!pay) throw new Error('Leather returned no native segwit Bitcoin address');
       const other = (res.addresses ?? []).find((a) => a.symbol === 'BTC' && a.type === 'p2tr');
-      return { address: pay.address, publicKey: pay.publicKey, network: NET, otherAddress: other?.address ?? null };
+      return { address: pay.address, publicKey: pay.publicKey, network: NET.label, otherAddress: other?.address ?? null };
     },
     async signPsbt(psbt, indexes) {
-      const res = await rpc(globalThis.LeatherProvider, 'signPsbt', { hex: toHex(psbt), network: NET, signAtIndex: indexes, broadcast: false });
+      const res = await rpc(globalThis.LeatherProvider, 'signPsbt', { hex: toHex(psbt), network: NET.leather, signAtIndex: indexes, broadcast: false });
       return fromHex(res.hex);
     },
   },

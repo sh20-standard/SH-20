@@ -16,6 +16,7 @@ import { newMnemonic, mnemonicToSeed } from './bip39.js';
 import { keyPathOutput } from './taproot.js';
 import { keyFromBytes } from './secp256k1.js';
 import { gatewayKind } from './isolation.js';
+import { CHAIN } from './profile.js';
 
 /** How many lock keys past the last one used a restored vault looks for among the listings. */
 export const LOCK_GAP = 10;
@@ -114,7 +115,7 @@ export class Vault {
     return this.#w;
   }
 
-  /** The vault's sh20 address on signet (tsh20…): payers seal notes to it. */
+  /** The vault's sh20 address on the profile's network (tsh20… on signet, sh20… on mainnet): payers seal notes to it. */
   get address() {
     return this.#w.addressString;
   }
@@ -147,7 +148,7 @@ export class Vault {
     const m = Uint8Array.from(await masterSecret(await mnemonicToSeed(words)));
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const key = passphrase ? await aesKey(passphrase, salt) : null;
-    const v = await new Vault(storage, { v: 0, network: 'signet', scheme: NOTE_SCHEME, next: 0, notes: [], ...(restored ? { unchecked: Vault.#unchecked() } : {}) }, m, key, salt, words.normalize('NFKD').trim().toLowerCase().split(/\s+/).join(' ')).#init();
+    const v = await new Vault(storage, { v: 0, network: CHAIN.bitcoin, scheme: NOTE_SCHEME, next: 0, notes: [], ...(restored ? { unchecked: Vault.#unchecked() } : {}) }, m, key, salt, words.normalize('NFKD').trim().toLowerCase().split(/\s+/).join(' ')).#init();
     await v.save();
     return v;
   }
@@ -182,6 +183,10 @@ export class Vault {
       inner = JSON.parse(new TextDecoder().decode(clear));
     }
     const { seed, words = null, ...state } = inner;
+    // its notes, listings and spends are those of one network: a vault (or a backup) of another is not
+    // opened here. Its words are not bound to a network: restoring from them finds what it has on this one.
+    const made = state.network ?? 'signet'; // a vault written before the network was recorded is a signet one
+    if (made !== CHAIN.bitcoin) throw new Error(`this vault was made on ${made === 'bitcoin' ? 'mainnet' : made}, and this page follows ${CHAIN.label}: restore it from its 12 words instead`);
     return new Vault(storage, state, fromHex(seed), key, salt ?? crypto.getRandomValues(new Uint8Array(16)), words).#init();
   }
 

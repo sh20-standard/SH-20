@@ -29,9 +29,10 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 154 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 158 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
+node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
 npm run release          # a verifiable release from the current commit, on the signet profile (below)
 ```
 
@@ -206,14 +207,23 @@ vout n  change to the payer                                     only if above du
   the page with what differs, and while it is configured the vault does nothing. It mints, deploys,
   reveals, burns, lists, transfers, buys, cancels and claims nothing, and asks every indexer again just
   before each of these. Several indexers that agree with each other but not with the vault are all refused.
-- **Two profiles, one rule set.** `PROFILES.test` is `DEFAULT_PROFILE` as it is (`A` = 0: the dev
+- **Three profiles, one rule set.** `PROFILES.test` is `DEFAULT_PROFILE` as it is (`A` = 0: the dev
   servers, the tests, the CI); `PROFILES.signet` is the same with the public signet's activation
-  height, `SIGNET_ACTIVATION_HEIGHT`, the only parameter, fixed at launch (`RELEASES.md`). The page
-  follows the one `src/profile-name.js` names: `test` in the source tree, with a warning on screen;
-  `signet` in a release. Its signet indexers run `follow.js --activation <that height> --deploy-burn 1000`.
+  height, `SIGNET_ACTIVATION_HEIGHT`, fixed at its launch (`RELEASES.md`); `PROFILES.mainnet` the same
+  with Bitcoin mainnet's, `MAINNET_ACTIVATION_HEIGHT` or `build.js --mainnet --activation A`, and the
+  network its indexers report, `main` (Bitcoin Core's chain name; `follow.js --network main` with an
+  Esplora source). The page follows the one `src/profile-name.js` names: `test` in the source tree,
+  with a warning on screen; `signet` or `mainnet` in a release. Its indexers run
+  `follow.js --activation <that height> --deploy-burn 1000`.
+- **The network follows the profile** (`src/profile.js` `CHAIN`): Bitcoin addresses (`btc.js`, `tb1…`
+  on signet, `bc1…`, `1…`, `3…` on mainnet), SH-20 addresses (`tsh20…` or `sh20…`, SPEC-NOTES §2),
+  what Xverse, UniSat and Leather are asked for, and the network a vault records: a vault or a backup
+  made on another network is not opened (its 12 words restore it).
 - **Default servers** (`src/servers.js`), for the profile the page follows: on signet, the two mirrors
   the site serves beside the page (`../api/js/` and `../api/rs/`, `docs/API.md`, "The static mirror")
-  and mempool.space's signet Esplora; on the test profile, the two dev indexers and their Esplora.
+  and mempool.space's signet Esplora; on mainnet, no indexer (Settings asks for one: your own
+  `follow.js`, or indexers you trust) and mempool.space's Esplora; on the test profile, the two dev
+  indexers and their Esplora.
   None is run by the SH-20 contributors, and `test/signet.test.js` names every host a URL in the site
   may use. Settings replaces them; your own `follow.js` is fresher than a mirror, which lags the chain
   by 10 to 30 minutes.

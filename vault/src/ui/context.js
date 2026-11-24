@@ -4,12 +4,20 @@
 
 import { Esplora, IndexerApi } from '../api.js';
 import { profileCheck } from '../consensus.js';
-import { PROFILE, PROFILE_NAME } from '../profile.js';
+import { CHAIN, PROFILE, PROFILE_NAME } from '../profile.js';
 import { defaultSettings } from '../servers.js';
 
 // ---- settings -----------------------------------------------------------------
 
 export const SETTINGS_KEY = 'sh20.vault.settings';
+
+// The network the page follows, as it names it (profile.js CHAIN): signet, or mainnet.
+export const NET = CHAIN.label;
+export const NET_TITLE = NET[0].toUpperCase() + NET.slice(1);
+/** What the page says when the wallet's address holds nothing to pay with. */
+export const noCoins = (address) => (CHAIN.bitcoin === 'signet' ? `no UTXO at ${address}; get signet coins from a faucet first` : `no UTXO at ${address}: send it some bitcoin first`);
+/** What the page says with no indexer configured (the mainnet profile has no default: servers.js). */
+export const NO_INDEXER = 'No indexer is configured: add one in Settings (your own indexer/bin/follow.js, or indexers you trust). The vault reads nothing and acts on nothing without one.';
 // `indexer` holds one or more URLs (one per line, or comma-separated); the first is the primary.
 // The defaults are those of the profile this page follows (servers.js): none is a server of ours.
 const DEFAULTS = defaultSettings(PROFILE_NAME);
@@ -151,8 +159,10 @@ export function staticWarnings() {
   if (urlServers) {
     w.push(`Using servers from the link, not your saved settings: ${Object.entries(urlServers).map(([k, v]) => `${k} ${v}`).join(', ')}. Check the price and outputs before signing.`);
   }
-  if (PROFILE_NAME !== 'signet') w.push(`This page follows the ${PROFILE_NAME} profile (activation at block ${PROFILE.activationHeight}), for development: a release follows the signet profile.`);
+  if (PROFILE_NAME === 'test') w.push(`This page follows the ${PROFILE_NAME} profile (activation at block ${PROFILE.activationHeight}), for development: a release follows the signet or the mainnet profile.`);
   if (!window.isSecureContext) w.push('Not a secure context: passphrase encryption is unavailable. Use https or localhost.');
-  w.push('Note keys and sealing follow docs/SPEC-NOTES.md, draft v0.3, not audited yet: signet only.');
+  w.push(CHAIN.bitcoin === 'signet'
+    ? 'Note keys and sealing follow docs/SPEC-NOTES.md, draft v0.3, not audited yet: signet only.'
+    : 'Note keys, sealing and the proofs follow drafts that are not audited yet (docs/SPEC-NOTES.md, docs/AUDIT.md): hold only what you can afford to lose.');
   fill('warnings', w.map((t) => h('div', { class: 'warn' }, t)));
 }

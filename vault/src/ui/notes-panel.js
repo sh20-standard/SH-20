@@ -6,7 +6,7 @@ import { frHex } from '../fr.js';
 import { Sync } from '../sync.js';
 import { matchNotes, noteKeysSeen } from '../match.js';
 import { REFUSAL_DEPTH, refusedSpend } from '../send.js';
-import { $, during, esplora, explorerTx, fill, h, indexer, indexers, report, short, st, staticWarnings, units } from './context.js';
+import { $, NO_INDEXER, during, esplora, explorerTx, fill, h, indexer, indexers, report, short, st, staticWarnings, units } from './context.js';
 import { agreementText, digestAgreement, refusalAgreed } from '../consensus.js';
 import { balances } from './send-panel.js';
 import { processDeploys } from './deploy-panel.js';
@@ -60,6 +60,7 @@ export function renderNotes() {
 let syncer = null;
 
 export async function getSyncer() {
+  if (!indexer) throw new Error(NO_INDEXER);
   if (!syncer || syncer.base !== indexer.base) {
     syncer = new Sync(await defaultCache(), indexer.base);
     syncer.base = indexer.base;

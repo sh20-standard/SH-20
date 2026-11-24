@@ -11,7 +11,8 @@
 // files of the page's own origin, about 10 to 30 minutes behind the chain. Your own indexer is
 // fresher: `indexer/bin/follow.js --activation A --deploy-burn 1000` on your signet node (docs/API.md),
 // added in Settings. A default that is down would hold back what waits for every indexer (a restored
-// vault's counters, notes given back after a refused spend), so a local one is not among them. A
+// vault's counters, notes given back after a refused spend), so a local one is not among them. On
+// mainnet there is no default indexer at all: whoever uses the vault names the indexers they trust. A
 // public Esplora completes them; test/signet.test.js names every host a default may use.
 
 export const SERVERS = Object.freeze({
@@ -24,6 +25,12 @@ export const SERVERS = Object.freeze({
   signet: Object.freeze({
     indexers: Object.freeze(['../api/js/', '../api/rs/']),
     esplora: 'https://mempool.space/signet/api',
+  }),
+  // Bitcoin mainnet: no default indexer, the page asks for one in Settings (your own follow.js, or
+  // indexers you choose to trust); mempool.space's Esplora
+  mainnet: Object.freeze({
+    indexers: Object.freeze([]),
+    esplora: 'https://mempool.space/api',
   }),
 });
 

@@ -5,7 +5,7 @@
 import { ensureIsolation, gatewayKind, ownOrigins } from './isolation.js';
 import { available } from './sh20.js';
 import { STORAGE_KEY } from './keys.js';
-import { initContext, setIsolation, busy, $, h, st, staticWarnings } from './ui/context.js';
+import { initContext, setIsolation, busy, $, h, st, staticWarnings, NET } from './ui/context.js';
 import { initSettings } from './ui/settings-panel.js';
 import { renderAll } from './ui/render.js';
 import { refresh } from './ui/tokens-panel.js';
@@ -57,6 +57,7 @@ if (!(await available())) {
 
 setIsolation(isolation);
 initContext(); // the servers, after the checks: a link's servers are confirmed in a dialog
+$('network-tag').textContent = `${NET} · draft v0.3`; // the profile's network (profile.js CHAIN)
 
 // ---- boot ------------------------------------------------------------------------
 

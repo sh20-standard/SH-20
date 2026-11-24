@@ -10,12 +10,15 @@
 //   LICENSE
 //
 // `npm run build` writes it to vault/dist/ from the working tree (development), on the test profile;
-// `node build.js --signet` on the signet profile. `npm run release` builds the same file set from a
-// git commit (release.js), always on the signet profile.
+// `node build.js --signet` on the signet profile, `node build.js --mainnet [--activation A]` on the
+// mainnet profile. `npm run release` builds the same file set from a git commit (release.js), on the
+// signet profile.
 //
-// The profile is the one file that differs: vault/src/profile-name.js says 'test' in the source tree,
-// and a signet build replaces it with SIGNET_NAME_MODULE. It refuses while vault/src/profile.js has
-// no signet activation height (SIGNET_ACTIVATION_HEIGHT = null).
+// The profile is what differs: vault/src/profile-name.js says 'test' in the source tree, and a signet
+// or mainnet build replaces it with SIGNET_NAME_MODULE or MAINNET_NAME_MODULE. A signet build refuses
+// while vault/src/profile.js has no signet activation height (SIGNET_ACTIVATION_HEIGHT = null). A
+// mainnet build takes A from --activation when given, writing it into the built profile.js (the second
+// file that then differs), else MAINNET_ACTIVATION_HEIGHT; with neither it refuses.
 // Zero dependencies; the same inputs always give the same bytes.
 
 import { mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -36,16 +39,23 @@ export const PROVING_KEY = 'circuit/artifacts/spend.pk';
 export const PROVER = ['sh20_circuit.wasm', 'sh20_circuit_threads.wasm']; // vault/prover/, tools/prover.sh
 
 export const PROFILE_NAME_MODULE = 'vault/src/profile-name.js';
-export const SIGNET_NAME_MODULE = `// Which profile of profile.js this page follows: a release, on the signet profile (build.js).
-export const PROFILE_NAME = 'signet';
+export const PROFILE_MODULE = 'vault/src/profile.js';
+const nameModule = (name) => `// Which profile of profile.js this page follows: a release, on the ${name} profile (build.js).
+export const PROFILE_NAME = '${name}';
 `;
+export const SIGNET_NAME_MODULE = nameModule('signet');
+export const MAINNET_NAME_MODULE = nameModule('mainnet');
 
-/** The signet activation height in vault/src/profile.js as `reader` has it, or null while it is not fixed. */
-export function signetActivation(reader) {
-  const m = reader.read('vault/src/profile.js').toString('utf8').match(/^export const SIGNET_ACTIVATION_HEIGHT = (null|0|[1-9]\d*);$/m);
-  if (!m) throw new Error('vault/src/profile.js: no SIGNET_ACTIVATION_HEIGHT line');
+const heightLine = (name) => new RegExp(`^export const ${name.toUpperCase()}_ACTIVATION_HEIGHT = (null|0|[1-9]\\d*);$`, 'm');
+
+/** The activation height of profile `name` (signet, mainnet) in vault/src/profile.js as `reader` has it, or null while it is not fixed. */
+export function activationIn(reader, name) {
+  const m = reader.read(PROFILE_MODULE).toString('utf8').match(heightLine(name));
+  if (!m) throw new Error(`${PROFILE_MODULE}: no ${name.toUpperCase()}_ACTIVATION_HEIGHT line`);
   return m[1] === 'null' ? null : Number(m[1]);
 }
+export const signetActivation = (reader) => activationIn(reader, 'signet');
+export const mainnetActivation = (reader) => activationIn(reader, 'mainnet');
 
 const REDIRECT = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=vault/"><title>SH-20 Vault</title><a href="vault/">SH-20 Vault</a>\n';
 
@@ -54,7 +64,9 @@ const REDIRECT = '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh
  *   list(dir) → repository paths of every file under dir (posix)
  *   read(path) → Buffer
  */
-export function site(reader, { signet = false } = {}) {
+export function site(reader, { signet = false, mainnet = false, activation = null } = {}) {
+  if (signet && mainnet) throw new Error('one profile per build: signet or mainnet');
+  if (activation !== null && !mainnet) throw new Error('--activation is for a mainnet build (the signet height is fixed in vault/src/profile.js)');
   const files = new Map();
   for (const p of ['vault/index.html', 'vault/style.css', ...reader.list('vault/src'), ...INDEXER.map((f) => `indexer/src/${f}`), ...CIRCUIT_JS.map((f) => `circuit/js/${f}`), ...CIRCUIT_WEB.map((f) => `circuit/web/${f}`), PROVING_KEY, ...PROVER.map((f) => `vault/prover/${f}`), 'LICENSE']) {
     files.set(p, reader.read(p));
@@ -63,6 +75,17 @@ export function site(reader, { signet = false } = {}) {
     if (signetActivation(reader) === null) throw new Error('no signet build: the signet activation height is not fixed (vault/src/profile.js SIGNET_ACTIVATION_HEIGHT; vault/RELEASES.md)');
     if (!/^export const PROFILE_NAME = 'test';$/m.test(files.get(PROFILE_NAME_MODULE).toString('utf8'))) throw new Error(`${PROFILE_NAME_MODULE}: not the source tree's`);
     files.set(PROFILE_NAME_MODULE, Buffer.from(SIGNET_NAME_MODULE));
+  }
+  if (mainnet) {
+    // A from the command line when given (written into the built profile.js), else the one fixed in profile.js
+    if (activation !== null && !(Number.isInteger(activation) && activation >= 0)) throw new Error(`--activation ${activation}: not a block height`);
+    const fixed = mainnetActivation(reader);
+    if (activation === null && fixed === null) throw new Error('no mainnet build without its activation height: give --activation <A>, or fix MAINNET_ACTIVATION_HEIGHT in vault/src/profile.js');
+    if (!/^export const PROFILE_NAME = 'test';$/m.test(files.get(PROFILE_NAME_MODULE).toString('utf8'))) throw new Error(`${PROFILE_NAME_MODULE}: not the source tree's`);
+    if (activation !== null) {
+      files.set(PROFILE_MODULE, Buffer.from(files.get(PROFILE_MODULE).toString('utf8').replace(heightLine('mainnet'), `export const MAINNET_ACTIVATION_HEIGHT = ${activation};`)));
+    }
+    files.set(PROFILE_NAME_MODULE, Buffer.from(MAINNET_NAME_MODULE));
   }
   files.set('index.html', Buffer.from(REDIRECT));
   // the isolation service worker at the root, so that its scope covers circuit/web/ too (src/isolation.js)
@@ -107,14 +130,29 @@ export function writeSite(entries, dir) {
 export const sha256 = (b) => createHash('sha256').update(b).digest('hex');
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const signet = process.argv.includes('--signet');
-  const entries = site(fsReader(), { signet });
-  const dist = join(here, 'dist');
-  writeSite(entries, dist);
-  let total = 0;
-  for (const [p, b] of entries) {
-    total += b.length;
-    console.log(`${sha256(b)}  ${p}`);
+  try {
+    const argv = process.argv.slice(2);
+    const known = ['--signet', '--mainnet', '--activation'];
+    for (const a of argv) if (a.startsWith('--') && !known.includes(a)) throw new Error(`unknown option ${a}: node build.js [--signet | --mainnet [--activation A]]`);
+    const signet = argv.includes('--signet');
+    const mainnet = argv.includes('--mainnet');
+    let activation = null;
+    if (argv.includes('--activation')) {
+      const v = argv[argv.indexOf('--activation') + 1];
+      if (!/^(0|[1-9]\d*)$/.test(v ?? '')) throw new Error(`--activation takes a block height, not ${v}`);
+      activation = Number(v);
+    }
+    const entries = site(fsReader(), { signet, mainnet, activation });
+    const dist = join(here, 'dist');
+    writeSite(entries, dist);
+    let total = 0;
+    for (const [p, b] of entries) {
+      total += b.length;
+      console.log(`${sha256(b)}  ${p}`);
+    }
+    console.log(`\n${entries.length} files, ${(total / 1024).toFixed(1)} KiB in vault/dist (working tree, ${signet ? 'signet profile' : mainnet ? `mainnet profile, from block ${activation ?? mainnetActivation(fsReader())}` : 'test profile'}; use npm run release for a release)`);
+  } catch (e) {
+    console.error(`error: ${e.message}`);
+    process.exit(1);
   }
-  console.log(`\n${entries.length} files, ${(total / 1024).toFixed(1)} KiB in vault/dist (working tree, ${signet ? 'signet' : 'test'} profile; use npm run release for a release)`);
 }
