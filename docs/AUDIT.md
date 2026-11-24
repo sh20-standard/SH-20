@@ -576,7 +576,7 @@ names the same CID on a subdomain gateway and on a local node, and the vault ref
 restored or opened there.
 
 Checked: `app.js` l. 25 stops before the settings are read, and `refuseSharedOrigin` (`keys.js`
-l. 51) is called by `fromWords`, `open` and `restore`. Tests "8.1 no vault is created…" and "8.1 the
+l. 58) is called by `fromWords`, `open` and `restore`. Tests "8.1 no vault is created…" and "8.1 the
 page says where…". This closes the finding. Left: a vault stored there by an earlier version stays
 readable by the gateway's other sites; the page says so, and to treat its words as exposed.
 
@@ -660,11 +660,11 @@ or changed (`setPassphrase`); a clear backup restored with a passphrase is encry
 words of an encrypted vault are shown after the passphrase; a tab holding an older copy cannot write
 it back.
 
-Checked: `exportBackup` (`keys.js` l. 278) throws without a key; `setPassphrase` (l. 225),
-`restore` (l. 198) and `#checkUnchanged` (l. 257) do the rest; the words of an encrypted vault ask
+Checked: `exportBackup` (`keys.js` l. 365) throws without a key; `setPassphrase` (l. 290),
+`restore` (l. 262) and `#checkUnchanged` (l. 344) do the rest; the words of an encrypted vault ask
 for the passphrase (`ui/vault-panel.js` l. 49). Tests "8.4 no backup in clear…", "8.4 a clear
 backup restored with a passphrase…" and "8.4 a tab that holds the vault…". Left, by choice: the
-passphrase stays optional (`ui/vault-panel.js` l. 100). A vault created without one is still stored
+passphrase stays optional (`ui/vault-panel.js` l. 101). A vault created without one is still stored
 in clear on the device, and its words are shown without a question.
 
 **8.5 What the vault shows as received rests on one indexer.** Medium.
@@ -681,7 +681,7 @@ tree's root (against the root rebuilt from the leaves) and on the digest at the 
 the count is shown next to the balance.
 
 Checked: `digestAgreement` (`consensus.js` l. 250), called at every sync (`ui/notes-panel.js`
-l. 169). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
+l. 171). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
 refuse. A balance is still shown when the indexers disagree, with the count marked as an error. What
 a disagreement stops is a mint (`crossCheck`), a TAKE (`listingCheck`) and, since #38, giving back
 the notes of a spend that looks refused (`refusalAgreed`, `consensus.js` l. 88). #38 also has the
@@ -701,7 +701,7 @@ Fixed in #33 (commits `c674e73`, `950f9d0`): `scanOutput` lets a failure propaga
 outputs are still null); a note whose scan fails does not stop the others, and the sync reads again
 from the first that failed until the vault has scanned it.
 
-Checked: `scanOutput` (`notekeys.js` l. 39) has no catch left; `matchNotes` (`match.js` l. 17)
+Checked: `scanOutput` (`notekeys.js` l. 39) has no catch left; `matchNotes` (`match.js` l. 18)
 goes on past a note that throws, and `Sync.scanned(from)` (`sync.js` l. 159) makes the next sync
 read again from the first of them. Tests "8.6 a scan that could not be made throws…" and "8.6 a
 note whose scan throws does not stop the others…". One case was left below the vault: `x25519` in
@@ -805,7 +805,7 @@ which could be zeroed where the `BigInt`s of 8.8 cannot, but each operation make
 **8.8 Secrets stay in memory, and the vault never locks itself.** Low.
 The witness of a spend holds the nullifier keys in clear. It stays in the object `buildSpend`
 returns, and in the prover module's memory until the next proof (`circuit/web/host.js` copies it
-into a buffer it keeps). `lock()` (`keys.js` l. 501) zeroes the master secret and can do no more:
+into a buffer it keeps). `lock()` (`keys.js` l. 593) zeroes the master secret and can do no more:
 the derived scalars are `BigInt`s, the words a string. Nothing locks the vault after a time. None of
 this is reachable without code running in the page's origin, which is why §8.1 matters most.
 
@@ -814,7 +814,7 @@ Fixed in #58: the vault locks itself after 10 minutes without use
 wheel), never in the middle of an action (a button's, a sync) nor while a DEPLOY waits for the
 reveal the page sends; a tab left in the background locks as soon as it is shown again. Every lock,
 by the button, by time or by another tab, goes through `lockVault` (`ui/vault-panel.js` l. 19):
-`lock()` (`keys.js` l. 501) zeroes the master secret, the viewing key and the lock keys and lets go
+`lock()` (`keys.js` l. 593) zeroes the master secret, the viewing key and the lock keys and lets go
 of the state (the notes' tweaks, the one-time keys of spends under way), which then throws until the
 vault is opened again; and the prover's workers are stopped, with the module memory that held the
 last witness. After each proof the vault zeroes the witness it built and stops the prover too
@@ -836,16 +836,16 @@ from an older backup: their commit outputs (a fee and some dust) cannot be taken
 
 Fixed in #59: a vault restored from a backup or from its words reserves no public-note key and
 no lock key until a sync has checked its counters against the chain (`reserveNote`, `keys.js`
-l. 316): every leaf read and matched for the note keys (the page reads them all while the check is
+l. 403): every leaf read and matched for the note keys (the page reads them all while the check is
 due) with no other indexer disagreeing on that state, and the notes of every other indexer read
 too, since which leaf is which key is the primary's word for a sealed output; the lists of listings
 of every indexer for the lock keys. The lock keys are now looked for again while a match moves their
-window (`matchListings`, `match.js` l. 100), as the note keys were, in the union of those lists; a key
+window (`matchListings`, `match.js` l. 101), as the note keys were, in the union of those lists; a key
 any indexer reports moves its counter even when its LIST cannot be read or its note does not check
 out, so an indexer that leaves something out, mislabels it or misreports it cannot hide that a key is
 used while another reports it, and the check waits until every indexer has answered. Once checked,
 each counter skips 10 note keys or 3 lock keys past the last one used (`chainChecked`, `keys.js`
-l. 291): room for MINTs and LISTs another device had broadcast and not yet mined; both skips stay below the windows of
+l. 378): room for MINTs and LISTs another device had broadcast and not yet mined; both skips stay below the windows of
 a restore from the words (50 and 10), so that one still finds what comes after, and a skip does not
 add up over restores. Tests "8.9 …" in `vault/test/restore-indices.test.js`, among them "8.9 a
 restored vault reserves no index before a sync has checked it"; `dev/e2e.js` checks the counter
@@ -859,7 +859,7 @@ flight are still missing from an older backup, so their commit outputs cannot be
 
 - An offer never expires and cannot be withdrawn except by spending the lock on chain; its price is
   the LIST's and cannot change.
-- Lock keys are derived by the vault's own rule (`keys.js` l. 390), which `SPEC-NOTES.md` does not
+- Lock keys are derived by the vault's own rule (`keys.js` l. 478), which `SPEC-NOTES.md` does not
   define: another wallet restoring from the same words finds the notes and not the listings.
 - The 12 words are the whole vault. The device passphrase is not a BIP39 passphrase: it protects
   the copy on this device and nothing else.
@@ -870,10 +870,10 @@ flight are still missing from an older backup, so their commit outputs cannot be
 
 | What | Where |
 | --- | --- |
-| 12 words from 128 random bits; checksum checked before any key is derived; BIP39 seed by WebCrypto PBKDF2; `m` = first 32 bytes of HMAC-SHA512("sh20/v0/seed", seed), as `SPEC-NOTES.md` §1 | `bip39.js` l. 38, l. 41; `keys.js` l. 145 |
+| 12 words from 128 random bits; checksum checked before any key is derived; BIP39 seed by WebCrypto PBKDF2; `m` = first 32 bytes of HMAC-SHA512("sh20/v0/seed", seed), as `SPEC-NOTES.md` §1 | `bip39.js` l. 38, l. 41; `keys.js` l. 158 |
 | note keys, address, sealing, scanning and the EdDSA nonce go through `circuit/js/webcrypto.js`; the `node:crypto` stand-in implements SHA-256 only and throws for the rest | `sh20.js`; `shim/node-crypto.js` |
-| lock keys are separated from note keys: HMAC-SHA512 under the tag "sh20/vault/lock" over `m ‖ index`, reduced into `[1, n − 1]`, then the BIP86 tweak | `keys.js` l. 390; `taproot.js` l. 128 |
-| a sealed output is recorded only if it opens, has a value and hashes to its leaf; a note is identified by its position; before spending, each input is checked again against its leaf | `keys.js` l. 370; `spend.js` l. 85 |
+| lock keys are separated from note keys: HMAC-SHA512 under the tag "sh20/vault/lock" over `m ‖ index`, reduced into `[1, n − 1]`, then the BIP86 tweak | `keys.js` l. 478; `taproot.js` l. 128 |
+| a sealed output is recorded only if it opens, has a value and hashes to its leaf; a note is identified by its position; before spending, each input is checked again against its leaf | `keys.js` l. 458; `spend.js` l. 85 |
 | the payer's checks on an address are made by `decodeAddress`; each output is sealed with 32 fresh random bytes; the three outputs are shuffled | `send.js` l. 54, l. 23; `spend.js` l. 99 |
 | nullifier = `Poseidon(nsk + τn mod l, leaf, position)`; spent notes are found in the full list of nullifiers, never by asking about one | `notekeys.js` l. 49; `sync.js` |
 | an unused input is a note of 0 with fresh random keys and randomness, so its nullifier is new and unlinkable (§6.8) | `spend.js` l. 40 |
@@ -883,5 +883,5 @@ flight are still missing from an older backup, so their commit outputs cannot be
 | the BIP341 signature message, read against the specification for the two modes used (default, and `SINGLE \| ANYONECANPAY`), key path and script path | `taproot.js` l. 94 |
 | an offer's signature commits to the lock's outpoint, amount, script and sequence, to the version and locktime, and to the output paying the price; a buyer checks it under the key of the lock output, which the txid does cover | `market.js` l. 87–117, l. 137 |
 | the BIP340 nonce is derived as specified, with fresh auxiliary randomness at every signature | `secp256k1.js` l. 358; `taproot.js` l. 135, l. 193 |
-| the state is AES-256-GCM under the passphrase key with a fresh 12-byte nonce at every save; a wrong passphrase fails the tag | `keys.js` l. 36, l. 235 |
+| the state is AES-256-GCM under the passphrase key with a fresh 12-byte nonce at every save; a wrong passphrase fails the tag | `keys.js` l. 43, l. 304 |
 | the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 17, l. 49; `ui/context.js` l. 41; `ui/spends.js` l. 41 and `ui/tokens-panel.js` l. 197 |

@@ -124,7 +124,7 @@ test('vault with passphrase: seed not stored in clear, wrong passphrase fails, b
   await assert.rejects(Vault.open(st, 'wrong'), /wrong passphrase/);
   await assert.rejects(Vault.open(st), /needs its passphrase/);
   const st2 = memStorage();
-  const r = await Vault.restore(st2, v.exportBackup(), 'correct horse');
+  const r = await Vault.restore(st2, await v.exportBackup(), 'correct horse');
   assert.equal((await r.opening(0)).npk, o.npk);
   assert.equal(r.state.notes[0].ticker, 'GENE');
   assert.ok((await r.npkWindow({ gap: 5, yieldEvery: async () => {} })).has(r.state.notes[0].npk));

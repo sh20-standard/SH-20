@@ -111,7 +111,7 @@ test('the built mainnet page: its profile, Bitcoin and SH-20 addresses, servers,
     assert.match(sv.address, /^tsh201/);
     assert.equal(sv.address.slice(5, -6), v.address.slice(4, -6), 'the same keys under another prefix (the bech32m checksum covers the prefix)');
     await assert.rejects(Vault.open(signetStore, 'pass'), /made on signet, and this page follows mainnet: restore it from its 12 words/);
-    await assert.rejects(Vault.restore(memStorage(), sv.exportBackup(), 'pass'), /made on signet/, 'nor its backup');
+    await assert.rejects(Vault.restore(memStorage(), await sv.exportBackup(), 'pass'), /made on signet/, 'nor its backup');
     await assert.rejects(SignetVault.open(store, 'pass'), /made on mainnet, and this page follows signet/);
     const again = await Vault.fromWords(memStorage(), WORDS, 'p2', { restored: true });
     assert.equal(again.address, v.address, 'the words restore it on mainnet');

@@ -245,10 +245,16 @@ test('vault-3: a sync writes the whole state once for each note the vault holds'
   const one = storage.chars;
   storage.writes = 0;
   storage.chars = 0;
-  // what checkOwned does at every sync (ui/notes-panel.js): one updateNote, hence one save, for each note
+  // what checkOwned does at every sync (ui/notes-panel.js): one updateNote for each note
   for (const n of [...v.state.notes]) await v.updateNote(n.id, { pathAt: 7, spent: 'no' });
-  assert.equal(storage.writes, N); // today
-  assert.ok(storage.chars > N * one, `${storage.chars} characters written for a state of ${one}`);
+  // fixed: a path and a spent status are computed again at every sync and not stored (keys.js VOLATILE): nothing is written
+  assert.equal(storage.writes, 0);
+  // and what a sync does change goes in its one save: the notes that changed, a record each, then the vault's record
+  for (const n of v.state.notes.slice(0, 3)) await v.updateNote(n.id, { status: 'not in tree (reorg?)' }, { save: false });
+  assert.equal(storage.writes, 0);
+  await v.save();
+  assert.equal(storage.writes, 3 + 1);
+  assert.ok(storage.chars < one / 10, `${storage.chars} characters written, for a state of ${one}`);
 });
 
 // ---- vault-4 -------------------------------------------------------------------------------------
