@@ -9,7 +9,7 @@ contributors: the standard needs none (hard requirement 2), and a default of our
 
 | | Condition | State (2026-11-22) |
 | --- | --- | --- |
-| 1 | The clean redeploy: the repository on the project's own anonymous account `SH-20`, public, history rewritten (`docs/PLAN.md` §2) | waits on that account; the rewritten history is ready |
+| 1 | The clean redeploy: the repository `SH-20` on the project's own anonymous account `sh20-standard`, public, history rewritten (`docs/PLAN.md` §2) | the account exists (2026-11-24); waits on its empty repository and Claude's access to it |
 | 2 | The CI runs. On a public repository GitHub's runners cost nothing; on a private one a run costs about 27 runner minutes | the account's minutes ran out on 2026-11-22 (no job starts since 11:41 UTC) |
 | 3 | `indexer-rs` verifies PLONK proofs. Without `--verifier plonk-bn254-hermez` it refuses every spend, and parts with the reference at the first TRANSFER | done (2026-11-23): the verifier of `circuit/` as a library; it replays `indexer/vectors/plonk-v0.3.json` |
 | 4 | An indexer that a phone can reach (below, "Phones") | the site's own mirror (`docs/PLAN.md`, decision 3): built by `pages.yml` and read by the explorer (2026-11-24); the vault to read it |
