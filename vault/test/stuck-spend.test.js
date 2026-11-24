@@ -49,8 +49,10 @@ test('vault-2: the page gives back what was never signed, lists what was left pr
 test('vault-2: the page pays from coins Esplora lists as confirmed, a wallet\'s own list included', () => {
   const coins = body(src('ui/spends.js'), 'export async function walletUtxos(');
   assert.match(coins, /const chain = await esplora\.utxos\(w\.address\);/);
-  assert.match(coins, /\.filter\(\(u\) => u\.confirmed === true\)/);
-  assert.match(coins, /\(listed \?\? chain\)\.filter\(\(u\) => confirmed\.has\(`\$\{u\.txid\}:\$\{u\.vout\}`\)\)/, 'UniSat\'s list too, which it marks confirmed itself');
+  assert.match(coins, /spendableCoins\(\{ chain, listed, apart,/, 'coins.js decides');
+  const rule = body(src('coins.js'), 'export function spendableCoins(');
+  assert.match(rule, /chain\.filter\(\(u\) => u\.confirmed === true\)/);
+  assert.match(rule, /\(listed \?\? chain\)\.filter\(\(u\) => confirmed\.has\(key\(u\)\)\)/, 'UniSat\'s list too, which it marks confirmed itself');
   assert.match(body(src('ui/tokens-panel.js'), 'async function prepareMint('), /const utxos = await walletUtxos\(\);/, 'a MINT too');
   for (const f of ['ui/spends.js', 'ui/market-panel.js', 'ui/tokens-panel.js', 'ui/deploy-panel.js']) {
     assert.doesNotMatch(src(f).replace(body(src('ui/spends.js'), 'export async function walletUtxos('), ''), /adapter\.utxos|esplora\.utxos/, `${f}: no other source of coins`);

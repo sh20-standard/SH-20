@@ -818,7 +818,7 @@ by the button, by time or by another tab, goes through `lockVault` (`ui/vault-pa
 of the state (the notes' tweaks, the one-time keys of spends under way), which then throws until the
 vault is opened again; and the prover's workers are stopped, with the module memory that held the
 last witness. After each proof the vault zeroes the witness it built and stops the prover too
-(`ui/spends.js` l. 75): the next proof loads it again, from the module it keeps compiled. Tests
+(`ui/spends.js` l. 85): the next proof loads it again, from the module it keeps compiled. Tests
 "8.8 …" in `vault/test/autolock.test.js`, among them "8.8 the vault locks itself after ten minutes
 without use" on a clock of its own; `dev/e2e.js` moves the page's clock 11 minutes on in Chrome and
 sees the vault lock, its words leave the screen, and its passphrase open it again. Left: what
@@ -884,4 +884,4 @@ flight are still missing from an older backup, so their commit outputs cannot be
 | an offer's signature commits to the lock's outpoint, amount, script and sequence, to the version and locktime, and to the output paying the price; a buyer checks it under the key of the lock output, which the txid does cover | `market.js` l. 87–117, l. 137 |
 | the BIP340 nonce is derived as specified, with fresh auxiliary randomness at every signature | `secp256k1.js` l. 358; `taproot.js` l. 135, l. 193 |
 | the state is AES-256-GCM under the passphrase key with a fresh 12-byte nonce at every save; a wrong passphrase fails the tag | `keys.js` l. 43, l. 304 |
-| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 17, l. 49; `ui/context.js` l. 41; `ui/spends.js` l. 41 and `ui/tokens-panel.js` l. 199 |
+| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 17, l. 49; `ui/context.js` l. 41; `ui/spends.js` l. 51 and `ui/tokens-panel.js` l. 200 |

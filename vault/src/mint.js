@@ -73,13 +73,16 @@ export function selectCoins(all, fixed, inType, changeScript, feeRate, pre = [])
     if (total >= sumFixed + fee(n, false)) return { picked, change: 0n, fee: total - sumFixed };
     return null;
   };
-  const asc = [...utxos].sort((a, b) => (a.value < b.value ? -1 : a.value > b.value ? 1 : 0));
-  for (const u of asc) {
+  // the largest first (vault-15): the small coins of an address are where an inscription or runes sit, and a
+  // coin the page does not know to be plain is never handed over on mainnet (coins.js); the largest single coin
+  // that pays everything, else the fewest coins, largest first
+  const desc = [...utxos].sort((a, b) => (a.value > b.value ? -1 : a.value < b.value ? 1 : 0));
+  for (const u of desc) {
     const s = settle([u]);
-    if (s) return s; // smallest single input that pays everything
+    if (s) return s;
   }
   const picked = [];
-  for (const u of asc.reverse()) {
+  for (const u of desc) {
     picked.push(u);
     const s = settle(picked);
     if (s) return s;

@@ -29,6 +29,7 @@ import { matchNotes, matchListings } from '../src/match.js';
 import { envelopeScript, leafHash, tweakKey } from '../src/taproot.js';
 import { addressToScript, parseTx, serializeTx, txid as txidOf } from '../src/btc.js';
 import { gatewayKind } from '../src/isolation.js';
+import { spendableCoins } from '../src/coins.js';
 import { PROFILE } from '../src/profile.js';
 import { WALLETS } from '../src/wallets.js';
 import { PROFILE_MODULE, fsReader, site, writeSite } from '../build.js';
@@ -446,17 +447,26 @@ test('vault-15: the smallest coin that pays is spent first, whatever it carries,
   const coins = [{ txid: '11'.repeat(32), vout: 0, value: 500000n, confirmed: true }, { txid: '22'.repeat(32), vout: 0, value: 20000n, confirmed: true }];
   // the DEPLOY, in block 2, PAY_DEPTH deep: a mint that pays may go (vault-1)
   const mint = buildMint({ token, opening: { npk: 5n }, payer: { address: WPKH }, utxos: coins, feeRate: 2, tipHeight: 2 + PAY_DEPTH - 1 });
-  assert.deepEqual(mint.tx.vin.map((i) => i.txid), ['22'.repeat(32)]); // today: the small coin, alone
+  // fixed: the largest coin first (mint.js selectCoins)
+  assert.deepEqual(mint.tx.vin.map((i) => i.txid), ['11'.repeat(32)]);
   // its first sats go to the first output that holds any: the envelope's OP_RETURN holds none, the next is the deployer's
   assert.equal(mint.tx.vout[0].value, 0n);
   assert.deepEqual([toHex(mint.tx.vout[1].script), mint.tx.vout[1].value], [toHex(DEPLOYER_PAY), 10000n]);
-  // UniSat keeps everything at one address. Without getBitcoinUtxos its adapter answers null, and the page
-  // takes Esplora's list of every coin there, with no word to the user (ui/spends.js walletUtxos)
+  // and on mainnet only coins known to be plain reach it (coins.js spendableCoins): a small one at the payment address
+  // of a wallet that keeps collectibles apart is left out
+  const small = { txid: '33'.repeat(32), vout: 1, value: 546n, confirmed: true };
+  assert.deepEqual(spendableCoins({ chain: [...coins, small], apart: true, mainnet: true }).map((u) => u.value), [500000n, 20000n]);
+  // UniSat keeps everything at one address. Without getBitcoinUtxos its adapter answers null
   const had = Object.hasOwn(globalThis, 'unisat');
   const saved = globalThis.unisat;
   globalThis.unisat = {};
   try {
-    assert.equal(await WALLETS.find((w) => w.id === 'unisat').utxos(), null); // today
+    const listed = await WALLETS.find((w) => w.id === 'unisat').utxos();
+    assert.equal(listed, null);
+    // fixed: and the page refuses on mainnet, rather than take Esplora's list of every coin there (ui/spends.js walletUtxos)
+    assert.throws(() => spendableCoins({ chain: coins, listed, apart: false, mainnet: true, wallet: 'UniSat' }), /UniSat keeps inscriptions and runes at the address it pays from, and cannot list which of its coins carry none/);
+    // with its list, those coins only (and confirmed)
+    assert.deepEqual(spendableCoins({ chain: [...coins, small], listed: [coins[1], small], mainnet: true }).map((u) => u.value), [20000n, 546n], 'a listed coin is plain, whatever its size');
   } finally {
     if (had) globalThis.unisat = saved;
     else delete globalThis.unisat;
