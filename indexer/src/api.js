@@ -62,7 +62,8 @@ export function apiHandler(indexer, { network } = {}) {
       leaves: ix.tree.size,
       nullifiers: ix.nullifiers.size,
       tokens: ix.tokens.size,
-      genesis: ix.genesis ?? null,
+      // the profile's genesis ticker, from the start (docs/API.md): before block A the token does not exist yet, its name does
+      genesis: ix.genesis ?? ix.profile.genesis?.ticker ?? null,
       deployBurn: ix.profile.deployBurn,
       deployMaturity: ix.profile.deployMaturity,
       anchorWindow: ix.profile.anchorWindow,

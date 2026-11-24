@@ -146,10 +146,12 @@ try {
   // before A: the chain is at block BLOCKS, A is 1,000 blocks on
   const beforeA = join(work, 'before', 'api');
   await mirrorSite({ esplora: esplora.url, rs: opt('rs'), profile: ['--activation', String(BLOCKS + 1000), ...PROFILE.slice(2)], network: 'regtest', verifierJs: 'test', verifierRs: 'test', data: join(work, 'before-data'), out: beforeA, waitMs: 60_000, log: quiet });
-  const st = ['js', 'rs'].map((n) => JSON.parse(readFileSync(join(beforeA, n, 'status.json'), 'utf8')));
-  const ok = st.every((s) => s.height === null && s.digest === st[0].digest);
+  // every field of /status alike (apart from the implementation's name), not only the height and the digest:
+  // the reference once reported genesis null before A where indexer-rs reported "SH20"
+  const st = ['js', 'rs'].map((n) => plain(JSON.parse(readFileSync(join(beforeA, n, 'status.json'), 'utf8'))));
+  const ok = st[0].height === null && isDeepStrictEqual(st[0], st[1]);
   if (!ok) differ++;
-  console.log(`before A: both mirrors ${ok ? 'have no block and the same starting digest' : `differ: ${JSON.stringify(st.map((s) => [s.height, s.digest]))}`}`);
+  console.log(`before A: both mirrors ${ok ? 'have no block and the same /status' : `differ: ${JSON.stringify(st)}`}`);
   if (opt('chrome') !== undefined) differ += await explorer(opt('chrome'), null, join(work, 'before'));
   await run('first run');
   differ += await check('first run, from empty block files', all.slice(0, BLOCKS));
