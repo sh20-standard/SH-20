@@ -5,15 +5,18 @@
 // nothing of its own here: if it derived a key any other way, its notes would not be spendable.
 //
 // The master secret m of SPEC-NOTES §1 comes from the 12 recovery words (bip39.js).
-//   wallet(m)            { ask, nsk, ivk, address: { ivkPub, a, n } } and its signet address (tsh20…)
+//   wallet(m)            { ask, nsk, ivk, address: { ivkPub, a, n } } and its address on the profile's network
 //   publicNote(w, i)     the i-th public note: npk, rho = 0 (§5); what a MINT publishes
 //   scanOutput(w, out)   a sealed output { leaf, pkEph, ct } opened and leaf-checked, or null (§4)
 //   nullifierOf(...)     Poseidon(nsk + τn, leaf, pos), the note's spend tag (SPEC-WIRE §4)
 
 import { HRP, L, encodeAddress, walletKeys, publicOpening, scan, nullifier } from './sh20.js';
+import { CHAIN } from './profile.js';
 
 export const NOTE_SCHEME = 'sh20-notes-v0.3';
-export const NETWORK_HRP = HRP.test; // signet
+// SPEC-NOTES §2: the prefix of the profile's network, tsh20 on signet (and the test profile), sh20 on mainnet.
+// Every address the vault shows and every one it pays is checked against it (decodeAddress, send.js).
+export const NETWORK_HRP = HRP[CHAIN.addresses];
 
 export async function wallet(m) {
   const keys = await walletKeys(m);

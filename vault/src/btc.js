@@ -4,10 +4,14 @@
 
 import { sha256d, hash160 } from './hash.js';
 import { concat, toHex, fromHex, equal, u32le, u64le } from './bytes.js';
+import { CHAIN } from './profile.js';
 
 export const NETWORKS = Object.freeze({
-  signet: { name: 'signet', hrp: 'tb', p2pkh: 0x6f, p2sh: 0xc4 },
+  signet: Object.freeze({ name: 'signet', hrp: 'tb', p2pkh: 0x6f, p2sh: 0xc4 }),
+  bitcoin: Object.freeze({ name: 'bitcoin', hrp: 'bc', p2pkh: 0x00, p2sh: 0x05 }),
 });
+/** The network of the profile this page follows (profile.js CHAIN): every address is read and shown on it. */
+export const NETWORK = NETWORKS[CHAIN.bitcoin];
 
 // ---- addresses --------------------------------------------------------------
 
@@ -86,7 +90,7 @@ function decodeBase58Check(s) {
 }
 
 /** Address → scriptPubKey for `net`; throws on anything else (including other networks). */
-export function addressToScript(addr, net = NETWORKS.signet) {
+export function addressToScript(addr, net = NETWORK) {
   const sw = decodeSegwit(addr, net.hrp);
   if (sw) {
     const op = sw.version === 0 ? 0x00 : 0x50 + sw.version;
@@ -104,7 +108,7 @@ export function addressToScript(addr, net = NETWORKS.signet) {
  * scriptPubKey → address for `net`, to show a payee: segwit (bech32, bech32m) and the base58 forms,
  * each on its whole template (scriptType); null for anything else (the page then shows the script's hex).
  */
-export function scriptToAddress(s, net = NETWORKS.signet) {
+export function scriptToAddress(s, net = NETWORK) {
   const type = scriptType(s);
   if (type === 'p2wpkh' || type === 'p2wsh' || type === 'p2tr') {
     const version = type === 'p2tr' ? 1 : 0;

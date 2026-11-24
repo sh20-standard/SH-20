@@ -8,7 +8,7 @@ import { frFromHex, frHex } from '../fr.js';
 import { deploySchedule, planDeployBurn, planPlainDeploy, tickerState } from '../send.js';
 import { PROFILE } from '../profile.js';
 import { profileCheck } from '../consensus.js';
-import { busy, esplora, fill, h, indexers, report, requireProfile, result, resultBox, st, units } from './context.js';
+import { NET, busy, esplora, fill, h, indexers, report, requireProfile, result, resultBox, st, units } from './context.js';
 import { getSyncer, syncNotes } from './notes-panel.js';
 import { checkPool, renderPending } from './send-panel.js';
 import { carry, txLink } from './spends.js';
@@ -38,7 +38,7 @@ function currentTerms() {
     try {
       payScript = addressToScript(f.payTo.trim());
     } catch {
-      payProblem = 'the payment address is not a signet address';
+      payProblem = `the payment address is not a ${NET} address`;
     }
   }
   const d = {
@@ -98,7 +98,7 @@ export function renderDeploy() {
       field('end', 'Mint end block (0 = none)', { inputmode: 'numeric' }),
       h('label', {}, 'Mint price ', mode),
       f.payMode !== '0' ? field('price', 'Price (sats)', { inputmode: 'numeric' }) : null,
-      f.payMode === '2' ? field('payTo', 'Paid to (signet address)') : null),
+      f.payMode === '2' ? field('payTo', `Paid to (${NET} address)`) : null),
     h('dl', {},
       h('dt', {}, 'Deploy burn'), h('dd', {}, burnRow),
       yours ? [h('dt', {}, 'Your SH20'), h('dd', {}, yours)] : null,

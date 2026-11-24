@@ -8,7 +8,7 @@ import { verifyMintTerms } from '../deploy.js';
 import { buildMint, mintProblems, mintsLeft } from '../mint.js';
 import { PROFILE, PROFILE_NAME } from '../profile.js';
 import { MINT_BATCH_MAX, PAY_MODE } from '../sh20.js';
-import { $, MAX_FEE_SATS, busy, esplora, explorerTx, fill, h, indexer, indexers, report, sats, short, st, units } from './context.js';
+import { $, MAX_FEE_SATS, NO_INDEXER, busy, esplora, explorerTx, fill, h, indexer, indexers, noCoins, report, sats, short, st, units } from './context.js';
 import { processDeploys, renderDeploy } from './deploy-panel.js';
 import { renderNotes } from './notes-panel.js';
 import { renderAll } from './render.js';
@@ -18,6 +18,15 @@ import { renderAll } from './render.js';
 const payText = (t) => (t.payMode === PAY_MODE.NONE ? 'free' : `${sats(t.price)} ${t.payMode === PAY_MODE.BURN ? 'burned' : 'to deployer'}`);
 
 export async function refresh() {
+  if (!indexer) {
+    st.status = null;
+    st.tokens = [];
+    st.profile = { answered: 0, problems: ['no indexer configured'] };
+    fill('indexer-status', h('span', { class: 'err', id: 'no-indexer' }, NO_INDEXER));
+    renderTokens();
+    renderDeploy();
+    return;
+  }
   try {
     const [status, tokens, mirror] = await Promise.all([indexer.status(), indexer.tokens(), indexer.mirrorInfo()]);
     st.status = status;
@@ -151,7 +160,7 @@ async function prepareMint(shown, feeRate, k, out) {
   const w = st.wallet;
   let utxos = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
   if (!utxos) utxos = await esplora.utxos(w.address);
-  if (!utxos.length) throw new Error(`no UTXO at ${w.address}; get signet coins from a faucet first`);
+  if (!utxos.length) throw new Error(noCoins(w.address));
   const opening = await st.vault.opening(st.vault.state.next); // reserved only when signed
   const m = buildMint({ token, opening, payer: w, utxos, feeRate, tipHeight: tip, k });
 

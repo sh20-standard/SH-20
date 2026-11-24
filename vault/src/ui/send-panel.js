@@ -4,7 +4,8 @@ import { addressToScript } from '../btc.js';
 import { toHex } from '../bytes.js';
 import { listOutputs, planBurn, planList, poolProblem } from '../market.js';
 import { planFromPending, planTransfer, revealFor } from '../send.js';
-import { busy, esplora, fill, h, indexers, isolation, resultBox, sats, short, st, units } from './context.js';
+import { NET, busy, esplora, fill, h, indexers, isolation, resultBox, sats, short, st, units } from './context.js';
+import { NETWORK_HRP } from '../notekeys.js';
 import { broadcastDeployReveal, processDeploys, reproveDeploy } from './deploy-panel.js';
 import { renderMarket } from './market-panel.js';
 import { getSyncer } from './notes-panel.js';
@@ -73,8 +74,8 @@ export function renderSend() {
       h('label', {}, 'Amount ', input('amount', { inputmode: 'numeric', name: 'amount' })),
       f.action === 'list' ? h('label', {}, 'Price (sats) ', input('price', { inputmode: 'numeric', name: 'price' })) : null,
       h('label', {}, 'Fee rate (sat/vB) ', input('fee', { type: 'number', min: '0.1', step: '0.1', name: 'fee' }))),
-    f.action === 'transfer' ? h('label', {}, 'To (an sh20 address, tsh20…) ', input('to', { name: 'to', class: 'wide' })) : null,
-    f.action === 'list' ? h('label', {}, 'Paid to (a signet address) ', input('payTo', { name: 'payTo', class: 'wide' })) : null,
+    f.action === 'transfer' ? h('label', {}, `To (an sh20 address, ${NETWORK_HRP}1…) `, input('to', { name: 'to', class: 'wide' })) : null,
+    f.action === 'list' ? h('label', {}, `Paid to (a ${NET} address) `, input('payTo', { name: 'payTo', class: 'wide' })) : null,
     h('div', { class: 'row' }, b),
     need.length ? h('p', { class: 'muted' }, `First ${need.join(' and ')}.`) : null,
     out);

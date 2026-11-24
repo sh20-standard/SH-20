@@ -6,7 +6,7 @@ import { Vault } from '../keys.js';
 import { WALLETS } from '../wallets.js';
 import { LOCK_AFTER_MS } from '../autolock.js';
 import { unloadProver } from '../prover.js';
-import { $, activity, busy, fill, h, report, result, resultBox, st } from './context.js';
+import { $, NET, NET_TITLE, activity, busy, fill, h, report, result, resultBox, st } from './context.js';
 import { syncNotes } from './notes-panel.js';
 import { renderAll } from './render.js';
 
@@ -58,7 +58,7 @@ export function renderVault() {
         ? 'It stays unlocked while a DEPLOY waits for its reveal (this page sends it), then locks itself after ' + `${LOCK_AFTER_MS / 60000} minutes without use.`
         : `It locks itself after ${LOCK_AFTER_MS / 60000} minutes without use.`),
       v.encrypted ? null : h('p', { class: 'warn' }, 'Stored in clear on this device: anyone using this browser profile can read its keys. Set a passphrase: it encrypts this copy, and a backup file needs it.'),
-      h('p', {}, 'Your sh20 address (signet), for receiving sealed notes: '),
+      h('p', {}, `Your sh20 address (${NET}), for receiving sealed notes: `),
       h('p', { class: 'mono', id: 'address' }, v.address),
       v.state.obsolete?.length ? h('p', { class: 'muted' }, `${v.state.obsolete.length} note(s) made with the provisional keys of draft v0.2 are kept aside in the backup: they cannot exist on a v0.3 chain.`) : null,
       h('div', { class: 'row' },
@@ -200,7 +200,7 @@ export function renderWallet() {
       try {
         type = scriptType(addressToScript(acc.address));
       } catch {
-        throw new Error(`${ad.name} gave ${acc.address}, which is not a signet address. Switch the wallet to Signet.`);
+        throw new Error(`${ad.name} gave ${acc.address}, which is not a ${NET} address. Switch the wallet to ${NET_TITLE}.`);
       }
       // a second address of the wallet (Xverse's and Leather's taproot one): only a cancel's change goes there
       let otherAddress = null;

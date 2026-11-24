@@ -78,13 +78,14 @@ const LOOPBACK = new Set(['127.0.0.1', 'localhost']);
 const THIRD_PARTY = new Set(['mempool.space', 'dweb.link']); // a public signet Esplora; the IPFS gateway of isolation.js
 
 test('2. the default servers are the site\'s own mirrors on signet, and none leads to us', () => {
-  assert.deepEqual(Object.keys(SERVERS), ['test', 'signet'], 'one set per profile');
+  assert.deepEqual(Object.keys(SERVERS), ['test', 'signet', 'mainnet'], 'one set per profile');
+  assert.deepEqual(defaultSettings('mainnet', 'https://sh-20.github.io/SH-20/vault/'), { indexer: '', esplora: 'https://mempool.space/api' }, 'mainnet: no default indexer');
   // the mirrors beside the page (docs/API.md, "The static mirror"), resolved against the page's URL
   assert.deepEqual(defaultSettings('signet', 'https://sh-20.github.io/SH-20/vault/'), { indexer: 'https://sh-20.github.io/SH-20/api/js/\nhttps://sh-20.github.io/SH-20/api/rs/', esplora: 'https://mempool.space/signet/api' });
   assert.deepEqual(defaultSettings('signet', 'http://localhost:8000/vault/?x=1'), { indexer: 'http://localhost:8000/api/js/\nhttp://localhost:8000/api/rs/', esplora: 'https://mempool.space/signet/api' });
   assert.deepEqual(defaultSettings('signet', undefined), { indexer: '../api/js/\n../api/rs/', esplora: 'https://mempool.space/signet/api' }, 'no page: as written');
   assert.deepEqual(defaultSettings('test', 'https://sh-20.github.io/SH-20/vault/'), { indexer: 'http://127.0.0.1:8020\nhttp://127.0.0.1:8030', esplora: 'http://127.0.0.1:8020/esplora' });
-  assert.throws(() => defaultSettings('mainnet'), /no servers for the mainnet profile/);
+  assert.throws(() => defaultSettings('testnet'), /no servers for the testnet profile/);
   const PAGE = 'https://page.invalid/vault/';
   for (const [name, s] of Object.entries(SERVERS)) {
     for (const u of [...s.indexers, s.esplora]) {

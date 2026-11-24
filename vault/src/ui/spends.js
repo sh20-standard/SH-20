@@ -5,7 +5,7 @@ import { finalizePsbt, sameUnsignedTx } from '../btc.js';
 import { loadProver, unloadProver } from '../prover.js';
 import { pendingRecord, planCarrier, proveSpend, revealFor } from '../send.js';
 import { PROFILE } from '../profile.js';
-import { MAX_FEE_SATS, esplora, explorerTx, h, requireProfile, result, sats, st } from './context.js';
+import { MAX_FEE_SATS, esplora, explorerTx, h, noCoins, requireProfile, result, sats, st } from './context.js';
 import { processDeploys } from './deploy-panel.js';
 import { renderAll } from './render.js';
 
@@ -17,7 +17,7 @@ export async function walletUtxos() {
   const w = st.wallet;
   let utxos = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
   if (!utxos) utxos = await esplora.utxos(w.address);
-  if (!utxos.length) throw new Error(`no UTXO at ${w.address}; get signet coins from a faucet first`);
+  if (!utxos.length) throw new Error(noCoins(w.address));
   return utxos;
 }
 
