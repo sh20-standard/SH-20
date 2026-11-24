@@ -118,6 +118,10 @@ pub struct ChainState {
     pub fetched: Vec<u32>,
     /// `/tx/:txid/status` requests answered (Esplora).
     pub status_calls: usize,
+    /// Whether the Esplora API has `/block/:hash/raw` (for the blocks of `mined`).
+    pub raw: bool,
+    /// `/block/:hash/raw` requests, answered with a block or with 404.
+    pub raw_calls: usize,
 }
 
 /// A chain shared between a test and the source it gives to a follower.
@@ -275,7 +279,7 @@ fn read_request(stream: &mut std::net::TcpStream) -> Option<Request> {
 }
 
 /// Serves `handler` on a free local port, one request per connection, and returns its URL.
-pub fn http_server(handler: impl Fn(&Request) -> (u16, String) + Send + 'static) -> String {
+pub fn http_server<B: AsRef<[u8]>>(handler: impl Fn(&Request) -> (u16, B) + Send + 'static) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     std::thread::spawn(move || {
@@ -283,8 +287,9 @@ pub fn http_server(handler: impl Fn(&Request) -> (u16, String) + Send + 'static)
             let Ok(mut stream) = stream else { continue };
             let Some(request) = read_request(&mut stream) else { continue };
             let (status, body) = handler(&request);
+            let body = body.as_ref();
             let head = format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
-            let _ = stream.write_all(head.as_bytes()).and_then(|_| stream.write_all(body.as_bytes()));
+            let _ = stream.write_all(head.as_bytes()).and_then(|_| stream.write_all(body));
         }
     });
     url
@@ -398,7 +403,28 @@ fn esplora_tx(t: &Tx) -> Value {
 
 /// An Esplora API over `chain`. The height of a spent output is only in `/tx/:txid/status`:
 /// here, for the outputs the scenario gives a `prevHeight` for.
-pub fn esplora(chain: Chain) -> impl Fn(&Request) -> (u16, String) {
+/// The Esplora API over `chain`. `/block/:hash/raw` answers 404 unless the chain's `raw` is set
+/// (its blocks then come from `mined`: the bytes must hash to the hashes the chain gives).
+pub fn esplora(chain: Chain) -> impl Fn(&Request) -> (u16, Vec<u8>) {
+    let json_routes = esplora_json(chain.clone());
+    move |request| {
+        let Some(hash) = request.path.strip_prefix("/block/").and_then(|p| p.strip_suffix("/raw")) else {
+            let (status, body) = json_routes(request);
+            return (status, body.into_bytes());
+        };
+        if chain.fails() {
+            return (429, b"Too Many Requests".to_vec());
+        }
+        let mut s = chain.state();
+        s.raw_calls += 1;
+        match s.blocks.iter().find(|b| b.hash == hash) {
+            Some(b) if s.raw => (200, serialized(b)),
+            _ => (404, b"Not found".to_vec()),
+        }
+    }
+}
+
+fn esplora_json(chain: Chain) -> impl Fn(&Request) -> (u16, String) {
     move |request| {
         assert_eq!(request.method, "GET");
         if chain.fails() {
@@ -458,4 +484,132 @@ pub fn padded(mut blocks: Vec<SourceBlock>, height: u32, count: u8) -> Vec<Sourc
 /// A txid no block holds.
 pub fn unknown_txid() -> String {
     hex(&txid(424_242))
+}
+
+// ---------------------------------------------------------------- blocks in Bitcoin's bytes
+
+/// Bitcoin's serialization, written here from the format and on its own: the reader under test
+/// is `src/raw.rs`, and the two meet only through the bytes.
+fn compact_size(n: usize) -> Vec<u8> {
+    match n {
+        0..=0xfc => vec![n as u8],
+        0xfd..=0xffff => [&[0xfd][..], &(n as u16).to_le_bytes()].concat(),
+        _ => [&[0xfe][..], &(n as u32).to_le_bytes()].concat(),
+    }
+}
+
+fn sha256d(bytes: &[u8]) -> [u8; 32] {
+    sha256(&[&sha256(&[bytes])])
+}
+
+fn reversed(mut bytes: [u8; 32]) -> [u8; 32] {
+    bytes.reverse();
+    bytes
+}
+
+fn merkle(mut level: Vec<[u8; 32]>) -> [u8; 32] {
+    while level.len() > 1 {
+        if level.len() % 2 == 1 {
+            level.push(*level.last().unwrap());
+        }
+        level = level.chunks(2).map(|p| sha256d(&[p[0], p[1]].concat())).collect();
+    }
+    level[0]
+}
+
+/// The transaction at place `n` of its block. What a `Tx` does not hold comes from `n`, so that
+/// the bytes vary: the version, the lock time, the sequence, and the scriptSig of an input
+/// without a witness (empty, a few bytes, or more than 252: a length on three bytes).
+fn tx_bytes(t: &Tx, n: usize, with_witness: bool) -> Vec<u8> {
+    let segwit = with_witness && t.vin.iter().any(|i| !i.witness.is_empty());
+    let mut b = (1 + (n as u32 % 2)).to_le_bytes().to_vec();
+    if segwit {
+        b.extend([0x00, 0x01]);
+    }
+    b.extend(compact_size(t.vin.len()));
+    for (k, i) in t.vin.iter().enumerate() {
+        let script_sig = match (i.coinbase, i.witness.is_empty(), n % 3) {
+            (true, _, _) => vec![0x02, n as u8, 0x01],
+            (false, true, 0) => vec![0x51; 300],
+            (false, true, _) => vec![0x01, k as u8],
+            (false, false, _) => Vec::new(),
+        };
+        match i.prevout {
+            Some((txid, vout)) => b.extend([&reversed(txid)[..], &vout.to_le_bytes()].concat()),
+            None => b.extend([&[0u8; 32][..], &[0xff; 4]].concat()),
+        }
+        b.extend(compact_size(script_sig.len()));
+        b.extend(script_sig);
+        b.extend((0xffff_fffd_u32 - n as u32).to_le_bytes());
+    }
+    b.extend(compact_size(t.vout.len()));
+    for o in &t.vout {
+        b.extend(o.value.to_le_bytes());
+        b.extend(compact_size(o.script.len()));
+        b.extend(&o.script);
+    }
+    if segwit {
+        for i in &t.vin {
+            b.extend(compact_size(i.witness.len()));
+            for item in &i.witness {
+                b.extend(compact_size(item.len()));
+                b.extend(item);
+            }
+        }
+    }
+    b.extend((n as u32 * 7).to_le_bytes());
+    b
+}
+
+fn header(prev: &str, height: u32, txs: &[Tx]) -> Vec<u8> {
+    let prev: [u8; 32] = sh20_indexer::field::unhex32(prev).unwrap();
+    let root = merkle(txs.iter().map(|t| reversed(t.txid)).collect());
+    let mut h = 0x2000_0000_u32.to_le_bytes().to_vec();
+    h.extend(reversed(prev));
+    h.extend(root);
+    h.extend((1_700_000_000 + height).to_le_bytes()); // time
+    h.extend(0x207f_ffff_u32.to_le_bytes()); // bits
+    h.extend(height.to_le_bytes()); // nonce
+    h
+}
+
+/// A block of `mined` in Bitcoin's bytes: what `/block/:hash/raw` answers.
+pub fn serialized(b: &SourceBlock) -> Vec<u8> {
+    let mut bytes = header(&b.prev, b.block.height, &b.block.txs);
+    bytes.extend(compact_size(b.block.txs.len()));
+    for (n, t) in b.block.txs.iter().enumerate() {
+        bytes.extend(tx_bytes(t, n, true));
+    }
+    bytes
+}
+
+/// Blocks as a miner would make them, from transactions without a coinbase: each transaction
+/// gets the txid of its bytes, each block a coinbase that commits to the witnesses (BIP 141) and
+/// the hash of its header. No transaction here spends another: a txid changes nothing above it.
+pub fn mined(blocks: Vec<Block>) -> Vec<SourceBlock> {
+    let mut prev = block_hash(0, 0);
+    let mut chain = Vec::new();
+    for mut block in blocks {
+        let reserved = vec![0u8; 32];
+        let mut wtxids = vec![[0u8; 32]];
+        for (n, t) in block.txs.iter_mut().enumerate() {
+            t.txid = reversed(sha256d(&tx_bytes(t, n + 1, false)));
+            wtxids.push(sha256d(&tx_bytes(t, n + 1, true)));
+        }
+        let commitment = sha256d(&[&merkle(wtxids)[..], &reserved].concat());
+        let mut coinbase = Tx {
+            txid: [0; 32],
+            vin: vec![TxIn { prevout: None, coinbase: true, prev_height: None, witness: vec![reserved] }],
+            vout: vec![
+                out(5_000_000_000, &p2tr(&[0x11; 32])),
+                out(0, &[&[0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed][..], &commitment].concat()),
+            ],
+        };
+        coinbase.txid = reversed(sha256d(&tx_bytes(&coinbase, 0, false)));
+        block.txs.insert(0, coinbase);
+        let hash = hex(&reversed(sha256d(&header(&prev, block.height, &block.txs))));
+        chain.push(SourceBlock { hash: hash.clone(), prev, block });
+        prev = hash;
+    }
+    chain
 }

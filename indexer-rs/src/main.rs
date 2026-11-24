@@ -34,7 +34,8 @@ options:
   --maturity <N>          blocks a DEPLOY commit must have behind it (default: 6)
   --verifier <name>       plonk-bn254-hermez (the PLONK verifier of circuit/, under the pinned key),
                           reject-all (default: every spend is refused; `reject` is the same) or
-                          test (accepts the proof \"valid-proof\" padded with zeros to 480 bytes)
+                          test (accepts the proof \"valid-proof\" padded with zeros to 480 bytes:
+                          the rule of the vectors; follow takes it with --network regtest only)
   --json                  one JSON object per block: height, root, events, eventsH, digest, rejected
 
 Prints one line per block from the activation block on: `<height> <digest>`.
@@ -157,6 +158,13 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         }
         if o.esplora.is_some() && (o.rpc_user.is_some() || o.rpc_cookie.is_some()) {
             return Err("--rpcuser, --rpcpass and --rpccookie go with --rpc".into());
+        }
+        // the test rule takes one fixed string as the proof of anything: on a chain where tokens
+        // are worth something, whoever sends those bytes spends notes that do not exist
+        if o.verifier == "test" && o.network.as_deref() != Some("regtest") {
+            return Err("--verifier test takes a fixed string as the proof of any spend: follow accepts it \
+                        with --network regtest and on no other network"
+                .into());
         }
     } else {
         if o.folder.is_empty() {

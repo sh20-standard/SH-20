@@ -3,11 +3,16 @@
 //! Both give the height of the block that confirmed the output a DEPLOY reveals (SPEC-WIRE §5,
 //! "DEPLOY maturity"): Core in the block itself (`getblock <hash> 3`, `prevout.height`),
 //! Esplora as the spent transaction's `status.block_height`.
+//!
+//! Esplora gives a block's transactions 25 to a page. A block of more than one page is read
+//! from `/block/:hash/raw` instead, Bitcoin's serialized block in one request (`raw`): a mainnet
+//! block holds thousands of transactions. A server without that route still serves the pages.
 
 use crate::chain::{Block, Tx, TxIn, TxOut};
-use crate::field::{unhex, unhex32};
+use crate::field::{hex, unhex, unhex32};
 use crate::follow::{Source, SourceBlock, SourceError};
 use crate::json::block_from_getblock_value;
+use crate::raw::block_from_raw;
 use crate::state::needs_commit_height;
 use serde_json::{json, Value};
 use std::io::Read;
@@ -170,7 +175,8 @@ impl Source for CoreRpc {
 // ---------------------------------------------------------------- Esplora
 
 /// An Esplora server (`https://mempool.space/signet/api`, or one's own):
-/// `/block-height/:height`, `/block/:hash`, `/block/:hash/txs/:start`, `/tx/:txid/status`.
+/// `/block-height/:height`, `/block/:hash`, `/block/:hash/txs/:start`, `/block/:hash/raw`,
+/// `/tx/:txid/status`.
 pub struct Esplora {
     http: Http,
     base: String,
@@ -197,6 +203,44 @@ impl Esplora {
     fn get_json(&self, path: &str) -> Result<Value, SourceError> {
         let body = self.get(path)?.ok_or_else(|| later(format!("GET {path}: not found")))?;
         serde_json::from_slice(&body).map_err(|e| later(format!("GET {path}: {e}")))
+    }
+
+    /// The transactions of a block, 25 to a request.
+    fn pages(&self, hash: &str, count: u64) -> Result<Vec<Tx>, SourceError> {
+        let mut txs: Vec<Tx> = Vec::new();
+        while (txs.len() as u64) < count {
+            let path = format!("/block/{hash}/txs/{}", txs.len());
+            let page = self.get_json(&path)?;
+            let page = page.as_array().filter(|p| !p.is_empty() && p.len() <= PAGE);
+            let page = page.ok_or_else(|| later(format!("GET {path}: not a page of transactions")))?;
+            for t in page {
+                txs.push(esplora_tx(t).map_err(|e| later(format!("GET {path}: {e}")))?);
+            }
+        }
+        if txs.len() as u64 != count {
+            return Err(later(format!("GET /block/{hash}/txs: {} transactions for a tx_count of {count}", txs.len())));
+        }
+        Ok(txs)
+    }
+
+    /// The transactions of a block from its serialization, in one request; `None` where the
+    /// server has no such route (404). Bytes that are not the block asked for are an answer to
+    /// ask for again, not a reason to fall back on pages that nothing can check.
+    fn raw(&self, hash: &str, prev: &str, count: u64) -> Result<Option<Vec<Tx>>, SourceError> {
+        let path = format!("/block/{hash}/raw");
+        let Some(bytes) = self.get(&path)? else { return Ok(None) };
+        let block = block_from_raw(&bytes).map_err(|e| later(format!("GET {path}: {e}")))?;
+        if hex(&block.hash) != hash {
+            return Err(later(format!("GET {path}: the bytes are those of block {}", hex(&block.hash))));
+        }
+        // the block's own header against what /block/:hash said of it
+        if hex(&block.prev) != prev && !(prev.is_empty() && block.prev == [0; 32]) {
+            return Err(later(format!("GET {path}: the block before is {}, not {prev}", hex(&block.prev))));
+        }
+        if block.txs.len() as u64 != count {
+            return Err(later(format!("GET {path}: {} transactions for a tx_count of {count}", block.txs.len())));
+        }
+        Ok(Some(block.txs))
     }
 
     /// The height of the block that confirmed `txid`, in the best chain.
@@ -259,24 +303,17 @@ impl Source for Esplora {
             return Err(later(format!("GET /block/{hash}: no height or no tx_count")));
         };
         let prev = head.get("previousblockhash").and_then(Value::as_str).unwrap_or("").to_string();
-        let mut txs: Vec<Tx> = Vec::new();
-        while (txs.len() as u64) < count {
-            let path = format!("/block/{hash}/txs/{}", txs.len());
-            let page = self.get_json(&path)?;
-            let page = page.as_array().filter(|p| !p.is_empty() && p.len() <= PAGE);
-            let page = page.ok_or_else(|| later(format!("GET {path}: not a page of transactions")))?;
-            for t in page {
-                txs.push(esplora_tx(t).map_err(|e| later(format!("GET {path}: {e}")))?);
-            }
-        }
-        if txs.len() as u64 != count {
-            return Err(later(format!("GET /block/{hash}/txs: {} transactions for a tx_count of {count}", txs.len())));
-        }
+        // more than one page: the whole block in one request, where the server has the route
+        let raw = if count > PAGE as u64 { self.raw(hash, &prev, count)? } else { None };
+        let mut txs = match raw {
+            Some(txs) => txs,
+            None => self.pages(hash, count)?,
+        };
         // the height of the commit a DEPLOY reveals: the block does not give it
         for tx in &mut txs {
             if needs_commit_height(tx) {
                 let (commit, _) = tx.vin[0].prevout.expect("a witness carrier is not a coinbase");
-                let at = self.confirmed_at(&crate::field::hex(&commit))?;
+                let at = self.confirmed_at(&hex(&commit))?;
                 if at > height {
                     return Err(later(format!("GET /block/{hash}: a commit confirmed after its reveal")));
                 }
