@@ -29,7 +29,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 186 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 189 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
@@ -459,7 +459,18 @@ checks every request the page sends). Instead `src/sync.js`:
   WebCrypto failed, which is an error, not "not ours") are read again until it has. A note whose
   scan fails does not stop the others: they are scanned, the page shows the error, and the next
   sync reads again from that note (`match.js`). "Rescan from
-  zero" ignores the cache; a restored vault always rescans everything to find its notes.
+  zero" ignores the cache; a restored vault always rescans everything to find its notes;
+- asks every server what it needs **before the scan, and nothing after it** (`ui/notes-panel.js`
+  `syncOnce`; docs/audit/2026-11-24-sealing.md, sealing-1). An output that opens costs its owner about
+  0.2 s to scan and one that does not a fraction of a millisecond, and the `pkEph` and `ct` beside a
+  leaf are the indexer's word: a request that waited on the scan would tell the indexer, by its own
+  clock, whether the vault holds an address and how many outputs are its own. So the notes already
+  held, the spends refused, the listings, the DEPLOY reveals and a restored vault's count of keys are
+  all read first; the scan then runs with nothing to send until the next sync, which the user or an
+  unlock starts, and the DEPLOY timer keeps its own minute (`test/scan-timing.test.js`). The scan
+  runs on the page's thread, between WebCrypto calls: a timer that falls during it waits at most one
+  output's leaf check, about 0.2 s. (A worker would remove that too; `circuit/js` imports
+  `node:crypto`, which only the page's import map resolves.)
 
 Loading a cached tree recomputes it (about 0.2 ms per leaf) to check it against the cached root.
 A public note key costs about 170 ms (two BabyJubJub multiplications in `circuit/js`), so a new

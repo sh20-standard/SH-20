@@ -74,10 +74,14 @@ export async function getSyncer() {
   return syncer;
 }
 
-/** Merkle path and spent status of every owned note, from the local tree and nullifier set only. */
-async function checkOwned(s) {
+/**
+ * Merkle path and spent status of every owned note, from the local tree and nullifier set only: no
+ * request. With `rest`, only the notes not yet checked at this height: those the scan found or placed.
+ */
+async function checkOwned(s, { rest = false } = {}) {
   const v = st.vault;
   for (const n of [...v.state.notes]) {
+    if (rest && n.pathAt === s.height) continue;
     if (n.pos === null || n.pos === undefined) continue;
     const leaf = BigInt('0x' + n.leaf);
     if (n.pos >= s.tree.size || s.tree.leaves[n.pos] !== leaf) {
@@ -165,8 +169,20 @@ async function syncOnce({ full = false } = {}) {
   let failed = [];
   let refused = [];
   if (st.vault) {
-    // a note whose scan throws does not stop the others; the sync's leaves from the first of them stay
-    // unscanned, and the next sync reads them again (AUDIT §8.6)
+    // Every request of this sync goes out before the scan, and none after it (docs/audit/2026-11-24-sealing.md,
+    // sealing-1). An output that opens costs its owner about 0.2 s and one that does not a fraction of a
+    // millisecond, and the pkEph and ct of a leaf are the indexer's word: a request that waited on the scan
+    // would tell the indexer, by its clock, whether this vault holds an address and how many outputs are its
+    // own. None of what follows needs the scan: the notes held already (their paths, their spends, the spends
+    // refused), the listings, the DEPLOY reveals, and the other indexers' /notes a restored vault counts.
+    await checkOwned(s); // and a sealed note whose leaf moved is dropped before the scan, which finds it again (sealing-8)
+    refused = await settleRefused(s);
+    await syncListings();
+    await processDeploys().catch(report);
+    const counting = r.from === 0 && !st.sync.agreement.disagree.length && st.vault.state.unchecked?.notes;
+    const others = counting ? await Promise.allSettled(indexers.slice(1).map((i) => i.notes(0))) : null;
+    // the scan, on this device, with no request until the next sync. A note whose scan throws does not stop the
+    // others; the sync's leaves from the first of them stay unscanned, and the next sync reads them again (AUDIT §8.6)
     const m = await matchNotes(st.vault, r.notes, { onProgress: (d, n) => fill('sync-status', `Deriving note keys on this device: ${d} / ${n} (once per key)…`) });
     found = m.found;
     failed = m.failed;
@@ -174,18 +190,14 @@ async function syncOnce({ full = false } = {}) {
     // every leaf read and matched: a restored vault knows the public-note keys it used (AUDIT §8.9),
     // once no other indexer disagrees with the state those leaves come from, and the keys every other
     // indexer names in its own /notes are counted too (one whose labels hide a key cannot keep it back)
-    if (r.from === 0 && !failed.length && !st.sync.agreement.disagree.length && st.vault.state.unchecked?.notes) {
-      const others = await Promise.allSettled(indexers.slice(1).map((i) => i.notes(0)));
+    if (others && !failed.length) {
       for (const o of others) if (o.status === 'fulfilled') await noteKeysSeen(st.vault, o.value);
       if (others.every((o) => o.status === 'fulfilled')) await st.vault.chainChecked('notes');
     }
-    await checkOwned(s);
-    refused = await settleRefused(s);
-    await syncListings();
+    await checkOwned(s, { rest: true }); // the notes the scan found, or gave a position
   }
   renderAll();
   staticWarnings();
-  processDeploys().catch(report);
   if (found) $('warnings').append(h('div', { class: 'warn' }, `${found} note(s) found in the tree.`));
   if (failed.length) {
     $('warnings').append(h('div', { class: 'warn err' }, `${failed.length} note(s) could not be scanned, from leaf ${failed[0].pos} (${failed[0].error.message}). The others were; the next sync reads these again.`));

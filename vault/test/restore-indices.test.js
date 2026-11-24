@@ -117,7 +117,10 @@ test('8.9 lock keys past the first window are found again, and a key found moves
 test('8.9 the page: a full sync until the note keys are checked, then chainChecked after every indexer\'s notes; the words restore as restored', () => {
   const notes = src('ui/notes-panel.js');
   assert.match(notes, /s\.sync\(indexer, \{ full: full \|\| !!st\.vault\?\.state\.unchecked\?\.notes \}\)/);
-  assert.match(notes, /if \(r\.from === 0 && !failed\.length && !st\.sync\.agreement\.disagree\.length && st\.vault\.state\.unchecked\?\.notes\) \{/);
+  // the other indexers' notes are read before the scan (sealing-1), and counted once it failed on no leaf
+  assert.match(notes, /const counting = r\.from === 0 && !st\.sync\.agreement\.disagree\.length && st\.vault\.state\.unchecked\?\.notes;/);
+  assert.match(notes, /const others = counting \? await Promise\.allSettled\(indexers\.slice\(1\)\.map\(\(i\) => i\.notes\(0\)\)\) : null;/);
+  assert.match(notes, /if \(others && !failed\.length\) \{/);
   assert.match(notes, /indexers\.slice\(1\)\.map\(\(i\) => i\.notes\(0\)\)/, 'the notes of every other indexer');
   assert.match(notes, /if \(others\.every\(\(o\) => o\.status === 'fulfilled'\)\) await st\.vault\.chainChecked\('notes'\);/, 'and every one of them read');
   const market = src('ui/market-panel.js');
