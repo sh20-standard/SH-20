@@ -20,6 +20,11 @@ export function options(args, known, usage, { positionals = 0 } = {}) {
     console.error(`${why}\n${usage}`);
     process.exit(1);
   };
+  // --help and -h print the usage and stop without an error, as indexer-rs does
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(usage);
+    process.exit(0);
+  }
   const values = new Map();
   const positional = [];
   for (let i = 0; i < args.length; i++) {

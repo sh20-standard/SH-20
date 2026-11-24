@@ -39,9 +39,15 @@ const source = opt('rpc') !== undefined
 const network = opt('network') ?? (opt('rpc') ? (await source.rpc('getblockchaininfo').catch(() => null))?.chain : undefined) ?? 'unknown';
 // --verifier test: the rule of the vectors (one proof, "valid-proof" padded with zeros, is valid), for differential runs
 const TEST_PROOF = Buffer.concat([Buffer.from('valid-proof'), Buffer.alloc(480 - 11)]);
-const verifier = opt('verifier') === 'test'
-  ? { name: 'test', verifySpend: (a) => Buffer.from(a.proof).equals(TEST_PROOF) }
-  : opt('verifier') ? plonkVerifier({ wasm: opt('verifier'), vk: opt('vk') }) : undefined;
+let verifier;
+try {
+  verifier = opt('verifier') === 'test'
+    ? { name: 'test', verifySpend: (a) => Buffer.from(a.proof).equals(TEST_PROOF) }
+    : opt('verifier') ? plonkVerifier({ wasm: opt('verifier'), vk: opt('vk') }) : undefined;
+} catch (e) {
+  console.error(`error: --verifier: ${e.code === 'ENOENT' ? `no file ${e.path}` : e.message}`);
+  process.exit(1);
+}
 // The rest of the profile, by the names indexer-rs takes: every indexer of a network must be given the same.
 const profile = profileFrom(opt, { activationHeight, network });
 const indexer = new Indexer({ profile, verifier });
