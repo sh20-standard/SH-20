@@ -10,7 +10,7 @@ import { DOMAIN, FR } from '../../../indexer/src/constants.js';
 import * as node from '../index.js';
 import * as web from '../webcrypto.js';
 import { TAG } from '../seal.js';
-import { isLowOrder } from '../subtle.js';
+import { canonicalU, isLowOrder } from '../subtle.js';
 
 const vectors = JSON.parse(readFileSync(new URL('../vectors.json', import.meta.url), 'utf8'));
 const hex = (b) => Buffer.from(b).toString('hex');
@@ -87,6 +87,11 @@ test('X25519 is the function of RFC 7748 on every encoding, in both entry points
     assert.equal(isZero, isLowOrder(Uint8Array.from(u)), `low order, by its bytes: ${hex(u)}`);
     assert.equal(hex(node.x25519(k, u)), hex(want), `index.js, u = ${hex(u)}`);
     assert.equal(hex(await web.x25519(Uint8Array.from(k), Uint8Array.from(u))), hex(want), `webcrypto.js, u = ${hex(u)}`);
+    // what the platform is handed: the same point, below p, bit 255 clear, and that is all canonicalU changes
+    const c = canonicalU(Uint8Array.from(u));
+    assert.ok(le(c) < P && hex(canonicalU(c)) === hex(c), `canonical: ${hex(u)}`);
+    assert.equal(le(c), (le(u) & ((1n << 255n) - 1n)) % P);
+    assert.equal(hex(rfc7748(k, c)), hex(want));
   }
   assert.equal(zeros, 14);
 });
@@ -358,12 +363,11 @@ async function asFirefox(fn) {
   }
 }
 
-// Finding sealing-2. Five values of pk_eph are not of low order for RFC 7748, for OpenSSL, for Chrome and for the
-// Rust model, and Firefox refuses them. subtle.js hands them to the platform as they are, so in Firefox the scan of an
-// output that carries one throws, at every sync: the vault reads the chain again from that leaf each time, and a
-// restored vault never ends its first check. Handed over as its canonical encoding (bit 255 cleared, reduced modulo
-// p), each of the five gives the RFC's bytes in Firefox too.
-test('sealing-2: five pk_eph that Firefox refuses make a scan throw there, and are ordinary points everywhere else', async () => {
+// Finding sealing-2, fixed. Five values of pk_eph are not of low order for RFC 7748, for OpenSSL, for Chrome and for
+// the Rust model, and Firefox refuses them. subtle.js handed them to the platform as they were, so in Firefox the scan
+// of an output that carried one threw, at every sync. Both entry points now hand the platform the canonical encoding
+// (bit 255 cleared, reduced modulo p), which Firefox takes: the scan answers "not for this wallet" there too.
+test('sealing-2: five pk_eph that Firefox refuses are scanned like any other, there too', async () => {
   const k = bytes('five/k');
   for (const u of FIVE) {
     assert.equal(isLowOrder(Uint8Array.from(u)), false, 'not one of the seven: the platform is asked');
@@ -382,8 +386,11 @@ test('sealing-2: five pk_eph that Firefox refuses make a scan throw there, and a
   await asFirefox(async () => {
     assert.equal((await web.scan(me.ivk, me.address, good)).v, 700n);
     for (const u of FIVE) {
-      await assert.rejects(web.scan(me.ivk, me.address, { ...good, pkEph: Uint8Array.from(u) }), { name: 'DataError' }, 'the scan now gives such a pk_eph to the platform in its canonical form: update the report');
+      assert.equal(await web.scan(me.ivk, me.address, { ...good, pkEph: Uint8Array.from(u) }), null, 'the platform is handed the canonical encoding, which it takes');
+      assert.equal(hex(await web.x25519(Uint8Array.from(k), Uint8Array.from(u))), hex(rfc7748(k, u)));
     }
+    // the refusal is still an error for whoever hands the platform the bytes as they are
+    await assert.rejects(globalThis.crypto.subtle.importKey('raw', FIVE[0], { name: 'X25519' }, true, []), { name: 'DataError' });
   });
 });
 
