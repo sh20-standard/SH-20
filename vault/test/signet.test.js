@@ -12,12 +12,12 @@ import { SERVERS, defaultSettings } from '../src/servers.js';
 import { PROFILE_NAME_MODULE, SIGNET_NAME_MODULE, fsReader, signetActivation, site, writeSite } from '../build.js';
 
 const fixedAt = (A) => {
-  // the working tree, with the signet's activation height fixed at A, as at launch
+  // the working tree, with the signet's activation height at A (null: not fixed), whatever the tree holds
   const fs = fsReader();
   return {
     ...fs,
     read: (p) => (p === 'vault/src/profile.js'
-      ? Buffer.from(fs.read(p).toString('utf8').replace(/^export const SIGNET_ACTIVATION_HEIGHT = null;$/m, `export const SIGNET_ACTIVATION_HEIGHT = ${A};`))
+      ? Buffer.from(fs.read(p).toString('utf8').replace(/^export const SIGNET_ACTIVATION_HEIGHT = (null|0|[1-9]\d*);$/m, `export const SIGNET_ACTIVATION_HEIGHT = ${A};`))
       : fs.read(p)),
   };
 };
@@ -35,18 +35,20 @@ test('1. a signet profile next to the test one: DEFAULT_PROFILE, with the activa
   assert.ok(Object.isFrozen(at));
   for (const bad of [-1, 1.5, '230000', null, NaN]) assert.throws(() => profileAt(bad), /not a block height/, String(bad));
 
-  // not fixed yet: no signet profile, and the source tree follows the test one
-  assert.equal(SIGNET_ACTIVATION_HEIGHT, null);
-  assert.equal(PROFILES.signet, null);
+  // before the launch no signet profile; from the launch (docs/SIGNET.md, step 1) the one of its A. Either way the
+  // source tree follows the test profile.
+  if (SIGNET_ACTIVATION_HEIGHT === null) assert.equal(PROFILES.signet, null);
+  else assert.deepEqual({ ...PROFILES.signet }, { ...profileAt(SIGNET_ACTIVATION_HEIGHT) });
   assert.equal(PROFILE_NAME, 'test');
   assert.equal(PROFILE, PROFILES.test);
-  assert.equal(signetActivation(fsReader()), null);
+  assert.equal(signetActivation(fsReader()), SIGNET_ACTIVATION_HEIGHT);
+  assert.equal(signetActivation(fixedAt(null)), null);
   assert.equal(signetActivation(fixedAt(230000)), 230000);
   assert.equal(signetActivation(fixedAt(0)), 0);
 });
 
 test('1. a signet build refuses until the activation height is fixed; then only profile-name.js differs, and the page follows it', async () => {
-  assert.throws(() => site(fsReader(), { signet: true }), /no signet build: the signet activation height is not fixed/);
+  assert.throws(() => site(fixedAt(null), { signet: true }), /no signet build: the signet activation height is not fixed/);
   const test = new Map(site(fixedAt(230000)));
   const signet = new Map(site(fixedAt(230000), { signet: true }));
   assert.deepEqual([...signet.keys()], [...test.keys()]);
