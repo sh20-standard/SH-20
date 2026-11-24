@@ -28,7 +28,7 @@ const memStorage = () => {
 const honest = () => ({
   network: DEFAULT_PROFILE.network, height: 20, digest: 'd'.repeat(64), activationHeight: DEFAULT_PROFILE.activationHeight,
   deployBurn: String(DEFAULT_PROFILE.deployBurn), deployMaturity: DEFAULT_PROFILE.deployMaturity, anchorWindow: DEFAULT_PROFILE.anchorWindow,
-  genesis: DEFAULT_PROFILE.genesis.ticker,
+  genesis: DEFAULT_PROFILE.genesis.ticker, verifier: 'plonk-bn254-hermez',
 });
 const ix = (base, status, token = null) => ({
   base,
@@ -73,7 +73,7 @@ test('2. every value of /status is compared with that profile: an indexer that d
 
   // one indexer differs: it is named, with what differs; one that does not answer is not compared
   let r = await profileCheck([ix('http://a', honest()), ix('http://b', { ...honest(), anchorWindow: 1000 }), ix('http://c', null)]);
-  assert.deepEqual(r, { answered: 2, problems: ['http://b follows another profile: anchorWindow 1000, the vault has 100'] });
+  assert.deepEqual(r, { answered: 2, problems: ['http://b follows another profile: anchorWindow 1000, the vault has 100'], unverified: [] });
   r = await profileCheck([ix('http://a', null)]);
   assert.deepEqual(r.problems, ['no indexer answered']);
 
@@ -232,7 +232,7 @@ test('5. every indexer lying together on N and D: the vault refuses to mint, dep
   const each = ['http://a', 'http://b'].map((b) => `${b} follows another profile: deployBurn 0, the vault has 1000; deployMaturity 0, the vault has 6`);
   // they agree with each other: compared with the vault, not with each other
   const r = await profileCheck(liars());
-  assert.deepEqual(r, { answered: 2, problems: each });
+  assert.deepEqual(r, { answered: 2, problems: each, unverified: [] });
   const c = await crossCheck(liars(), 'SH20', { sleep: async () => {} });
   assert.deepEqual([c.agreed, c.problems], [0, each], 'the mint is refused');
   // whatever they say, a reveal waits N = 6 of the profile

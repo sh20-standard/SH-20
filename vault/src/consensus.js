@@ -44,15 +44,36 @@ export function profileProblems(answers) {
     .map(({ base, diff }) => `${base} follows another profile: ${diff.join('; ')}`);
 }
 
+// The one verifier that checks the proof of a spend: the PLONK verifier of circuit/, under the pinned
+// key (docs/API.md, /status). Any other name, or none, is an indexer that does not verify spends
+// (docs/audit/2026-11-24-verifier.md, verifier-4): `reject-all` refuses them all, `test` accepts
+// the vectors' fixed bytes as the proof of anything, a name the vault does not know proves nothing.
+export const SPEND_VERIFIER = 'plonk-bn254-hermez';
+
+/**
+ * Why the indexer that answered `status` does not verify spends, in words for the page, or null when
+ * its verifier is SPEND_VERIFIER.
+ */
+export function unverifiedSpends(status) {
+  const v = status?.verifier;
+  if (v === SPEND_VERIFIER) return null;
+  if (v === 'reject-all') return 'it refuses every spend (verifier reject-all): a transfer to you does not show, and one you send is refused';
+  const named = typeof v === 'string' && v ? `verifier ${JSON.stringify(v)}` : 'it names no verifier';
+  return `it does not check the proofs of spends (${named}): a note it lists may not exist`;
+}
+
 /**
  * Asks every indexer's /status now. `problems` (profileProblems) must refuse any action; an
- * indexer that does not answer is not compared, but at least one must. Returns { answered, problems }.
+ * indexer that does not answer is not compared, but at least one must. `unverified` names each
+ * indexer that answered and does not verify spends (unverifiedSpends), in the order of `apis`.
+ * Returns { answered, problems, unverified }.
  */
 export async function profileCheck(apis) {
   const settled = await Promise.allSettled(apis.map((a) => a.status()));
   const answers = settled.map((r, i) => (r.status === 'fulfilled' ? { base: apis[i].base, status: r.value } : null)).filter(Boolean);
-  if (!answers.length) return { answered: 0, problems: ['no indexer answered'] };
-  return { answered: answers.length, problems: profileProblems(answers) };
+  if (!answers.length) return { answered: 0, problems: ['no indexer answered'], unverified: [] };
+  const unverified = answers.map(({ base, status }) => ({ base, why: unverifiedSpends(status) })).filter((x) => x.why);
+  return { answered: answers.length, problems: profileProblems(answers), unverified };
 }
 
 /**

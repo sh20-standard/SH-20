@@ -29,7 +29,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 158 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 162 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
@@ -43,7 +43,7 @@ node dev/regtest.js --isolate   # bitcoind (tools/bitcoind.sh: a pinned release,
 node dev/e2e.js                 # headless Chrome: mint, TRANSFER, DEPLOY, BURN, LIST, TAKE, cancel, CLAIM, restore
 node dev/regtest.js --isolate --mirror   # the same, the page reading the indexers' static mirrors only
 E2E_MIRROR=1 node dev/e2e.js
-node dev/before-a.js            # no chain: the signet release before its block A, on two mirrors before A
+node dev/before-a.js            # no chain: the signet release before its block A, on two mirrors before A; an indexer that verifies no spend named beside the balance
 ```
 
 `dev/regtest.js` runs Bitcoin Core on a regtest chain of its own (in a temporary folder) with the
