@@ -258,7 +258,7 @@ test('8.4 no backup in clear; a passphrase can be added, and changed with the cu
   const st = memStorage();
   const v = await Vault.fromWords(st, WORDS); // created without a passphrase: stored in clear, as before
   assert.ok(!v.encrypted);
-  assert.throws(() => v.exportBackup(), /no backup in clear: set a passphrase first/);
+  await assert.rejects(v.exportBackup(), /no backup in clear: set a passphrase first/);
   await assert.rejects(v.setPassphrase(''), /cannot be empty/);
   assert.equal(await v.checkPassphrase('anything'), false, 'nothing to check against on a clear vault');
 
@@ -266,7 +266,11 @@ test('8.4 no backup in clear; a passphrase can be added, and changed with the cu
   assert.ok(v.encrypted);
   const rec = st.getItem(STORAGE_KEY);
   assert.ok(!/plain|seed|abandon/.test(rec), 'the copy on this device is encrypted at once');
-  assert.equal(v.exportBackup(), rec, 'and the backup is that record');
+  // the backup is the whole vault, encrypted under the same passphrase (format 0: its notes in it, since vault-3)
+  const backup = await v.exportBackup();
+  assert.ok(!/plain|seed|abandon/.test(backup), 'and so is the backup');
+  assert.equal(JSON.parse(backup).salt, JSON.parse(rec).salt);
+  assert.equal((await Vault.open(memStorage(), 'first', backup)).address, v.address);
   assert.equal((await Vault.open(st, 'first')).address, v.address);
   await assert.rejects(Vault.open(st), /needs its passphrase/);
 
@@ -327,7 +331,7 @@ test('8.4 the page: backup only when encrypted, a passphrase form, the words beh
   const pass = app.slice(app.indexOf('function passphraseForm('), app.indexOf('function wordsBox('));
   assert.match(pass, /next\.value !== again\.value/, 'typed twice');
   assert.match(pass, /setPassphrase\(next\.value, current\?\.value/);
-  assert.match(src('keys.js'), /exportBackup\(\) \{\n\s+const text = this\.storage\.getItem\(STORAGE_KEY\);\n\s+if \(!this\.#key/);
+  assert.match(src('keys.js'), /async exportBackup\(\) \{\n\s+this\.#checkUnchanged\(\);\n\s+if \(!this\.#key\) throw/);
 });
 
 // ---- 8.6: scanOutput turned every failure into "not ours" -------------------------------------------

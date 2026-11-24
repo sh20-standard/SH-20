@@ -77,6 +77,8 @@ export async function getSyncer() {
 /**
  * Merkle path and spent status of every owned note, from the local tree and nullifier set only: no
  * request. With `rest`, only the notes not yet checked at this height: those the scan found or placed.
+ * Nothing is written here: a path and a spent status are not stored, and what is (a note dropped, or
+ * out of the tree) goes with the sync's one save (vault-3).
  */
 async function checkOwned(s, { rest = false } = {}) {
   const v = st.vault;
@@ -85,13 +87,13 @@ async function checkOwned(s, { rest = false } = {}) {
     if (n.pos === null || n.pos === undefined) continue;
     const leaf = BigInt('0x' + n.leaf);
     if (n.pos >= s.tree.size || s.tree.leaves[n.pos] !== leaf) {
-      if (n.kind === 'sealed') await v.dropNote(n.id); // scanning finds it again wherever it now is
-      else await v.updateNote(n.id, { status: 'not in tree (reorg?)', pos: null, pathAt: null, spent: undefined });
+      if (n.kind === 'sealed') await v.dropNote(n.id, { save: false }); // scanning finds it again wherever it now is
+      else await v.updateNote(n.id, { status: 'not in tree (reorg?)', pos: null, pathAt: null, spent: undefined }, { save: false });
       continue;
     }
     s.witness(n.pos, leaf); // throws if the local path does not reach the local root
     const at = s.spentAt(frHex(await v.nullifier(n)));
-    await v.updateNote(n.id, { pathAt: s.height, spent: at === undefined ? 'unknown' : at === null ? 'no' : `block ${at}` });
+    await v.updateNote(n.id, { pathAt: s.height, spent: at === undefined ? 'unknown' : at === null ? 'no' : `block ${at}` }, { save: false });
   }
 }
 
@@ -185,10 +187,9 @@ async function syncOnce({ full = false } = {}) {
     const others = counting ? await Promise.allSettled(indexers.slice(1).map((i) => i.notes(0))) : null;
     // the scan, on this device, with no request until the next sync. A note whose scan throws does not stop the
     // others; the sync's leaves from the first of them stay unscanned, and the next sync reads them again (AUDIT §8.6)
-    const m = await matchNotes(st.vault, r.notes, { onProgress: (d, n) => fill('sync-status', `Deriving note keys on this device: ${d} / ${n} (once per key)…`) });
+    const m = await matchNotes(st.vault, r.notes, { defer: true, onProgress: (d, n) => fill('sync-status', `Deriving note keys on this device: ${d} / ${n} (once per key)…`) });
     found = m.found;
     failed = m.failed;
-    await s.scanned(failed[0]?.pos ?? null);
     // every leaf read and matched: a restored vault knows the public-note keys it used (AUDIT §8.9),
     // once no other indexer disagrees with the state those leaves come from, and the keys every other
     // indexer names in its own /notes are counted too (one whose labels hide a key cannot keep it back)
@@ -197,6 +198,10 @@ async function syncOnce({ full = false } = {}) {
       if (others.every((o) => o.status === 'fulfilled')) await st.vault.chainChecked('notes');
     }
     await checkOwned(s, { rest: true }); // the notes the scan found, or gave a position
+    // one write for the sync (vault-3): the notes found or changed, then the vault's record; and only then are the
+    // leaves marked scanned, so that a note found is never lost to a page closed in between
+    await st.vault.save();
+    await s.scanned(failed[0]?.pos ?? null);
   }
   renderAll();
   staticWarnings();

@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { Vault } from '../src/keys.js';
+import { memoryNoteStore } from '../src/notestore.js';
 import { matchNotes } from '../src/match.js';
 import { anchor } from '../src/send.js';
 import { decodeAddress, seal } from '../src/sh20.js';
@@ -32,11 +33,16 @@ test('sealing-3: notes sent to the vault grow one record without end, until it c
     },
     removeItem: (k) => m.delete(k),
   };
-  const v = await Vault.fromWords(storage, WORDS, 'a passphrase');
+  // fixed (vault-3, the same finding): each note is a record of its own, in the note store, which is IndexedDB
+  // beside the page's localStorage (src/notestore.js); here a store in memory stands for it
+  const notes = memoryNoteStore();
+  const v = await Vault.fromWords(storage, WORDS, 'a passphrase', { notes });
   const mine = await decodeAddress('tsh20', v.address);
   // notes of 1 unit, sealed to the vault's address by anyone
   for (let i = 0; i < 3; i++) assert.ok(await v.receive(outNote(await seal(mine, 'GENE', 1n, h(`dust/${i}`)), 1000 + i)));
-  assert.deepEqual([...m.keys()], ['sh20.vault.v0'], 'the whole vault is one value');
+  assert.deepEqual([...m.keys()], ['sh20.vault.v0'], 'localStorage holds the vault\'s record alone');
+  assert.deepEqual([...notes.records.keys()], ['out:1000', 'out:1001', 'out:1002'], 'and each note is a record of its own');
+  assert.ok(![...notes.records.values()].some((t) => /plain|"v":|GENE/.test(t)), 'encrypted, as the vault is');
   // more of the same shape, without the 0.2 s each one takes to scan
   const grow = (n) => {
     while (v.state.notes.length < n) v.state.notes.push({ ...v.state.notes[0], id: `out:${1000 + v.state.notes.length}`, pos: 1000 + v.state.notes.length, pathAt: 250000, spent: 'no' });
@@ -48,16 +54,28 @@ test('sealing-3: notes sent to the vault grow one record without end, until it c
   grow(2000);
   await v.save();
   const each = (size() - at1000) / 1000;
-  assert.ok(each > 500 && each < 1000, `${each} characters a note`);
-  // one updateNote is one save of everything, and a sync makes one for each note (ui/notes-panel.js checkOwned)
+  assert.ok(each < 40, `${each} characters a note in the vault's record: its id`);
+  const record = [...notes.records.values()].at(-1).length;
+  assert.ok(record > 500 && record < 1500, `${record} characters a note, in a record of its own`);
+  // a path or a spent status is not stored, and a change to one note writes that note and the record, once
   const before = saves;
-  await v.updateNote(v.state.notes[0].id, { pathAt: 250001 });
-  assert.equal(saves - before, 1);
-  // past the quota nothing new is recorded: not a payment received, not the spend that would move the notes out
-  grow(Math.floor(QUOTA / each) + 1);
-  await assert.rejects(v.save(), { name: 'QuotaExceededError' }, 'the vault now keeps its notes elsewhere, or prunes them: update the report');
-  await assert.rejects(v.receive(outNote(await seal(mine, 'GENE', 1000n, h('a real payment')), 999999)), { name: 'QuotaExceededError' });
-  await assert.rejects(v.addPending({ kind: 'TRANSFER', envelope: '00'.repeat(830), inputs: [] }), { name: 'QuotaExceededError' });
+  const writes = notes.writes;
+  await v.updateNote(v.state.notes[0].id, { pathAt: 250001, spent: 'no' });
+  assert.equal(saves - before, 0, 'what a sync computes again is not written');
+  await v.updateNote(v.state.notes[0].id, { status: 'not in tree (reorg?)' });
+  assert.deepEqual([saves - before, notes.writes - writes], [1, 1]);
+  // past where the whole vault in one value met the quota, everything is still recorded: a payment received,
+  // and the spend that would move the notes out
+  grow(Math.floor(QUOTA / 750) + 1);
+  await v.save();
+  assert.ok(size() < QUOTA / 10, `the vault's record is ${size()} characters for ${v.state.notes.length} notes`);
+  assert.ok(await v.receive(outNote(await seal(mine, 'GENE', 1000n, h('a real payment')), 999999)));
+  assert.ok(await v.addPending({ kind: 'TRANSFER', envelope: '00'.repeat(830), inputs: [] }));
+  // and it opens again from those records, in its order, with its path and spent status left to the next sync
+  const again = await Vault.open(storage, 'a passphrase', undefined, notes);
+  assert.equal(again.missingNotes, 0);
+  assert.deepEqual(again.state.notes.map((n) => n.id), v.state.notes.map((n) => n.id));
+  assert.equal(again.state.notes[1].pathAt, undefined);
 });
 
 // Finding sealing-8. A note is named by its position, and `receive` answers "known" for a position it has a record

@@ -8,7 +8,11 @@ What works today, without proofs:
 
 - a vault seed created in the browser, stored in `localStorage`, encrypted with AES-GCM under
   a PBKDF2-SHA256 passphrase key (600,000 iterations), which can be added or changed at any time,
-  with backup (only ever encrypted) and restore;
+  with backup (only ever encrypted) and restore. Each note is a record of its own in IndexedDB,
+  encrypted under the same key with its id as associated data, written when it changes and only
+  then (`src/notestore.js`); a sync writes once, and a note's path and spent status, which every sync
+  computes again, are not stored (docs/audit/2026-11-24-vault.md, vault-3: notes anyone sends no
+  longer make each sync rewrite the whole vault, nor fill the 5 MB of `localStorage`);
 - connecting a wallet and signing PSBTs that the vault builds itself;
 - **MINT** end to end: the 42-byte OP_RETURN envelope of `docs/SPEC-WIRE.md` (43 bytes for a
   batch of `k` mints), serialised by `indexer/src/codec.js` itself, in one transaction of 164 vB;
@@ -29,7 +33,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 192 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 199 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
@@ -149,7 +153,8 @@ folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
   is flagged: treat its words as exposed.
 - Each CID is its own origin with its own empty storage. When moving to a new version, download
   the backup first and restore it on the new page.
-- The backup file is the stored record, and is only written encrypted: a vault without a
+- The backup file is the whole vault, its notes in it, in one record as earlier versions wrote it,
+  and is only written encrypted: a vault without a
   passphrase has to set one first ("Set a passphrase"; "Change passphrase" asks the current one).
   A clear backup from an earlier version, restored with a passphrase, is encrypted with it. On an
   encrypted vault the recovery words are shown after the passphrase. A tab that holds the vault
@@ -560,6 +565,7 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | `src/ui/notes-panel.js`, `market-panel.js` | the notes and the private sync; listings and buying from an offer |
 | `src/ui/settings-panel.js`, `render.js` | the servers; `renderAll` |
 | `src/keys.js` | master secret, recovery words, encrypted storage, backup, the vault's notes, spends under way |
+| `src/notestore.js` | where the notes are kept: one record each, in IndexedDB beside the page's localStorage |
 | `src/bip39.js`, `src/bip39-english.js` | the 12 recovery words |
 | `src/send.js` | a TRANSFER or a DEPLOY with a burn, end to end: plan, prove, commit and reveal |
 | `src/market.js` | BURN, LIST, offers, TAKE, cancel and CLAIM |

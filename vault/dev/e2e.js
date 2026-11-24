@@ -257,6 +257,10 @@ async function main() {
   if (!(await evaluate(`document.querySelector('#notes-body tbody').innerText.includes('2,000')`))) throw new Error('the batch note is not 2,000');
   step('my notes: ' + (await evaluate(`document.querySelector('#notes-body tbody').innerText.replace(/\\s+/g, ' ')`)));
   step('sync: ' + (await evaluate(`document.querySelector('#sync-status').innerText`)));
+  // the notes are records of their own in IndexedDB, and localStorage holds the vault's record alone (vault-3)
+  const noteRecords = await evaluate(`new Promise((done) => { const r = indexedDB.open('sh20.vault.v0.notes'); r.onsuccess = () => { const q = r.result.transaction('notes').objectStore('notes').getAllKeys(); q.onsuccess = () => done({ notes: q.result, local: Object.keys(localStorage).filter((k) => k.startsWith('sh20.vault')), format: JSON.parse(localStorage.getItem('sh20.vault.v0')).v }); }; })`);
+  if (!noteRecords.notes.length || noteRecords.local.join() !== 'sh20.vault.v0' || noteRecords.format !== 1) throw new Error(`the notes are not stored one record each: ${JSON.stringify(noteRecords)}`);
+  step(`stored: ${noteRecords.notes.length} note record(s) in IndexedDB (${noteRecords.notes.join(', ')}), the vault's record in localStorage`);
   const leaks = urls.filter((u) => /\/path\/|\/nullifier\//.test(u));
   if (leaks.length) throw new Error('per-note requests sent: ' + leaks.join(', '));
   step(`${urls.filter((u) => u.includes(':80')).length} requests to the indexers and Esplora, none per note`);

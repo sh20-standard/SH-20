@@ -65,7 +65,7 @@ export function renderVault() {
         h('button', { type: 'button', class: 'secondary', onclick: () => navigator.clipboard?.writeText(v.address).catch(report) }, 'Copy address'),
         v.words ? h('button', { type: 'button', class: 'secondary', name: 'words', onclick: showWords }, st.showWords ? 'Hide recovery words' : 'Show recovery words') : null,
         h('button', { type: 'button', class: 'secondary', name: 'passphrase', onclick: () => { st.vaultForm = st.vaultForm === 'pass' ? null : 'pass'; renderVault(); } }, v.encrypted ? 'Change passphrase' : 'Set a passphrase'),
-        h('button', { type: 'button', class: 'secondary', name: 'backup', disabled: !v.encrypted, title: v.encrypted ? null : 'set a passphrase first: a backup is never written in clear', onclick: () => { try { downloadBackup(); } catch (e) { report(e); } } }, 'Download backup'),
+        h('button', { type: 'button', class: 'secondary', name: 'backup', disabled: !v.encrypted, title: v.encrypted ? null : 'set a passphrase first: a backup is never written in clear', onclick: () => downloadBackup().catch(report) }, 'Download backup'),
         h('button', { type: 'button', class: 'secondary', onclick: lock }, 'Lock')),
       st.vaultForm === 'words' ? keep('words', () => wordsForm(v)) : null,
       st.vaultForm === 'pass' ? keep('pass', () => passphraseForm(v)) : null,
@@ -85,7 +85,8 @@ export function renderVault() {
       busy(btn, async () => {
         st.vault = await Vault.open(localStorage, pass.value);
         renderAll();
-        syncNotes().catch(report);
+        // a note record the store no longer holds (site data cleared in part): a full rescan finds the note again
+        syncNotes({ full: st.vault.missingNotes > 0 }).catch(report);
       })();
     });
     fill('vault-body', h('p', {}, 'A vault exists on this device.'), form);
@@ -175,8 +176,8 @@ function wordsBox(words) {
     h('ol', { id: 'words' }, words.split(' ').map((w) => h('li', { class: 'mono' }, w))));
 }
 
-function downloadBackup() {
-  const blob = new Blob([st.vault.exportBackup()], { type: 'application/json' });
+async function downloadBackup() {
+  const blob = new Blob([await st.vault.exportBackup()], { type: 'application/json' });
   const a = h('a', { href: URL.createObjectURL(blob), download: 'sh20-vault-backup.json' });
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);

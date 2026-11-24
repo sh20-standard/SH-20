@@ -33,7 +33,7 @@ test('8.9 a restored vault reserves no index before a sync has checked it agains
   assert.ok(RESTORE_SKIP < RESTORE_GAP && LOCK_SKIP < LOCK_GAP, 'a later restore from the words still finds what comes after');
   // device A writes a backup, then mints three notes (mined) and a fourth (broadcast, not mined yet), and lists twice
   const a = await Vault.fromWords(memStorage(), WORDS, 'pass');
-  const backup = a.exportBackup();
+  const backup = await a.exportBackup();
   for (let i = 0; i < 4; i++) assert.equal((await a.reserveNote()).index, i, 'a vault made here reserves at once');
   assert.equal(await a.reserveLock(), 0);
   assert.equal(await a.reserveLock(), 1);
@@ -64,7 +64,7 @@ test('8.9 a restored vault reserves no index before a sync has checked it agains
   await w.chainChecked('notes');
   assert.equal((await w.reserveNote()).index, 3 + RESTORE_SKIP);
   // a skip does not add up: restoring the backup of a vault that skipped once skips from what it found
-  const again = await Vault.restore(memStorage(), (await (async () => { await w.setPassphrase('p2'); return w.exportBackup(); })()), 'p2');
+  const again = await Vault.restore(memStorage(), (await (async () => { await w.setPassphrase('p2'); return await w.exportBackup(); })()), 'p2');
   await matchNotes(again, notes);
   await again.chainChecked('notes');
   assert.equal(again.state.next, 3 + RESTORE_SKIP + 1, 'its own reservation, and no second skip');
@@ -72,7 +72,7 @@ test('8.9 a restored vault reserves no index before a sync has checked it agains
 
 test('8.9 a note key an indexer reports moves the counter, even with an amount that does not give its leaf', async () => {
   const a = await Vault.fromWords(memStorage(), WORDS, 'pass');
-  const backup = a.exportBackup();
+  const backup = await a.exportBackup();
   const lying = { ...(await minted(a, 4, 0)), v: 999n }; // the leaf is that of 1000: (ticker, v) do not match it
   const b = await Vault.restore(memStorage(), backup, 'pass');
   assert.equal((await matchNotes(b, [lying])).found, 0, 'not recorded as a note');
@@ -83,7 +83,7 @@ test('8.9 a note key an indexer reports moves the counter, even with an amount t
 
 test('8.9 a note key the primary hides is counted from the other indexers\' notes', async () => {
   const a = await Vault.fromWords(memStorage(), WORDS, 'pass');
-  const backup = a.exportBackup();
+  const backup = await a.exportBackup();
   const honest = [await minted(a, 0, 0), await minted(a, 40, 1)]; // within RESTORE_GAP of the one before
   // the primary labels the second MINT as a sealed output, without its npk: it matches nothing
   const primary = [honest[0], { ...honest[1], kind: 'OUT', npk: null, ticker: null, v: null, pkEph: new Uint8Array(32), ct: new Uint8Array(28) }];
@@ -99,7 +99,7 @@ test('8.9 a note key the primary hides is counted from the other indexers\' note
 
 test('8.9 lock keys past the first window are found again, and a key found moves the counter even when its LIST cannot be read', async () => {
   const a = await Vault.fromWords(memStorage(), WORDS, 'pass');
-  const backup = a.exportBackup();
+  const backup = await a.exportBackup();
   const listings = [await listed(a, 5), await listed(a, 12), await listed(a, 19)]; // each within LOCK_GAP of the one before
   const b = await Vault.restore(memStorage(), backup, 'pass');
   const unreadable = new Set([listings[2].listTxid]);
