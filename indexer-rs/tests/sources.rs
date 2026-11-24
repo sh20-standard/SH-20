@@ -419,6 +419,18 @@ fn follow_command_errors() {
             "--listen nowhere",
         ),
         (&["--rpc", "http://x", "--activation", "1", "--deploy-burn", "0", "--json"][..], "unknown option --json"),
+        // each option once, and a number is decimal digits: the lines `follow.js` takes
+        (
+            &["--rpc", "http://x", "--activation", "1", "--deploy-burn", "0", "--activation", "1"][..],
+            "--activation is given twice",
+        ),
+        (
+            &["--rpc", "http://x", "--rpc", "http://x", "--activation", "1", "--deploy-burn", "0"][..],
+            "--rpc is given twice",
+        ),
+        (&["--rpc", "http://x", "--activation", "+1", "--deploy-burn", "0"][..], "is not a number"),
+        (&["--rpc", "http://x", "--activation", "1", "--deploy-burn", "1e3"][..], "is not a number"),
+        (&["--rpc", "http://x", "--activation", "1", "--deploy-burn", "0", "--poll", "+5"][..], "is not a number"),
     ] {
         let (ok, stderr) = run(args);
         assert!(!ok && stderr.contains(message), "{args:?}: {stderr}");

@@ -184,14 +184,79 @@ fn replay_prints_the_vectors_digests() {
     assert!(stderr.contains("expected block 4, got block 5"), "{stderr}");
 }
 
+/// The lines the command takes: one folder, `--deploy-burn`, each option once, and numbers that
+/// are decimal digits in their range. The reference's `replay.js` takes the same ones, so that a
+/// line gives two replays or none.
 #[test]
 fn replay_refuses_bad_arguments() {
-    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("replay-empty");
+    let v = vectors();
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("replay-arguments");
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    assert!(!replay(&dir, &[]).0);
-    assert!(!replay(&dir, &["--verifier", "plonk"]).0);
-    assert!(!replay(&dir, &["--activation"]).0);
-    assert!(!replay(&dir, &["--frobnicate"]).0);
+    std::fs::write(dir.join("1.json"), getblock_json(&v["scenario"]["blocks"][0])).unwrap();
+
+    let (ok, plain, stderr) = replay(&dir, &["--deploy-burn", "1000"]);
+    assert!(ok, "{stderr}");
+    assert_eq!(plain.lines().count(), 1);
+    // zeros in front are digits, and the defaults are what the usage says
+    let (ok, stdout, stderr) = replay(
+        &dir,
+        &["--activation", "01", "--deploy-burn", "001000", "--window", "0100", "--min-depth", "1", "--maturity", "06"],
+    );
+    assert!(ok, "{stderr}");
+    assert_eq!(stdout, plain);
+    // the whole range of each number
+    let (ok, _, stderr) = replay(
+        &dir,
+        &[
+            "--deploy-burn",
+            "18446744073709551615",
+            "--window",
+            "4294967295",
+            "--min-depth",
+            "0",
+            "--maturity",
+            "4294967295",
+        ],
+    );
+    assert!(ok, "{stderr}");
+
+    let refused = |args: &[&str], why: &str| {
+        let (ok, stdout, stderr) = replay(&dir, args);
+        assert!(!ok && stdout.is_empty(), "{args:?} is taken");
+        assert!(stderr.contains(why), "{args:?}: {stderr}");
+    };
+    // D has no default, as for follow
+    refused(&[], "replay needs --deploy-burn");
+    refused(&["--activation", "1", "--verifier", "test"], "replay needs --deploy-burn");
+    for option in ["--activation", "--deploy-burn", "--window", "--min-depth", "--maturity"] {
+        let rest: &[&str] = if option == "--deploy-burn" { &[] } else { &["--deploy-burn", "1000"] };
+        // a sign, a space, a point, an exponent, another base, another script, too many digits
+        for value in ["+1", "-1", " 1", "1 ", "", "1.0", "1e2", "0x10", "abc", "\u{661}", "99999999999999999999999999"]
+        {
+            refused(&[rest, &[option, value]].concat(), "is not a number");
+        }
+        refused(&[rest, &[option]].concat(), "needs a value");
+        refused(&[rest, &[option, "1", option, "1"]].concat(), "is given twice");
+    }
+    refused(&["--deploy-burn", "18446744073709551616"], "is not a number");
+    for option in ["--activation", "--window", "--min-depth", "--maturity"] {
+        refused(&["--deploy-burn", "1000", option, "4294967296"], "is not a number");
+    }
+    refused(&["--deploy-burn", "1000", "--verifier", "test", "--verifier", "test"], "--verifier is given twice");
+    refused(&["--deploy-burn", "1000", "--json", "--json"], "--json is given twice");
+    refused(&["--deploy-burn", "1000", "--verifier"], "needs a value");
+    refused(&["--deploy-burn", "1000", "--verifier", "plonk"], "unknown verifier");
+    refused(&["--deploy-burn", "1000", "--frobnicate"], "unknown option");
+    refused(&["--deploy-burn", "1000", "another-folder"], "unexpected argument");
+    // the folder has block 1 only
+    refused(&["--deploy-burn", "1000", "--activation", "0"], "after the activation block 0");
+    refused(&["--deploy-burn", "1000", "--activation", "2"], "no block at or after the activation block 2");
+
+    let empty = dir.with_file_name("replay-empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let (ok, stdout, stderr) = replay(&empty, &["--deploy-burn", "1000"]);
+    assert!(!ok && stdout.is_empty() && stderr.contains("no .json file"), "{stderr}");
 }
 
 /// `indexer/vectors/plonk-v0.3.json` as `getblock` files, under the real verifier: the digests

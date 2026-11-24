@@ -32,14 +32,14 @@ beside the reference indexer and be compared with it block by block (`follow`, b
 ```sh
 cd indexer-rs
 cargo test --release      # 111 tests
-cargo run --release -- replay <folder of `bitcoin-cli getblock <hash> 3` JSON files> [options]
+cargo run --release -- replay <folder of `bitcoin-cli getblock <hash> 3` JSON files> --deploy-burn D [options]
 cargo run --release -- follow --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS --activation A --deploy-burn D
 ```
 
 ## replay
 
 ```
-sh20-indexer-rs replay <folder> [--activation <A>] [--deploy-burn <D>] [--window <W>] [--min-depth <K_min>]
+sh20-indexer-rs replay <folder> --deploy-burn <D> [--activation <A>] [--window <W>] [--min-depth <K_min>]
                                 [--maturity <N>] [--verifier <name>] [--json]
 ```
 
@@ -53,8 +53,14 @@ height they contain, and prints one line per block from the activation block on:
 `--json` prints one object per block instead, with the field names of the vectors (`height`, `root`, `events`,
 `eventsH`, `digest`) and the refused envelopes (`rejected`, with `envelope`, the index of the envelope, when the
 transaction is a batch). The profile used goes to standard error. Defaults:
-`A` = the lowest height in the folder, `D = 0`, `W = 100`, `K_min = 1`, `N = 6`. Heights must be consecutive from
-`A`; blocks below `A` are not read.
+`A` = the lowest height in the folder, `W = 100`, `K_min = 1`, `N = 6`. `D` has none, here as for `follow`: the spec
+gives it no value, and a replay under another `D` gives other digests from block `A` on. Heights must be consecutive
+from `A`; blocks below `A` are not read, and a folder that starts after `A` is refused.
+
+The command line is read the way the reference's `replay.js` and `follow.js` read theirs, so that one line gives two
+replays or none: a number is decimal digits and nothing else, in its range (`A`, `W`, `K_min` and `N` below 2^32, `D`
+below 2^64; no sign, space, point or exponent), an option given twice or without its value is refused, and so is a
+second folder. The same holds for `follow`.
 
 **Use `getblock <hash> 3`.** A DEPLOY must reveal a commit confirmed at least `N` blocks earlier (SPEC-WIRE §5), so
 the indexer needs the height of the block that confirmed the output spent by input 0 of the reveal. Verbosity 3

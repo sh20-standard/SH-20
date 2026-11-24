@@ -285,10 +285,12 @@ Two points are not gaps of the text but decide whether the two indexers can be c
 - **The same profile.** `A`, `D`, `W`, `K_min` and `N` come from the command line on both sides; `D`, `W`, `K_min`
   and `N` are in the GENESIS record, so a difference shows in the digest of block `A`. Only `A` is not committed to:
   two indexers started at different heights agree on nothing and no digest says why. `follow` asks for `A` and `D`
-  and assumes neither. **Since 2026-11-24** `replay.js` asks for `D` too (`indexer-rs replay` is to do the same); it takes the lowest height of its
+  and assumes neither. **Since 2026-11-24** `replay.js` asks for `D` too, and so does `indexer-rs replay`; it takes the lowest height of its
   folder as `A` unless told, and refuses a folder that starts after `A` (the reference indexer refuses a first block above
   `A` itself). The reference's tools take every number as plain decimal digits in its range, and refuse a flag given twice or
   without a value: a comparison of the two `replay` commands found inputs one took and the other refused.
+  `indexer-rs` reads its command line the same way since: it took a number with a `+` in front, and of a flag given
+  twice it kept the last value where the reference kept the first.
 
 The sections below are the record of the first pass, before the resolution. They are left as written.
 

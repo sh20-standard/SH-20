@@ -28,7 +28,7 @@ replay
 
 options:
   --activation <height>   activation height A (default: the lowest height in the folder)
-  --deploy-burn <D>       SH20 burned by every DEPLOY (default: 0)
+  --deploy-burn <D>       SH20 burned by every DEPLOY (required)
   --window <W>            anchor window (default: 100)
   --min-depth <K_min>     anchor minimum depth (default: 1)
   --maturity <N>          blocks a DEPLOY commit must have behind it (default: 6)
@@ -39,6 +39,9 @@ options:
 
 Prints one line per block from the activation block on: `<height> <digest>`.
 Blocks below the activation height are not read.
+
+A number is decimal digits and nothing else (no sign, no space, no exponent); an option given
+twice is refused, in both commands.
 
 follow
 
@@ -100,10 +103,22 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         ..Options::default()
     };
     let mut it = args[1..].iter();
+    let mut given: Vec<&str> = Vec::new();
     while let Some(a) = it.next() {
+        // an option given twice is refused: which of the two values was meant is not ours to guess
+        if a.starts_with("--") {
+            if given.contains(&a.as_str()) {
+                return Err(format!("{a} is given twice"));
+            }
+            given.push(a);
+        }
         let mut value = |name: &str| it.next().cloned().ok_or(format!("{name} needs a value"));
-        let number = |name: &str, v: String| v.parse::<u64>().map_err(|_| format!("{name}: \"{v}\" is not a number"));
-        let small = |name: &str, v: String| v.parse::<u32>().map_err(|_| format!("{name}: \"{v}\" is not a height"));
+        let number = |name: &str, v: String| {
+            decimal::<u64>(&v).ok_or(format!("{name}: \"{v}\" is not a number (decimal digits, at most {})", u64::MAX))
+        };
+        let small = |name: &str, v: String| {
+            decimal::<u32>(&v).ok_or(format!("{name}: \"{v}\" is not a number (decimal digits, at most {})", u32::MAX))
+        };
         match a.as_str() {
             "--activation" => o.activation = Some(small(a, value(a)?)?),
             "--deploy-burn" => o.deploy_burn = Some(number(a, value(a)?)?),
@@ -143,10 +158,25 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         if o.esplora.is_some() && (o.rpc_user.is_some() || o.rpc_cookie.is_some()) {
             return Err("--rpcuser, --rpcpass and --rpccookie go with --rpc".into());
         }
-    } else if o.folder.is_empty() {
-        return Err("no folder given".into());
+    } else {
+        if o.folder.is_empty() {
+            return Err("no folder given".into());
+        }
+        // as for follow: the spec gives D no default, and a replay under another D gives other digests
+        if o.deploy_burn.is_none() {
+            return Err("replay needs --deploy-burn <D>".into());
+        }
     }
     Ok(o)
+}
+
+/// A number of the command line: decimal digits and nothing else, in the range of `T`. Rust's own
+/// parse takes a leading `+`; the reference's tools do not, and both must take the same lines.
+fn decimal<T: std::str::FromStr>(v: &str) -> Option<T> {
+    if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    v.parse().ok()
 }
 
 /// The verifier, and its name as `/status` gives it (`docs/API.md`).
@@ -281,7 +311,7 @@ fn run(o: &Options) -> Result<(), String> {
     let (verifier, verifier_name) = verifier_of(&o.verifier)?;
     let profile = Profile {
         activation_height: activation,
-        deploy_burn: o.deploy_burn.unwrap_or(0),
+        deploy_burn: o.deploy_burn.expect("checked by parse_args"),
         anchor_window: o.window,
         anchor_min_depth: o.min_depth,
         deploy_maturity: o.maturity,
