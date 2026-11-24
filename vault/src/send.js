@@ -12,7 +12,7 @@ import { buildSpend, withProof, pickInputs } from './spend.js';
 import { commitment, commitValue, signReveal, oneTimeSecret, keyPathOutput, signKeyPath, sigMsg } from './taproot.js';
 import { buildFunded } from './mint.js';
 import { addressToScript } from './btc.js';
-import { serializeEnvelope, decodeAddress, tickerT } from './sh20.js';
+import { serializeEnvelope, parseEnvelope, decodeAddress, tickerT } from './sh20.js';
 import { NETWORK_HRP } from './notekeys.js';
 import { GENESIS, PROFILE } from './profile.js';
 import { toHex, fromHex } from './bytes.js';
@@ -152,19 +152,50 @@ export const deploySchedule = (p, { commitHeight, tip }) =>
 /** Blocks a refused spend's reveal must be below the synced tip before its notes are given back. */
 export const REFUSAL_DEPTH = 6;
 
+// the statuses of a spend whose commit the wallet signed: from here on its reveal may be out, or go out
+const SENT = ['signed', 'commit broadcast', 'broadcast'];
+
+/** The anchor height of spend `p`: recorded with it, or read from its envelope. Null for one with no spend. */
+export function anchorOf(p) {
+  if (Number.isInteger(p.anchorHeight)) return p.anchorHeight;
+  try {
+    return parseEnvelope(Buffer.from(fromHex(p.envelope))).env.spend?.anchorHeight ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Whether the indexers refused spend `p`, sent from this vault: its reveal is confirmed at
- * `revealHeight`, the synced tree (with the full nullifier list) is REFUSAL_DEPTH blocks past it, and
- * no note it spends has its nullifier recorded there. A refused envelope records no nullifier (a DEPLOY
- * refused for its commit's maturity, its ticker or its proof burns nothing), so those notes are still
- * the vault's: the caller gives them back (Vault.releaseInputs). `notes` must have been checked
- * against that tree (`spent`, `pathAt`).
+ * Whether spend `p`, sent from this vault, can no longer take the notes it reserved, so that the caller gives
+ * them back (Vault.releaseInputs), once every indexer agrees (consensus.js refusalAgreed, from refusalAt):
+ * - refused: its reveal is confirmed at `revealHeight`, and the synced tree (with the full nullifier list) is
+ *   REFUSAL_DEPTH blocks past it. A refused envelope records no nullifier (a DEPLOY refused for its commit's
+ *   maturity, its ticker or its proof burns nothing);
+ * - or never mined (docs/audit/2026-11-24-vault.md, vault-2: a commit or a reveal dropped or replaced): its reveal
+ *   has no height, and the synced tree is W + REFUSAL_DEPTH blocks past its anchor. A spend lands only where
+ *   anchorHeight ≥ H − W (SPEC-WIRE §5), so no block can take it any more, in this transaction or in a copy that
+ *   anyone publishes, even after a reorg of REFUSAL_DEPTH − 1 blocks.
+ * Either way no note it spends has its nullifier recorded there. `notes` must have been checked against that
+ * tree (`spent`, `pathAt`).
  */
-export function refusedSpend(p, notes, { revealHeight, syncHeight, nullifiersKnown, depth = REFUSAL_DEPTH }) {
-  if (p.status !== 'broadcast' || !p.inputs?.length || !nullifiersKnown) return false;
-  if (!Number.isInteger(revealHeight) || !Number.isInteger(syncHeight) || syncHeight - revealHeight + 1 < depth) return false;
+export function refusedSpend(p, notes, { revealHeight, syncHeight, nullifiersKnown, depth = REFUSAL_DEPTH, W = PROFILE.anchorWindow }) {
+  if (!SENT.includes(p.status) || !p.inputs?.length || !nullifiersKnown || !Number.isInteger(syncHeight)) return false;
+  if (Number.isInteger(revealHeight)) {
+    if (p.status !== 'broadcast' || syncHeight - revealHeight + 1 < depth) return false;
+  } else {
+    const a = anchorOf(p);
+    if (!Number.isInteger(a) || syncHeight - a < W + depth) return false;
+  }
   const inputs = notes.filter((n) => p.inputs.includes(n.id));
   return inputs.length === p.inputs.length && inputs.every((n) => n.spent === 'no' && n.pathAt === syncHeight);
+}
+
+/**
+ * The block every indexer must have passed before it can vouch that spend `p` spent nothing: REFUSAL_DEPTH − 1
+ * past its reveal, or, for one never mined, past the last block that could have taken it (its anchor + W).
+ */
+export function refusalAt(p, revealHeight, { depth = REFUSAL_DEPTH, W = PROFILE.anchorWindow } = {}) {
+  return (Number.isInteger(revealHeight) ? revealHeight : anchorOf(p) + W) + depth - 1;
 }
 
 /** The signed reveal for a commit that pays output 0. */

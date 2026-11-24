@@ -681,7 +681,7 @@ tree's root (against the root rebuilt from the leaves) and on the digest at the 
 the count is shown next to the balance.
 
 Checked: `digestAgreement` (`consensus.js` l. 250), called at every sync (`ui/notes-panel.js`
-l. 167). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
+l. 169). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
 refuse. A balance is still shown when the indexers disagree, with the count marked as an error. What
 a disagreement stops is a mint (`crossCheck`), a TAKE (`listingCheck`) and, since #38, giving back
 the notes of a spend that looks refused (`refusalAgreed`, `consensus.js` l. 88). #38 also has the
@@ -805,7 +805,7 @@ which could be zeroed where the `BigInt`s of 8.8 cannot, but each operation make
 **8.8 Secrets stay in memory, and the vault never locks itself.** Low.
 The witness of a spend holds the nullifier keys in clear. It stays in the object `buildSpend`
 returns, and in the prover module's memory until the next proof (`circuit/web/host.js` copies it
-into a buffer it keeps). `lock()` (`keys.js` l. 487) zeroes the master secret and can do no more:
+into a buffer it keeps). `lock()` (`keys.js` l. 501) zeroes the master secret and can do no more:
 the derived scalars are `BigInt`s, the words a string. Nothing locks the vault after a time. None of
 this is reachable without code running in the page's origin, which is why §8.1 matters most.
 
@@ -814,11 +814,11 @@ Fixed in #58: the vault locks itself after 10 minutes without use
 wheel), never in the middle of an action (a button's, a sync) nor while a DEPLOY waits for the
 reveal the page sends; a tab left in the background locks as soon as it is shown again. Every lock,
 by the button, by time or by another tab, goes through `lockVault` (`ui/vault-panel.js` l. 19):
-`lock()` (`keys.js` l. 487) zeroes the master secret, the viewing key and the lock keys and lets go
+`lock()` (`keys.js` l. 501) zeroes the master secret, the viewing key and the lock keys and lets go
 of the state (the notes' tweaks, the one-time keys of spends under way), which then throws until the
 vault is opened again; and the prover's workers are stopped, with the module memory that held the
 last witness. After each proof the vault zeroes the witness it built and stops the prover too
-(`ui/spends.js` l. 64): the next proof loads it again, from the module it keeps compiled. Tests
+(`ui/spends.js` l. 75): the next proof loads it again, from the module it keeps compiled. Tests
 "8.8 …" in `vault/test/autolock.test.js`, among them "8.8 the vault locks itself after ten minutes
 without use" on a clock of its own; `dev/e2e.js` moves the page's clock 11 minutes on in Chrome and
 sees the vault lock, its words leave the screen, and its passphrase open it again. Left: what
@@ -884,4 +884,4 @@ flight are still missing from an older backup, so their commit outputs cannot be
 | an offer's signature commits to the lock's outpoint, amount, script and sequence, to the version and locktime, and to the output paying the price; a buyer checks it under the key of the lock output, which the txid does cover | `market.js` l. 87–117, l. 137 |
 | the BIP340 nonce is derived as specified, with fresh auxiliary randomness at every signature | `secp256k1.js` l. 358; `taproot.js` l. 135, l. 193 |
 | the state is AES-256-GCM under the passphrase key with a fresh 12-byte nonce at every save; a wrong passphrase fails the tag | `keys.js` l. 36, l. 235 |
-| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 17, l. 49; `ui/context.js` l. 41; `ui/spends.js` l. 30 and `ui/tokens-panel.js` l. 198 |
+| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 17, l. 49; `ui/context.js` l. 41; `ui/spends.js` l. 41 and `ui/tokens-panel.js` l. 197 |

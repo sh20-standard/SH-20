@@ -55,7 +55,12 @@ function fixedOutputs(token, envelope, k) {
  * Smallest set of UTXOs paying `fixed` outputs plus the fee at `feeRate`,
  * with a change output only when it is above dust.
  */
-export function selectCoins(utxos, fixed, inType, changeScript, feeRate, pre = []) {
+export function selectCoins(all, fixed, inType, changeScript, feeRate, pre = []) {
+  // never a coin marked unconfirmed (docs/audit/2026-11-24-vault.md, vault-2): whoever paid it can replace that
+  // payment, and the transaction funded with it leaves every mempool, its reveal with it. The page hands over the
+  // coins Esplora lists as confirmed (ui/spends.js walletUtxos); a coin with no word on it is taken as such
+  const utxos = all.filter((u) => u.confirmed !== false);
+  if (!utxos.length && all.length) throw new Error('the wallet\'s coins are not confirmed yet: the vault pays from confirmed coins only, since an unconfirmed one can be replaced by whoever sent it, and the transaction with it. Wait for a block');
   // `pre`: inputs already in the transaction (P2TR key path, signed): they add their value and weight
   const sumFixed = fixed.reduce((s, o) => s + o.value, 0n) - pre.reduce((s, i) => s + i.value, 0n);
   const scripts = fixed.map((o) => o.script);

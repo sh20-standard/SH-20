@@ -29,7 +29,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 189 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 192 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
@@ -189,8 +189,10 @@ vout n  change to the payer                                     only if above du
   asks for more mints than are left: an indexer gives a late batch only what is left and keeps the
   whole payment, which the panel says when `k > 1`.
 - payMode 1 burns the price **on the envelope output itself**, so a burn mint has no extra output.
-- Coins: the smallest single UTXO that pays everything, else the fewest UTXOs (largest first);
-  the change output is dropped when it would be dust.
+- Coins: confirmed ones only, by Esplora's word, a wallet's own list included (`ui/spends.js`
+  `walletUtxos`): an unconfirmed coin can be replaced by whoever paid it, and the transaction funded
+  with it leaves every mempool. Of those, the smallest single UTXO that pays everything, else the
+  fewest UTXOs (largest first); the change output is dropped when it would be dust.
 - Before anything is signed, the vault checks what the indexers will check (window open at the
   next block, not sold out, `k` not above what is left, payment present), because a rejected mint is not refunded.
 - **The genesis token SH20** is part of the profile, not a DEPLOY (`/tokens` lists it first, with
@@ -310,7 +312,13 @@ back and says so (`send.js` `refusedSpend`; only the network fees are lost). Not
 indexer it synced from: every configured indexer must answer, follow the vault's profile and list none
 of those nullifiers in its full list from block 0, where an earlier spend of one would show too
 (`consensus.js` `refusalAgreed`); else the notes
-stay reserved and the next sync asks again.
+stay reserved and the next sync asks again. A spend that is never mined (its commit or its reveal
+dropped, or replaced with the coin that paid it) gives its notes back the same way once the synced
+tip is `W + 6` blocks past its anchor: a spend lands only where `anchorHeight ≥ H − W`, so no block
+can take it any more, in that transaction or in a copy, and every indexer must have passed its
+anchor plus `W` (docs/audit/2026-11-24-vault.md, vault-2). One the wallet never signed gives them
+back at once: the vault signs the reveal only after the commit, so its envelope went nowhere. One
+left "prepared" (the page closed while the wallet asked) is listed with **Give up**.
 `test/deploy-maturity.test.js` checks the schedule (the countdown, the anchor window), a DEPLOY
 without a burn refused one block early and accepted at `N`, one in an OP_RETURN refused, the key-path
 sweep of an old commit, and the reserved notes kept across a reload; `test/spend.test.js` runs a

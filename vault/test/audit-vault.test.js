@@ -16,7 +16,7 @@ import { chain, deployEnv, tx as helperTx, mockVerifier, testProof } from '../..
 import { Vault, STORAGE_KEY } from '../src/keys.js';
 import { NOTE_SCHEME } from '../src/notekeys.js';
 import { NoteTree, serializeEnvelope, seal } from '../src/sh20.js';
-import { planTransfer, planCarrier, revealFor, planPlainDeploy, deployEnvelope, pendingRecord, refusedSpend, deploySchedule, anchor } from '../src/send.js';
+import { planTransfer, planCarrier, revealFor, planPlainDeploy, deployEnvelope, pendingRecord, refusedSpend, refusalAt, anchorOf, deploySchedule, anchor } from '../src/send.js';
 import { withProof, pickInputs } from '../src/spend.js';
 import { planList, listOutputs, signOffer, listingFromChain, buildTake } from '../src/market.js';
 import { PAY_DEPTH, listingCheck, profileCheck, refusalAgreed } from '../src/consensus.js';
@@ -183,7 +183,9 @@ test('vault-2: a commit is funded with an unconfirmed coin, and a spend that nev
   const change = addressToScript(WPKH);
   const coins = [{ txid: '11'.repeat(32), vout: 0, value: 100000n, confirmed: true }, { txid: '22'.repeat(32), vout: 0, value: 3000n, confirmed: false }];
   const sel = selectCoins(coins, [{ value: 1200n, script: fromHex('5120' + '00'.repeat(32)) }], 'p2wpkh', change, 1);
-  assert.deepEqual(sel.picked.map((u) => u.confirmed), [false]); // today
+  // fixed: a coin marked unconfirmed is never taken (mint.js selectCoins), and the page hands over Esplora's confirmed ones (ui/spends.js walletUtxos)
+  assert.deepEqual(sel.picked.map((u) => u.confirmed), [true]);
+  assert.throws(() => selectCoins([coins[1]], [{ value: 1200n, script: fromHex('5120' + '00'.repeat(32)) }], 'p2wpkh', change, 1), /not confirmed yet: the vault pays from confirmed coins only/);
 
   const { ix, seller: v } = await setup();
   const plan = await planTransfer({ vault: v, sync: localSync(ix), tip: 2, ticker: 'GENE', amount: 1000n, to: v.address });
@@ -191,23 +193,41 @@ test('vault-2: a commit is funded with an unconfirmed coin, and a spend that nev
   const spent = plan.inputs[0].id;
   const note = () => v.state.notes.find((n) => n.id === spent);
   const pub = v.state.notes.map((n) => ({ pos: n.pos, kind: 'MINT', ticker: n.ticker, v: BigInt(n.v), npk: BigInt('0x' + n.npk), leaf: BigInt('0x' + n.leaf), pkEph: null, ct: null, txid: null, height: 2 }));
-  const listed = () => (v.state.pending ?? []).filter((p) => p.status !== 'prepared' && p.status !== 'replaced'); // ui/send-panel.js renderPending
+  const listed = () => (v.state.pending ?? []).filter((p) => !['replaced', 'not signed', 'given up'].includes(p.status)); // ui/send-panel.js renderPending
 
   // 1. the wallet refuses to sign the commit: carry() has saved the record and stops (ui/spends.js)
-  const pid = await v.addPending(pendingRecord('TRANSFER', r.cp, r.envelope, plan.inputs));
+  const first = await v.addPending(pendingRecord('TRANSFER', r.cp, r.envelope, plan.inputs));
   assert.equal(note().status, 'spending');
-  assert.equal(listed().length, 0, 'the page lists no spend to send again or to give up');
   assert.equal((await matchNotes(v, pub)).found, 0);
-  assert.equal(note().status, 'spending', 'a rescan from zero leaves it reserved'); // today
+  assert.equal(note().status, 'spending', 'a rescan from zero leaves it reserved: the wallet may still be signing');
   assert.equal(pickInputs(v.state.notes, 'GENE', 1001n), null, 'what the vault can spend is the other note alone');
+  // fixed: the page lists it, with a way to give it up (ui/send-panel.js renderPending), and carry() gives it up
+  // itself when the wallet refuses (ui/spends.js): its envelope went nowhere, so its notes come back at once
+  assert.deepEqual(listed().map((p) => p.status), ['prepared']);
+  assert.equal(await v.givePendingUp(first), true);
+  assert.equal(note().status, 'in tree');
+  assert.equal(listed().length, 0);
+  assert.equal(await v.givePendingUp(first), false, 'only while prepared');
 
   // 2. signed and broadcast, and the commit's coin is replaced: neither transaction is ever mined
+  const pid = await v.addPending(pendingRecord('TRANSFER', r.cp, r.envelope, plan.inputs));
   await v.updatePending(pid, { commitTxid: 'c5'.repeat(32), revealHex: r.hex, revealTxid: r.txid, status: 'broadcast' });
+  assert.equal(await v.givePendingUp(pid), false, 'a spend whose reveal may be out is never given up by hand');
   await v.updateNote(spent, { spent: 'no', pathAt: 5000 });
   const p = v.state.pending.find((x) => x.id === pid);
-  // thousands of blocks later, long after the anchor left the window: still not given back
-  assert.equal(refusedSpend(p, v.state.notes, { revealHeight: null, syncHeight: 5000, nullifiersKnown: true }), false); // today
-  assert.equal(note().status, 'spending');
+  // fixed: long after the anchor left the window, it is given back (send.js refusedSpend), once every indexer that
+  // has passed the last block that could take it lists none of its nullifiers (refusalAt, refusalAgreed)
+  assert.equal(anchorOf(p), 2);
+  assert.equal(refusedSpend(p, v.state.notes, { revealHeight: null, syncHeight: 5000, nullifiersKnown: true }), true);
+  assert.equal(refusalAt(p, null), 2 + PROFILE.anchorWindow + 5);
+  // and not while a block could still take it, even after a reorg of five blocks
+  await v.updateNote(spent, { pathAt: 2 + PROFILE.anchorWindow + 5 });
+  assert.equal(refusedSpend(p, v.state.notes, { revealHeight: null, syncHeight: 2 + PROFILE.anchorWindow + 5, nullifiersKnown: true }), false);
+  await v.updateNote(spent, { pathAt: 2 + PROFILE.anchorWindow + 6 });
+  assert.equal(refusedSpend(p, v.state.notes, { revealHeight: null, syncHeight: 2 + PROFILE.anchorWindow + 6, nullifiersKnown: true }), true);
+  assert.equal(note().status, 'spending', 'until the caller gives it back (ui/notes-panel.js settleRefused)');
+  await v.releaseInputs(p.inputs);
+  assert.equal(note().status, 'in tree');
 });
 
 // ---- vault-3 -------------------------------------------------------------------------------------
