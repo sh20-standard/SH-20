@@ -1,13 +1,22 @@
 name: pages
 
-# Publishes the vault and the explorer as one static site on GitHub Pages, from main: no server to rent, and the
-# site is built from the commit anyone can read. Off until the repository variable PAGES is set to "on" (Settings >
-# Secrets and variables > Actions > Variables), with Pages set to "GitHub Actions" (Settings > Pages).
+# Publishes the vault, the explorer and a mirror of both indexers as one static site on GitHub Pages, from main: no
+# server to rent, and the site is built from the commit anyone can read. Off until the repository variable PAGES is set
+# to "on" (Settings > Secrets and variables > Actions > Variables), with Pages set to "GitHub Actions" (Settings >
+# Pages). Every step after the first waits for the signet's activation height (vault/src/profile.js): until the launch
+# fixes it, a run publishes nothing and says so.
 #
 #   /            → redirects to vault/
 #   /vault/      → the vault (vault/build.js)
-#   /explorer/   → the explorer (explorer/index.html)
+#   /explorer/   → the explorer (explorer/index.html): it reads /api/js/ and /api/rs/ by itself
 #   /phone/      → the phone test page (circuit/web), for testers' measurements
+#   /api/js/     → the mirror of follow.js, /api/rs/ the mirror of indexer-rs follow (docs/API.md, "The static mirror")
+#
+# The mirror (docs/PLAN.md, decision 3): every 10 minutes, and on every push, both followers start from the block
+# files the last run left in the Actions cache, follow a public signet Esplora (the variable SIGNET_ESPLORA, else
+# mempool.space) to its tip, and their answers are written as files. GitHub starts scheduled runs late at busy times:
+# the mirror runs 10 to 30 minutes behind the chain. A run that fails (the Esplora server down, a follower that stops)
+# publishes nothing and the site keeps the mirror it had. GitHub turns a schedule off after 60 days without a commit.
 #
 # GitHub Pages sends no cross-origin isolation headers: the vault isolates itself with its service worker (sw.js at the
 # site's root) and proves on several threads all the same. The origin, <owner>.github.io, is shared only with the other
@@ -16,6 +25,8 @@ name: pages
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -31,29 +42,90 @@ jobs:
   build:
     if: vars.PAGES == 'on'
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # the signet profile: the build stops while vault/src/profile.js has no activation height, so
-      # nothing is published before the launch fixes it (docs/SIGNET.md)
-      - run: node vault/build.js --signet
+      # the signet profile, as the vault embeds it: every indexer of the signet runs with these values
+      - name: the signet profile (vault/src/profile.js)
+        id: profile
+        run: |
+          node --input-type=module -e "
+            const { PROFILES } = await import('./vault/src/profile.js');
+            const p = PROFILES.signet;
+            if (!p) {
+              console.log('ready=false');
+            } else {
+              console.log('ready=true');
+              console.log('flags=--activation ' + p.activationHeight + ' --deploy-burn ' + p.deployBurn + ' --window ' + p.anchorWindow + ' --min-depth ' + p.anchorMinDepth + ' --maturity ' + p.deployMaturity);
+              console.log('activation=' + p.activationHeight);
+            }
+          " >> "$GITHUB_OUTPUT"
+      - if: steps.profile.outputs.ready != 'true'
+        run: |
+          echo "::notice::the signet's activation height is not fixed yet (vault/src/profile.js), so nothing is published"
+      - if: steps.profile.outputs.ready == 'true'
+        run: node vault/build.js --signet
       - name: the explorer beside the vault
+        if: steps.profile.outputs.ready == 'true'
         run: mkdir -p vault/dist/explorer && cp explorer/index.html vault/dist/explorer/index.html
       # testers measure their phones here (circuit/web/README.md), with the WebAssembly modules the vault
       # ships: the CI checks they are what circuit/ builds (vault/tools/prover.sh --check)
       - name: the phone test page beside them
+        if: steps.profile.outputs.ready == 'true'
         run: |
           mkdir -p vault/dist/phone
           (cd circuit/web && cp index.html app.js host.js prover-worker.js thread-worker.js sw.js ../../vault/dist/phone/)
           cp vault/prover/sh20_circuit.wasm vault/prover/sh20_circuit_threads.wasm circuit/artifacts/spend.pk vault/dist/phone/
-      - uses: actions/upload-pages-artifact@v3
+
+      # ---- the mirror of both indexers ----
+      - name: indexer-rs, from the build cache the CI keeps
+        if: steps.profile.outputs.ready == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            indexer-rs/target
+          key: indexer-rs-${{ hashFiles('indexer-rs/Cargo.lock', 'indexer-rs/rust-toolchain.toml') }}
+      - if: steps.profile.outputs.ready == 'true'
+        working-directory: indexer-rs
+        run: |
+          rustup toolchain install --no-self-update || rustup show
+          cargo build --release
+      # the block files of the last run, for this activation height (a new A starts from nothing)
+      - if: steps.profile.outputs.ready == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/sh20-mirror
+          key: mirror-blocks-${{ steps.profile.outputs.activation }}-${{ github.run_id }}
+          restore-keys: mirror-blocks-${{ steps.profile.outputs.activation }}-
+      - name: both followers to the tip, then their mirrors (indexer/bin/mirror-site.js)
+        if: steps.profile.outputs.ready == 'true'
+        run: >
+          node indexer/bin/mirror-site.js
+          --esplora ${{ vars.SIGNET_ESPLORA || 'https://mempool.space/signet/api' }}
+          --rs indexer-rs/target/release/sh20-indexer-rs
+          ${{ steps.profile.outputs.flags }} --network signet
+          --verifier-js vault/prover/sh20_circuit.wasm --verifier-rs plonk-bn254-hermez
+          --data ~/sh20-mirror --out vault/dist/api --wait 1500
+      - if: steps.profile.outputs.ready == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/sh20-mirror
+          key: mirror-blocks-${{ steps.profile.outputs.activation }}-${{ github.run_id }}
+
+      - if: steps.profile.outputs.ready == 'true'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: vault/dist
+    outputs:
+      ready: ${{ steps.profile.outputs.ready }}
 
   deploy:
     needs: build
+    if: needs.build.outputs.ready == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

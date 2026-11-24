@@ -44,7 +44,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `docs/AUDIT-PROMPT.md` | the audits we run ourselves, one part per session: security (`/audit circuit`, `verifier`, `sealing`, `vault`, `indexer`: the attacker, the severities) and code (`/audit code <part>`: what is more than the spec needs, clearer, faster), each leaving a report in `docs/audit/` |
 | `docs/PLAN.md` | the plan from here to mainnet: who does what, in which order, and the decisions of 2026-11-23 |
 | `docs/SIGNET.md` | the public signet, step by step: what must be true first, the launch, what testers do, when the run stops |
-| `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` and `indexer-rs follow` (for the vault, the explorer and relayers): one JSON shape for both, checked by `indexer/bin/api-diff.js` |
+| `docs/API.md` | read-only HTTP API served by `indexer/bin/follow.js` and `indexer-rs follow` (for the vault, the explorer and relayers): one JSON shape for both, checked by `indexer/bin/api-diff.js`; and its static mirror, files a static host serves (`indexer/src/mirror-read.js` answers each route from them) |
 | `explorer/` | block explorer: one static page (blocks, transactions, tokens, supply check, indexer comparison) |
 | `vault/` | browser vault: keys on the device, mints signed by Xverse / UniSat / Leather, verifiable releases ([`vault/RELEASES.md`](vault/RELEASES.md)) |
 | `circuit/` | the spend circuit: PLONK prover and verifier in Rust, WebAssembly build, measurements ([`circuit/README.md`](circuit/README.md)) |
@@ -55,7 +55,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 79 tests (4 check real proofs, with circuit/'s WebAssembly verifier or the copy in vault/prover/)
+npm test            # 81 tests (4 check real proofs, with circuit/'s WebAssembly verifier or the copy in vault/prover/)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 npm run fuzz        # random chains through both indexers (build indexer-rs first: cargo build --release)
 npm run bench       # timings of the hot paths: Poseidon, the tree, a replay, the codec, the API
@@ -77,9 +77,12 @@ explorer's demo data regenerate byte for byte, and holds `indexer-rs` and `circu
 `vault/prover/*.wasm` in the same pull request. The script builds as from an x86_64 Linux host on every machine
 (`vault/tools/rustc-host.sh` says why the host triple would otherwise change the bytes).
 
-`.github/workflows/pages.yml` publishes the vault (`/vault/`, on the signet profile), the explorer (`/explorer/`) and the
-phone test page (`/phone/`) as one static site on GitHub Pages from `main`, once the repository variable `PAGES` is `on`: no
-server to rent for the signet's pages. It stops while the signet's `A` is unset. The vault and the phone page isolate
+`.github/workflows/pages.yml` publishes the vault (`/vault/`, on the signet profile), the explorer (`/explorer/`), the
+phone test page (`/phone/`) and a mirror of both indexers (`/api/js/`, `/api/rs/`: `docs/API.md`, "The static mirror") as one
+static site on GitHub Pages from `main`, once the repository variable `PAGES` is `on`: no server to rent for the signet's
+pages. Every 10 minutes it runs both followers from the block files its last run cached, to the tip of a public signet
+Esplora, and writes their answers as files (`indexer/bin/mirror-site.js`; `indexer/bin/mirror-check.js` checks it in the CI,
+with the explorer reading both mirrors in headless Chrome). It publishes nothing while the signet's `A` is unset. The vault and the phone page isolate
 themselves with their service worker there (Pages sends no isolation headers). The launch, step by step: `docs/SIGNET.md`.
 
 Any pull request that moves a line `docs/AUDIT.md` cites, or renames a test it quotes, updates `docs/AUDIT.md` with it: the CI checks it

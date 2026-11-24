@@ -18,7 +18,7 @@ Node 20 or newer, no dependencies.
 
 ```sh
 (cd ../circuit && ./build-wasm.sh)   # optional: the 4 tests of real proofs use this build, else the copy in ../vault/prover/
-npm test                  # 79 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, block file, API, real proofs
+npm test                  # 81 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, block file, API, real proofs
 npm run vectors           # regenerates vectors/v0.3.json and vectors/plonk-v0.3.json (deterministic)
 node bin/replay.js <dir> --deploy-burn D   # replays a folder of `bitcoin-cli getblock <hash> 3` JSON files
 node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser U --rpcpass P --activation A --deploy-burn D   # live, own node
@@ -45,7 +45,8 @@ The live follower serves a read-only JSON API for wallets: see [`docs/API.md`](.
 | `src/follower.js` | live chain follower (Bitcoin Core RPC or Esplora) with reorg handling |
 | `src/blockfile.js` | the blocks a follower read, kept on disk so that a restart applies them again (`follow.js --data`) |
 | `src/api.js` | read-only HTTP API (`docs/API.md`) |
-| `bin/` | `follow.js`, `replay.js`, `vectors.js`; `fuzz.js` and `api-diff.js` against `indexer-rs`, on chains from `chain-gen.js` served by `esplora-fake.js` |
+| `src/mirror.js`, `src/mirror-read.js` | the static mirror of the API (`docs/API.md`, "The static mirror"): building it from a running indexer, and answering each route from its files (no dependency: the explorer inlines it) |
+| `bin/` | `follow.js`, `replay.js`, `vectors.js`; `mirror.js` (the mirror of one indexer) and `mirror-site.js` (both, as `pages.yml` runs it); `fuzz.js`, `api-diff.js` and `mirror-check.js` against `indexer-rs`, on chains from `chain-gen.js` served by `esplora-fake.js` |
 
 ## What is still missing
 

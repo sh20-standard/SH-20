@@ -121,9 +121,9 @@ export function apiHandler(indexer, { network } = {}) {
       if (Number.isNaN(before) || Number.isNaN(limit)) return 400;
       const out = [];
       for (const [h, b] of [...ix.history.entries()].reverse()) {
+        if (out.length >= limit) break;
         if (h >= before) continue;
         out.push(apiBlock(b));
-        if (out.length >= limit) break;
       }
       return out;
     }],
