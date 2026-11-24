@@ -19,7 +19,7 @@ import { NoteTree, serializeEnvelope, seal } from '../src/sh20.js';
 import { planTransfer, planCarrier, revealFor, planPlainDeploy, deployEnvelope, pendingRecord, refusedSpend, deploySchedule, anchor } from '../src/send.js';
 import { withProof, pickInputs } from '../src/spend.js';
 import { planList, listOutputs, signOffer, listingFromChain, buildTake } from '../src/market.js';
-import { listingCheck, profileCheck, refusalAgreed } from '../src/consensus.js';
+import { PAY_DEPTH, listingCheck, profileCheck, refusalAgreed } from '../src/consensus.js';
 import { IndexerApi, normListing, normToken } from '../src/api.js';
 import { urlList } from '../src/ui/context.js';
 import { deployMismatches } from '../src/deploy.js';
@@ -104,14 +104,22 @@ test('vault-1: a TAKE of a listing one block old pays the seller for nothing onc
   assert.equal(listing.height, 3);
 
   // the buyer's vault, one block later: two indexers agree, the LIST is on chain, the offer is the lock key's
-  const two = ['one', 'two'].map((base) => ({ base, listing: async () => apiListing(listing) }));
+  const two = ['one', 'two'].map((base) => ({ base, listing: async () => apiListing(listing), status: async () => ({ height: 3 }) }));
   const checked = await listingCheck(two, list.txid);
   assert.equal(checked.enough, true);
+  // fixed: both hold the LIST one block deep, and a TAKE waits for PAY_DEPTH (consensus.js, ui/market-panel.js sendTake)
+  assert.deepEqual([checked.depth, checked.deep], [1, false]);
+  assert.match(checked.depthProblem, /the listing, at one, is 1 block deep: the vault pays once it is 6 deep/);
   const l = listingFromChain(list.txid, list.hex, { ...checked.listing, amount: String(checked.listing.amount), price: String(checked.listing.price) });
   const sig = signOffer(lock.secret, l);
   const buyer = await vaultOf(cv.wallets[2].m);
-  // today: nothing between the offer and the TAKE looks at the listing's height (ui/market-panel.js sendTake)
-  const take = buildTake({ l, sig, npk: (await buyer.opening(0)).npk, payer: { address: WPKH }, utxos: [{ txid: '55'.repeat(32), vout: 1, value: 50000n }], feeRate: 1, tipHeight: 3 });
+  const takeAt = (tipHeight) => buildTake({ l, sig, npk: buyerNpk, payer: { address: WPKH }, utxos: [{ txid: '55'.repeat(32), vout: 1, value: 50000n }], feeRate: 1, tipHeight });
+  const buyerNpk = (await buyer.opening(0)).npk;
+  // fixed: the TAKE itself is refused while the listing is less than PAY_DEPTH deep (market.js buildTake)
+  assert.throws(() => takeAt(3), /not bought yet: the listing is 1 block deep: the vault pays once it is 6 deep/);
+  // what it would have paid for, had it gone: the same TAKE, which the vault now builds only PAY_DEPTH - 1 blocks later,
+  // past the one-block reorg below
+  const take = takeAt(3 + PAY_DEPTH - 1);
 
   // chain B replaces block 3: the TRANSFER comes first, then the same LIST transaction, then the TAKE.
   // Each is a valid Bitcoin transaction there too: none spends an output of another but the TAKE, which
@@ -149,8 +157,12 @@ test('vault-1: a MINT paid to the deployer of a ticker one block old pays for no
   assert.deepEqual(deployMismatches(token, deploy.hex, 2), []);
   assert.deepEqual(mintProblems(token, 3), []);
   const minter = await vaultOf(cv.wallets[1].m);
-  // today: verifyDeploy asks that the DEPLOY be confirmed, not how deep (deploy.js)
-  const mint = buildMint({ token, opening: await minter.opening(0), payer: { address: WPKH }, utxos: [{ txid: '66'.repeat(32), vout: 0, value: 100000n }], feeRate: 1, tipHeight: 2 });
+  const mintAt = async (tipHeight) => buildMint({ token, opening: await minter.opening(0), payer: { address: WPKH }, utxos: [{ txid: '66'.repeat(32), vout: 0, value: 100000n }], feeRate: 1, tipHeight });
+  // fixed: a MINT that pays waits until the DEPLOY is PAY_DEPTH deep (mint.js mintDepthProblem; deploy.js verifyDeploy, at Esplora)
+  await assert.rejects(mintAt(2), /the DEPLOY of PAID is 1 block deep: the vault pays once it is 6 deep/);
+  // what it would have paid for, had it gone: the same MINT, which the vault now builds only PAY_DEPTH - 1 blocks
+  // later, past the one-block reorg below
+  const mint = await mintAt(2 + PAY_DEPTH - 1);
 
   // chain B: block 2 without the DEPLOY, which is mined in block 3 with the MINT
   ix.rollback(1);
@@ -403,7 +415,8 @@ test('vault-15: the smallest coin that pays is spent first, whatever it carries,
   const d = { ticker: 'PAID', max: 1000000n, lim: 1000n, pre: 0n, start: 3, end: 0, unlock: 3, price: 10000n, payMode: 2, payScript: DEPLOYER_PAY };
   const { token } = await deployed(d, null);
   const coins = [{ txid: '11'.repeat(32), vout: 0, value: 500000n, confirmed: true }, { txid: '22'.repeat(32), vout: 0, value: 20000n, confirmed: true }];
-  const mint = buildMint({ token, opening: { npk: 5n }, payer: { address: WPKH }, utxos: coins, feeRate: 2, tipHeight: 2 });
+  // the DEPLOY, in block 2, PAY_DEPTH deep: a mint that pays may go (vault-1)
+  const mint = buildMint({ token, opening: { npk: 5n }, payer: { address: WPKH }, utxos: coins, feeRate: 2, tipHeight: 2 + PAY_DEPTH - 1 });
   assert.deepEqual(mint.tx.vin.map((i) => i.txid), ['22'.repeat(32)]); // today: the small coin, alone
   // its first sats go to the first output that holds any: the envelope's OP_RETURN holds none, the next is the deployer's
   assert.equal(mint.tx.vout[0].value, 0n);

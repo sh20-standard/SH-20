@@ -29,7 +29,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 182 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 186 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
@@ -388,13 +388,19 @@ control block, signature message) is checked against the BIP341 vectors (`test/t
   every indexer that answers to report the same listing, ACTIVE: one that does not know it refuses
   it, and at least two must agree (`consensus.js` `listingCheck`, `TAKE_QUORUM`), since a LIST the
   indexers rejected still looks like one on chain. It checks the seller's signature for
-  that price and payee. The payee shows as an address only when its script is a whole standard
+  that price and payee. And it waits: Buy stays off, with the count, until the LIST is six blocks
+  deep at every indexer that answers and at Esplora (`consensus.js` `PAY_DEPTH`). A TAKE pays the
+  seller whatever the indexers later decide, and a reorg of the LIST's block can leave the LIST
+  transaction in the chain with its envelope refused: the price would be paid for nothing. The payee shows as an address only when its script is a whole standard
   template (P2PKH, P2SH, P2WPKH, P2WSH, P2TR; `btc.js` `scriptType`); any other script shows as its
   hex, and Buy stays off with the reason, since the network would not relay a TAKE that pays it
   (`market.js` `payeeProblem`). Then it builds the buyer's transaction: the lock at input 0 with the seller's
   signature, the price at output 0, the TAKE (an OP_RETURN with a public note key of this vault) and
   the wallet's own inputs, which are the only ones the wallet signs. The tokens become a public note
-  of the buyer. A lock is spent once: a sale can be neither doubled nor left unpaid.
+  of the buyer. A lock is spent once: a sale can be neither doubled nor left unpaid for the seller.
+  The buyer relies on the LIST being accepted where the TAKE lands: two indexers that agree, and
+  six blocks. A MINT that pays its deployer or burns its price waits the same six blocks after the
+  DEPLOY, for the same reason; a free mint, SH20's among them, does not wait.
 - **Cancel**: a TAKE by the seller itself, the lock signed by the vault (SIGHASH_DEFAULT): the
   tokens come back as a public note. A TAKE whose outputs pay the payee at least the price counts
   as SOLD, so the cancel sends its change to the wallet's other address when it has one and the

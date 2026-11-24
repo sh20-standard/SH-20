@@ -14,6 +14,7 @@ import { memoryCache } from '../src/cache.js';
 import { frHex } from '../src/fr.js';
 import { txid } from '../src/btc.js';
 import { seal, decodeAddress } from '../src/sh20.js';
+import { PAY_DEPTH } from '../src/consensus.js';
 
 const memStorage = () => {
   const m = new Map();
@@ -30,6 +31,7 @@ test('sync finds the vault note, its path and its spend through the real API', a
   const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n, deployMaturity: 0 }, verifier: mockVerifier() });
   const c = chain(idx);
   c.block(helperTx({ env: deployEnv({ start: 2, unlock: 2 }), prevHeight: c.next - 1 }));
+  for (let k = 1; k < PAY_DEPTH; k++) c.block(); // the DEPLOY deep enough for a mint that pays (vault-1)
 
   const vault = await Vault.create(memStorage());
   const o = await vault.reserveNote();

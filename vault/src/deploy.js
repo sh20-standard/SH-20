@@ -13,10 +13,11 @@
 // The genesis token SH20 has no DEPLOY: its terms are profile constants, and the
 // vault checks them against its own copy (profile.js).
 
-import { extractEnvelope, parseEnvelope, tickerT } from './sh20.js';
+import { PAY_MODE, extractEnvelope, parseEnvelope, tickerT } from './sh20.js';
 import { GENESIS, ACTIVATION_HEIGHT } from './profile.js';
 import { parseTx, txid as txidOf } from './btc.js';
 import { fromHex, toHex } from './bytes.js';
+import { payDepthProblem } from './consensus.js';
 
 /** Indexer transaction format, as carrier.js expects it. */
 const toCarrierTx = (tx) => ({
@@ -95,10 +96,15 @@ export async function verifyMintTerms(esplora, token) {
   return 'deploy';
 }
 
-/** Fetches deployTxid from Esplora and throws if the indexer's terms are not the chain's. */
+/**
+ * Fetches deployTxid from Esplora and throws if the indexer's terms are not the chain's, or, for a
+ * mint that pays or burns, while Esplora holds the DEPLOY less than PAY_DEPTH blocks deep (vault-1).
+ */
 export async function verifyDeploy(esplora, token) {
-  const [hex, status] = await Promise.all([esplora.txHex(token.deployTxid), esplora.txStatus(token.deployTxid)]);
+  const [hex, status, tip] = await Promise.all([esplora.txHex(token.deployTxid), esplora.txStatus(token.deployTxid), esplora.tipHeight()]);
   if (!status?.confirmed) throw new Error('the DEPLOY transaction is not confirmed');
+  const shallow = token.payMode === PAY_MODE.NONE ? null : payDepthProblem(`the DEPLOY of ${token.ticker}`, status.block_height, tip);
+  if (shallow) throw new Error(`not minted yet: ${shallow}`);
   const bad = deployMismatches(token, hex, status.block_height);
   if (bad.length) throw new Error(`refusing to mint ${token.ticker}: the indexer disagrees with the DEPLOY on chain (${bad.join('; ')})`);
 }

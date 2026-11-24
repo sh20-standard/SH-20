@@ -349,6 +349,16 @@ async function main() {
   await evaluate(`(() => { const t = document.querySelector('#market-body textarea[name=offer]'); t.value = ${JSON.stringify(offer)}; t.dispatchEvent(new Event('input')); })()`);
   await evaluate(`document.querySelector('#market-body button[name=check]').click()`);
   await waitFor(`!!document.querySelector('#market-body button[name=buy]')`, 'the offer checked');
+  // the LIST is one block deep: Buy stays off until it is six deep everywhere (vault-1)
+  if (!(await evaluate(`document.querySelector('#market-body button[name=buy]').disabled`))) throw new Error('Buy is offered for a listing one block deep');
+  step('checked, too early: ' + (await evaluate(`document.querySelector('#listing-shallow')?.innerText ?? ''`)));
+  await mine(5);
+  for (let i = 0; ; i++) { // the indexers follow the five blocks, then the offer is checked again
+    await evaluate(`document.querySelector('#market-body button[name=check]').click()`);
+    await sleep(500);
+    if (await evaluate(`!!document.querySelector('#market-body button[name=buy]') && !document.querySelector('#market-body button[name=buy]').disabled`)) break;
+    if (i > 60) throw new Error(`Buy still off six blocks after the LIST: ${await evaluate(`document.querySelector('#market-body').innerText`)}`);
+  }
   step('checked: ' + (await evaluate(`document.querySelector('#market-body dl').innerText.replace(/\\n/g, ' | ')`)));
   await evaluate(`document.querySelector('#market-body button[name=buy]').click()`);
   await waitFor(`/broadcast/.test(document.querySelector('#buy-out')?.innerText ?? '')`, 'the TAKE broadcast');

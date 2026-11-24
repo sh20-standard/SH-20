@@ -21,6 +21,7 @@ import { addressToScript, serializeTx } from '../src/btc.js';
 import { fromHex, toHex } from '../src/bytes.js';
 import { frHex } from '../src/fr.js';
 import { noteLeaf, tickerT } from '../src/sh20.js';
+import { PAY_DEPTH } from '../src/consensus.js';
 
 const cv = JSON.parse(readFileSync(new URL('../../circuit/js/vectors.json', import.meta.url), 'utf8'));
 const WPKH = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx';
@@ -113,7 +114,8 @@ test('BURN and LIST with real proofs; an offer that another vault TAKEs, paying 
   assert.ok(!offerValid({ ...l, payScript: fromHex('0014' + 'ee'.repeat(20)) }, sig), 'nor another payee');
   assert.throws(() => listingFromChain(reveal.txid, reveal.hex, { ...listing, price: '1' }), /differs from the chain: price/);
 
-  // another vault takes it: lock at input 0, the price at output 0, its npk in the TAKE
+  // another vault takes it, once the LIST is PAY_DEPTH blocks deep (vault-1): lock at input 0, the price at output 0, its npk in the TAKE
+  for (let k = 1; k < PAY_DEPTH; k++) c.block();
   const buyer = await vaultOf(cv.wallets[2].m);
   const npk = (await buyer.opening(0)).npk;
   const t = buildTake({ l, sig, npk, payer: { address: WPKH }, utxos: [{ txid: '55'.repeat(32), vout: 1, value: 50000n }], feeRate: 1, tipHeight: c.next - 1 });

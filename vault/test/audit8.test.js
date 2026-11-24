@@ -219,9 +219,10 @@ test('8.2 the page signs nothing it has not vouched for or shown: offerTerms, th
 // ---- 8.3: one indexer that knew the listing was enough, and one that did not was ignored ------------
 
 const LISTED = { listTxid: 'ab'.repeat(32), ticker: 'GENE', amount: 600n, price: 5000n, payScript: '0014' + '66'.repeat(20), lock: `${'ab'.repeat(32)}:0`, lockKey: 'cd'.repeat(32), state: 'ACTIVE', height: 9 };
-const knows = (base, l = LISTED) => ({ base, listing: async () => l });
-const unknown = (base) => ({ base, listing: async () => null }); // IndexerApi.listing on a 404
-const down = (base) => ({ base, listing: async () => { throw new Error('unreachable'); } });
+// each at block 20, the LIST (block 9) twelve blocks deep: deep enough for a TAKE (vault-1)
+const knows = (base, l = LISTED) => ({ base, listing: async () => l, status: async () => ({ height: 20 }) });
+const unknown = (base) => ({ base, listing: async () => null, status: async () => ({ height: 20 }) }); // IndexerApi.listing on a 404
+const down = (base) => ({ base, listing: async () => { throw new Error('unreachable'); }, status: async () => ({ height: 20 }) });
 
 test('8.3 an indexer that answers and does not know the listing refuses it; a TAKE needs two that agree', async () => {
   assert.equal(TAKE_QUORUM, 2);
@@ -237,8 +238,8 @@ test('8.3 an indexer that answers and does not know the listing refuses it; a TA
   assert.deepEqual([one.agreed, one.enough, one.down], [1, false, ['b']]);
   assert.equal((await listingCheck([knows('a')], LISTED.listTxid)).enough, false);
   const two = await listingCheck([knows('a'), knows('b'), down('c')], LISTED.listTxid);
-  assert.deepEqual([two.agreed, two.enough], [2, true]);
-  assert.equal(two.listing, LISTED);
+  assert.deepEqual([two.agreed, two.enough, two.depth, two.deep], [2, true, 12, true]);
+  assert.deepEqual(two.listing, LISTED);
 });
 
 test('8.3 the page checks the quorum before a TAKE, and says why it cannot buy', () => {

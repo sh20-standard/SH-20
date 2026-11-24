@@ -5,7 +5,7 @@ import { finalizePsbt, sameUnsignedTx, scriptType } from '../btc.js';
 import { toHex } from '../bytes.js';
 import { TERMS, crossCheck, profileCheck, unverifiedSpends } from '../consensus.js';
 import { verifyMintTerms } from '../deploy.js';
-import { buildMint, mintProblems, mintsLeft } from '../mint.js';
+import { buildMint, mintDepthProblem, mintProblems, mintsLeft } from '../mint.js';
 import { PROFILE, PROFILE_NAME } from '../profile.js';
 import { MINT_BATCH_MAX, PAY_MODE } from '../sh20.js';
 import { $, MAX_FEE_SATS, NO_INDEXER, busy, esplora, explorerTx, fill, h, indexer, indexers, noCoins, report, sats, short, st, units } from './context.js';
@@ -79,7 +79,8 @@ export function renderTokens() {
   }
   const H = chainHeight();
   const rows = st.tokens.map((t) => {
-    const problems = H === null ? ['chain height unknown'] : mintProblems(t, H + 1);
+    // the terms at the next block, then the DEPLOY's depth for a mint that pays (vault-1)
+    const problems = H === null ? ['chain height unknown'] : [...mintProblems(t, H + 1), mintDepthProblem(t, H)].filter(Boolean);
     const b = h('button', { type: 'button', class: 'small', disabled: problems.length > 0, title: problems.join('; ') }, 'Mint');
     b.addEventListener('click', () => openMint(t.ticker));
     return h('tr', {},
