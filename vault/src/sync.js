@@ -83,11 +83,19 @@ export class Sync {
   /**
    * Brings the local tree and nullifier set to the indexer's current height.
    * Returns the notes read in this sync (for matching the vault's own notes),
-   * the height and whether the spent-nullifier list is available.
+   * the height and whether the spent-nullifier list is available. Before block A
+   * the height is null, and nothing is read or changed here.
    */
   async sync(api, { full = false, tries = 3 } = {}) {
-    if (full) this.reset();
     const status = await api.status();
+    if (status.height === null) {
+      // before block A (docs/API.md /status: no block counted yet): no leaf and no nullifier to read. Only
+      // for a sync that has never seen a block: an indexer that went back to none is not believed, and
+      // nothing is reset on its word (the caller also compares it with the chain and the other indexers)
+      if (this.height !== null) throw new Error(`the indexer says it has counted no block, after block ${this.height}: it is behind, restarted, or lying`);
+      return { height: null, digest: status.digest ?? null, root: null, notes: [], from: 0, leaves: 0, nullifiersKnown: false };
+    }
+    if (full) this.reset();
     // the tip must be the same after the reads as before (docs/API.md, "Reorgs" and "The static mirror":
     // a mirror rebuilt between two of its files, an indexer that took a block): else everything again
     const moved = async () => {

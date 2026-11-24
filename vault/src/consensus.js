@@ -19,11 +19,17 @@ export const REPORTED = ['network', 'activationHeight', 'deployBurn', 'deployMat
 
 const shown = (x) => (typeof x === 'object' ? JSON.stringify(x) : String(x));
 
-/** How an indexer's /status differs from the vault's profile: [] when it follows the same one. */
+/**
+ * How an indexer's /status differs from the vault's profile: [] when it follows the same one. Before
+ * block A (height null) the reference indexer reports no `genesis`, the token being created in block
+ * A (indexer-rs reports "SH20" from the start, as docs/API.md says): that absence is not a difference
+ * until the indexer has a block. Another genesis ticker is one, before A as after.
+ */
 export function profileDiff(status) {
   const out = [];
   for (const k of REPORTED) {
     const got = status?.[k];
+    if (k === 'genesis' && got === null && status?.height === null) continue;
     if (got === undefined || got === null || got === '') out.push(`${k} not reported (the vault has ${PROFILE[k]})`);
     else if (String(got) !== String(PROFILE[k])) out.push(`${k} ${shown(got)}, the vault has ${PROFILE[k]}`);
   }

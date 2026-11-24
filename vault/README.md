@@ -29,7 +29,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 149 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 154 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 npm run release          # a verifiable release from the current commit, on the signet profile (below)
@@ -40,6 +40,9 @@ The whole flow on Bitcoin Core regtest (what the CI runs, job `vault-regtest`):
 ```sh
 node dev/regtest.js --isolate   # bitcoind (tools/bitcoind.sh: a pinned release, SHA-256 checked), two indexers, the page
 node dev/e2e.js                 # headless Chrome: mint, TRANSFER, DEPLOY, BURN, LIST, TAKE, cancel, CLAIM, restore
+node dev/regtest.js --isolate --mirror   # the same, the page reading the indexers' static mirrors only
+E2E_MIRROR=1 node dev/e2e.js
+node dev/before-a.js            # no chain: the signet release before its block A, on two mirrors before A
 ```
 
 `dev/regtest.js` runs Bitcoin Core on a regtest chain of its own (in a temporary folder) with the
