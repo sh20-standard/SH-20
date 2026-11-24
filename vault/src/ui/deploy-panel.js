@@ -53,7 +53,8 @@ function currentTerms() {
 export function renderDeploy() {
   const H = chainHeight();
   const f = deployForm;
-  if (!f.start && H !== null) f.start = String(H + 12);
+  // after the reveal (N blocks after the commit) with a margin for a commit slow to confirm (vault-4)
+  if (!f.start && H !== null) f.start = String(H + PROFILE.deployMaturity + 18);
   if (!f.unlock && f.start) f.unlock = f.start;
   const { d, payProblem } = currentTerms();
   const { D, why, agreed } = deployBurn();
@@ -187,6 +188,13 @@ export async function processDeploys() {
       await v.updatePending(p.id, { commitHeight, revealIn: sched.blocks, schedule: sched.state });
       if (sched.state === 'expired') {
         await v.updatePending(p.id, { status: 'anchor expired' });
+        continue;
+      }
+      if (sched.state === 'late') {
+        // its mint starts before any block can take the reveal: refused if sent, its ticker shown for nothing (vault-4).
+        // Held for good: the notes it burns come back, and the commit's sats are taken back from the list of spends
+        await v.releaseInputs(p.inputs ?? []);
+        await v.updatePending(p.id, { status: 'start passed' });
         continue;
       }
       if (sched.state !== 'ready') continue;

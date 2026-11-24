@@ -3,7 +3,7 @@
 import { addressToScript } from '../btc.js';
 import { toHex } from '../bytes.js';
 import { listOutputs, planBurn, planList, poolProblem } from '../market.js';
-import { planFromPending, planTransfer, revealFor } from '../send.js';
+import { buildSweep, planFromPending, planTransfer, revealFor } from '../send.js';
 import { NET, busy, esplora, feeRateOf, fill, h, indexers, isolation, proposedFee, resultBox, sats, short, st, units } from './context.js';
 import { NETWORK_HRP } from '../notekeys.js';
 import { broadcastDeployReveal, processDeploys, reproveDeploy } from './deploy-panel.js';
@@ -148,7 +148,7 @@ async function sendTransfer(out) {
 
 /** Spends whose reveal may still need sending: their one-time key is in the vault. */
 // spends that are over, with nothing to do or to show: their notes are back (vault-2), or never left
-const CLOSED = ['replaced', 'not signed', 'given up'];
+const CLOSED = ['replaced', 'not signed', 'given up', 'swept'];
 
 export function renderPending() {
   const open = (st.vault?.state.pending ?? []).filter((p) => !CLOSED.includes(p.status));
@@ -166,6 +166,18 @@ export function renderPending() {
           renderAll();
         }));
         return h('tr', {}, h('td', {}, p.kind), h('td', {}, 'prepared, never signed by the wallet: its notes stay reserved until you give it up'), h('td', {}, '—'), h('td', {}, '—'), h('td', {}, up));
+      }
+      if (p.status === 'start passed') {
+        // a DEPLOY whose mint would have started before its reveal could land (vault-4): never revealed
+        const back = h('button', { type: 'button', class: 'small secondary', name: 'sweep', disabled: !st.wallet || !p.commitTxid }, 'Take the commit back');
+        back.addEventListener('click', busy(back, async () => {
+          const sw = buildSweep(p, { toScript: addressToScript(st.wallet.address), feeRate: feeRateOf(sendForm.fee) });
+          if (!confirm(`Send the ${sats(sw.tx.vout[0].value)} of the commit of ${p.deploy.ticker} back to ${st.wallet.address} (fee ${sats(sw.fee)})?`)) return;
+          await esplora.broadcast(sw.hex);
+          await st.vault.updatePending(p.id, { status: 'swept', sweepTxid: sw.txid });
+          renderPending();
+        }));
+        return h('tr', {}, h('td', {}, p.kind), h('td', {}, `${p.deploy.ticker}: its mint would start before the reveal could land, so it is not revealed; its notes are back. Deploy again with a later start`), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', {}, '—'), h('td', {}, back));
       }
       if (/^expired/.test(p.status)) {
         return h('tr', {}, h('td', {}, p.kind), h('td', {}, 'never mined, and its anchor left the window: no block can take it now; its notes are back'), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', { class: 'mono' }, short(p.revealTxid ?? '')), h('td', {}));

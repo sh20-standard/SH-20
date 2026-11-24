@@ -33,7 +33,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 209 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 210 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
@@ -289,7 +289,9 @@ openings without `rho` (it was 196 vB). A batch adds one byte for `k` mints. Wit
 ## Deploy screen
 
 `src/deploy-plan.js` checks a new ticker's terms with the same rules as the indexer (free 4-character
-ticker, `pre < max`, `(max − pre)` a multiple of `lim`, `start` after the DEPLOY block, `end` and
+ticker, `pre < max`, `(max − pre)` a multiple of `lim`, `start` after the reveal's block, which comes
+`N = 6` blocks after the commit at the earliest (docs/audit/2026-11-24-vault.md, vault-4; the form
+proposes the tip + N + 18), `end` and
 `unlock` not before `start`, payMode 0 ⇔ price 0; `test/deploy-plan.test.js` runs each case through
 the reference indexer and requires the same verdict). It then shows what the DEPLOY costs:
 
@@ -324,7 +326,11 @@ original goes in. So the vault:
 5. if the proof's anchor would be out of the window `W = 100` by then (a commit that stayed
    unconfirmed for long), marks the DEPLOY "Prove again": the vault proves it on today's tree and
    makes a new commit, which spends the old commit output by its key path (the one-time key, tweaked
-   with the leaf), so its sats come back; the new commit matures in its turn.
+   with the leaf), so its sats come back; the new commit matures in its turn;
+6. if its mint would start before any block can take the reveal (a commit slow to confirm, a page
+   closed long), never reveals it: the indexers would refuse it and its ticker would show for
+   nothing (vault-4). The notes it burns come back, and "Take the commit back" sends the commit's
+   sats to the wallet by the same key path; deploy again with a later start.
 
 A team allocation gets one of the vault's public note keys, found by the sync when its block comes.
 Before signing, the vault asks the indexers again for their profile, the tickers taken and the tip.

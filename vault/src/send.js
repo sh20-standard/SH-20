@@ -11,7 +11,7 @@
 import { buildSpend, withProof, pickInputs } from './spend.js';
 import { commitment, commitValue, signReveal, oneTimeSecret, keyPathOutput, signKeyPath, sigMsg } from './taproot.js';
 import { buildFunded } from './mint.js';
-import { addressToScript } from './btc.js';
+import { addressToScript, dustLimit, estimateVsize, serializeTx, txid as txidOf } from './btc.js';
 import { serializeEnvelope, parseEnvelope, decodeAddress, tickerT } from './sh20.js';
 import { NETWORK_HRP } from './notekeys.js';
 import { GENESIS, PROFILE } from './profile.js';
@@ -115,6 +115,19 @@ function sweepInput(p) {
 }
 
 /**
+ * The commit output of pending record `p` taken back alone, to `toScript` (the wallet's address): one input signed
+ * by the one-time key's key path, one output, its fee at `feeRate`. For a DEPLOY whose reveal will not be sent (vault-4).
+ */
+export function buildSweep(p, { toScript, feeRate }) {
+  const inp = sweepInput(p);
+  const fee = BigInt(Math.ceil(feeRate * estimateVsize(['p2tr'], [toScript])));
+  if (inp.value - fee < BigInt(dustLimit(toScript))) throw new Error(`the commit holds ${inp.value} sats: too little to take back at ${feeRate} sat/vB`);
+  const tx = { version: 2, locktime: 0, vin: [{ txid: inp.txid, vout: inp.vout, sequence: inp.sequence, scriptSig: new Uint8Array(0), witness: [] }], vout: [{ value: inp.value - fee, script: toScript }] };
+  tx.vin[0].witness = [signKeyPath(inp.secret, sigMsg(tx, 0, [{ value: inp.value, script: inp.script }]))];
+  return { tx, hex: toHex(serializeTx(tx)), txid: txidOf(tx), fee };
+}
+
+/**
  * Whether a DEPLOY's ticker is still free before its reveal goes out, from every configured
  * indexer's /tokens (Promise.allSettled results): 'taken' if any lists it, 'free' if at least one
  * answered and none lists it, 'unknown' if none answered. An unknown answer holds the reveal back:
@@ -130,13 +143,17 @@ export function tickerState(settled, ticker) {
  * When a DEPLOY's reveal may go out (SPEC-WIRE §5, DEPLOY maturity): its commit must be confirmed
  * at a height ≤ H − N, H being the reveal's block, and a DEPLOY that burns D SH20 carries a proof
  * anchored at `anchorHeight`, valid while H − W ≤ anchorHeight. The reveal lands at tip + 1 at the
- * earliest. Returns { state, blocks }: 'unconfirmed' (the commit is not in a block), 'waiting'
- * (`blocks` more to go), 'ready', or 'expired' (the proof's anchor will be out of the window: prove again).
+ * earliest, and the indexers want its mint to start after that block (`start > H`). Returns { state,
+ * blocks }: 'unconfirmed' (the commit is not in a block), 'waiting' (`blocks` more to go), 'ready',
+ * 'expired' (the proof's anchor will be out of the window: prove again), or 'late' (the mint will have
+ * started before any block can take the reveal: docs/audit/2026-11-24-vault.md, vault-4; it would be
+ * refused, its fees lost and its ticker shown, so it is held, and the commit's sats taken back).
  */
-export function revealSchedule({ commitHeight, tip, N, anchorHeight = null, W = 100 }) {
+export function revealSchedule({ commitHeight, tip, N, anchorHeight = null, W = 100, start = null }) {
   if (!Number.isInteger(commitHeight)) return { state: 'unconfirmed', blocks: null };
   const earliest = Math.max(tip + 1, commitHeight + N);
   if (anchorHeight !== null && earliest - anchorHeight > W) return { state: 'expired', blocks: null };
+  if (Number.isInteger(start) && start <= earliest) return { state: 'late', blocks: null };
   const blocks = commitHeight + N - (tip + 1);
   return blocks > 0 ? { state: 'waiting', blocks } : { state: 'ready', blocks: 0 };
 }
@@ -147,7 +164,7 @@ export function revealSchedule({ commitHeight, tip, N, anchorHeight = null, W = 
  * an indexer can make the reveal go out before the commit is PROFILE.deployMaturity blocks deep.
  */
 export const deploySchedule = (p, { commitHeight, tip }) =>
-  revealSchedule({ commitHeight, tip, N: PROFILE.deployMaturity, anchorHeight: p.anchorHeight ?? null, W: PROFILE.anchorWindow });
+  revealSchedule({ commitHeight, tip, N: PROFILE.deployMaturity, anchorHeight: p.anchorHeight ?? null, W: PROFILE.anchorWindow, start: p.deploy?.terms?.start ?? null });
 
 /** Blocks a refused spend's reveal must be below the synced tip before its notes are given back. */
 export const REFUSAL_DEPTH = 6;

@@ -264,7 +264,9 @@ test('vault-4: a DEPLOY whose mint starts within N blocks passes the screen, is 
   const N = PROFILE.deployMaturity;
   const tip = 10;
   const d = { ticker: 'SOON', max: 21000000n, lim: 1000n, pre: 0n, start: tip + 2, end: 0, unlock: tip + 2, price: 0n, payMode: 0, payScript: new Uint8Array(0) };
-  assert.deepEqual(deployProblems(d, { nextHeight: tip + 1, taken: [] }), []); // today: no problem found
+  // fixed: the screen wants the mint to start after the reveal, N blocks after the commit (deploy-plan.js)
+  assert.match(deployProblems(d, { nextHeight: tip + 1, taken: [] }).join(), /the mint must start after the DEPLOY's reveal, which lands 6 blocks after its commit at the earliest \(after 17;/);
+  assert.deepEqual(deployProblems({ ...d, start: tip + 1 + N + 1, unlock: tip + 1 + N + 1 }, { nextHeight: tip + 1, taken: [] }), []);
 
   // the commit in the next block, the reveal in the first block the indexers take it in
   const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n }, verifier: mockVerifier() });
@@ -275,7 +277,11 @@ test('vault-4: a DEPLOY whose mint starts within N blocks passes the screen, is 
   const t = ixTx(reveal.tx, reveal.txid);
   t.vin[0].prevHeight = tip + 1;
   // the page sends it: the schedule knows the commit's height and the proof's anchor, not the mint's start
-  assert.deepEqual(deploySchedule({ anchorHeight: null }, { commitHeight: tip + 1, tip: tip + N }), { state: 'ready', blocks: 0 }); // today
+  // fixed: the schedule knows the mint's start, and holds a reveal that would land after it (send.js revealSchedule)
+  assert.deepEqual(deploySchedule({ anchorHeight: null }, { commitHeight: tip + 1, tip: tip + N }), { state: 'ready', blocks: 0 }, 'with no terms recorded, as before');
+  assert.deepEqual(deploySchedule({ anchorHeight: null, deploy: { terms: { start: d.start } } }, { commitHeight: tip + 1, tip: tip + N }), { state: 'late', blocks: null });
+  assert.deepEqual(deploySchedule({ anchorHeight: null, deploy: { terms: { start: tip + 1 + N + 1 } } }, { commitHeight: tip + 1, tip: tip + N }), { state: 'ready', blocks: 0 });
+  // what the page would have sent, had it sent it: refused by the indexers
   const r = ix.applyBlock({ height: tip + 1 + N, hash: 'reveal', txs: [t] });
   assert.deepEqual(r.events, []);
   assert.match(JSON.stringify(r.rejected), /start must be after the DEPLOY block/);
@@ -300,7 +306,8 @@ test('vault-5: the block at which a team allocation unlocks is not compared with
   assert.equal(token.unlock, 3);
   assert.deepEqual(deployMismatches(token, reveal.hex, 2), []);
   // an indexer that says the team's half of the supply is locked for decades
-  assert.deepEqual(deployMismatches({ ...token, unlock: 4000000 }, reveal.hex, 2), []); // today: not noticed
+  // fixed: unlock is one of the terms compared with the chain (deploy.js FIELDS)
+  assert.match(deployMismatches({ ...token, unlock: 4000000 }, reveal.hex, 2).join(), /unlock: chain says 3, indexer says 4000000/);
   // every other term it could change is
   assert.match(deployMismatches({ ...token, pre: 0n }, reveal.hex, 2).join(), /pre/);
 });
