@@ -14,6 +14,7 @@ import {
   addressToScript, scriptType, dustLimit, opReturnScript, p2shP2wpkhRedeem, estimateVsize, createPsbt, SUPPORTED_INPUTS,
 } from './btc.js';
 import { fromHex } from './bytes.js';
+import { payDepthProblem } from './consensus.js';
 
 export const MAX_FEE_RATE = 1000; // sat/vB: refuse anything above, whoever typed it
 
@@ -54,7 +55,12 @@ function fixedOutputs(token, envelope, k) {
  * Smallest set of UTXOs paying `fixed` outputs plus the fee at `feeRate`,
  * with a change output only when it is above dust.
  */
-export function selectCoins(utxos, fixed, inType, changeScript, feeRate, pre = []) {
+export function selectCoins(all, fixed, inType, changeScript, feeRate, pre = []) {
+  // never a coin marked unconfirmed (docs/audit/2026-11-24-vault.md, vault-2): whoever paid it can replace that
+  // payment, and the transaction funded with it leaves every mempool, its reveal with it. The page hands over the
+  // coins Esplora lists as confirmed (ui/spends.js walletUtxos); a coin with no word on it is taken as such
+  const utxos = all.filter((u) => u.confirmed !== false);
+  if (!utxos.length && all.length) throw new Error('the wallet\'s coins are not confirmed yet: the vault pays from confirmed coins only, since an unconfirmed one can be replaced by whoever sent it, and the transaction with it. Wait for a block');
   // `pre`: inputs already in the transaction (P2TR key path, signed): they add their value and weight
   const sumFixed = fixed.reduce((s, o) => s + o.value, 0n) - pre.reduce((s, i) => s + i.value, 0n);
   const scripts = fixed.map((o) => o.script);
@@ -67,19 +73,34 @@ export function selectCoins(utxos, fixed, inType, changeScript, feeRate, pre = [
     if (total >= sumFixed + fee(n, false)) return { picked, change: 0n, fee: total - sumFixed };
     return null;
   };
-  const asc = [...utxos].sort((a, b) => (a.value < b.value ? -1 : a.value > b.value ? 1 : 0));
-  for (const u of asc) {
+  // the largest first (vault-15): the small coins of an address are where an inscription or runes sit, and a
+  // coin the page does not know to be plain is never handed over on mainnet (coins.js); the largest single coin
+  // that pays everything, else the fewest coins, largest first
+  const desc = [...utxos].sort((a, b) => (a.value > b.value ? -1 : a.value < b.value ? 1 : 0));
+  for (const u of desc) {
     const s = settle([u]);
-    if (s) return s; // smallest single input that pays everything
+    if (s) return s;
   }
   const picked = [];
-  for (const u of asc.reverse()) {
+  for (const u of desc) {
     picked.push(u);
     const s = settle(picked);
     if (s) return s;
   }
   const have = utxos.reduce((s, u) => s + u.value, 0n);
   throw new Error(`not enough BTC: need about ${sumFixed + fee(Math.max(1, utxos.length), false)} sats, have ${have}`);
+}
+
+/**
+ * Why a MINT of `token` does not go out yet with the chain at `tip` (docs/audit/2026-11-24-vault.md, vault-1):
+ * one that pays the deployer or burns its price waits until the DEPLOY is PAY_DEPTH blocks deep, since a
+ * reorg that moves the DEPLOY can make it refused, and the price paid for a ticker that does not exist.
+ * A free mint risks its network fee alone, and SH20 has no DEPLOY: neither waits. Null when it may go.
+ */
+export function mintDepthProblem(token, tip) {
+  if (token.genesis || token.payMode === PAY_MODE.NONE) return null;
+  const at = token.deployHeight === null || token.deployHeight === undefined ? null : Number(token.deployHeight);
+  return payDepthProblem(`the DEPLOY of ${token.ticker}`, at, tip);
 }
 
 /**
@@ -92,6 +113,8 @@ export function selectCoins(utxos, fixed, inType, changeScript, feeRate, pre = [
 export function buildMint({ token, opening, payer, utxos, feeRate, tipHeight, k = 1 }) {
   const problems = mintProblems(token, tipHeight + 1, k);
   if (problems.length) throw new Error(problems.join('; '));
+  const shallow = mintDepthProblem(token, tipHeight);
+  if (shallow) throw new Error(shallow);
   // 42 bytes: npk alone, rho = 0 (v0.3); 43 with the count byte when k > 1
   const envelope = serializeEnvelope({ type: 'MINT', ticker: token.ticker, npk: opening.npk, k });
   const fixed = fixedOutputs(token, envelope, k);

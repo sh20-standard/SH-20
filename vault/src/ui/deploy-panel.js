@@ -7,8 +7,8 @@ import { planDeploy } from '../deploy-plan.js';
 import { frFromHex, frHex } from '../fr.js';
 import { deploySchedule, planDeployBurn, planPlainDeploy, tickerState } from '../send.js';
 import { PROFILE } from '../profile.js';
-import { profileCheck } from '../consensus.js';
-import { NET, busy, esplora, fill, h, indexers, report, requireProfile, result, resultBox, st, units } from './context.js';
+import { actProblems, profileCheck } from '../consensus.js';
+import { NET, busy, esplora, feeRateOf, fill, h, indexer, indexers, proposedFee, report, requireProfile, result, resultBox, st, units } from './context.js';
 import { getSyncer, syncNotes } from './notes-panel.js';
 import { checkPool, renderPending } from './send-panel.js';
 import { carry, txLink } from './spends.js';
@@ -25,7 +25,8 @@ const heightField = (x) => (/^[0-9]{1,10}$/.test(x.trim()) ? Number(x.trim()) : 
 function deployBurn() {
   const pr = st.profile;
   if (!pr.answered) return { D: null, why: 'no indexer answered' };
-  if (pr.problems.length) return { D: null, why: pr.problems.join('. ') };
+  const act = actProblems(pr, indexer?.base); // another profile, or a primary that verifies no spend (vault-16)
+  if (act.length) return { D: null, why: act.join('. ') };
   return { D: PROFILE.deployBurn, agreed: pr.answered };
 }
 
@@ -52,7 +53,8 @@ function currentTerms() {
 export function renderDeploy() {
   const H = chainHeight();
   const f = deployForm;
-  if (!f.start && H !== null) f.start = String(H + 12);
+  // after the reveal (N blocks after the commit) with a margin for a commit slow to confirm (vault-4)
+  if (!f.start && H !== null) f.start = String(H + PROFILE.deployMaturity + 18);
   if (!f.unlock && f.start) f.unlock = f.start;
   const { d, payProblem } = currentTerms();
   const { D, why, agreed } = deployBurn();
@@ -116,9 +118,9 @@ function deployButton(d, plan, D) {
   if (!st.vault) need.push('unlock the vault');
   if (!st.wallet) need.push('connect a wallet');
   if (D > 0n && !plan.inputs?.pick) need.push('hold enough unspent SH20');
-  const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: '2', class: 'narrow', name: 'deploy-fee' });
+  const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: String(proposedFee() ?? ''), placeholder: 'sat/vB', class: 'narrow', name: 'deploy-fee' });
   const b = h('button', { type: 'button', disabled: need.length > 0, name: 'deploy' }, D > 0n ? `Prove the burn of ${units(D)} SH20, sign and broadcast` : 'Sign and broadcast');
-  b.addEventListener('click', busy(b, () => sendDeploy(d, D, Number(fee.value))));
+  b.addEventListener('click', busy(b, () => sendDeploy(d, D, feeRateOf(fee.value))));
   return [h('div', { class: 'row' }, h('label', {}, 'Fee rate (sat/vB) ', fee), b),
     need.length ? h('p', { class: 'muted' }, `First ${need.join(', ')}.`) : null,
     h('p', { class: 'muted' }, `${D > 0n
@@ -188,6 +190,13 @@ export async function processDeploys() {
         await v.updatePending(p.id, { status: 'anchor expired' });
         continue;
       }
+      if (sched.state === 'late') {
+        // its mint starts before any block can take the reveal: refused if sent, its ticker shown for nothing (vault-4).
+        // Held for good: the notes it burns come back, and the commit's sats are taken back from the list of spends
+        await v.releaseInputs(p.inputs ?? []);
+        await v.updatePending(p.id, { status: 'start passed' });
+        continue;
+      }
       if (sched.state !== 'ready') continue;
       // the ticker may have been taken meanwhile (another DEPLOY confirmed first): then the reveal would be rejected.
       // From the full lists: asking /token/<ticker> would tell the indexer the ticker before the reveal shows it.
@@ -202,8 +211,9 @@ export async function processDeploys() {
         continue;
       }
       const pc = await profileCheck(indexers);
-      if (pc.problems.length) {
-        await v.updatePending(p.id, { schedule: `due, but ${pc.problems.join('. ')}: the reveal waits` });
+      const act = actProblems(pc, indexer?.base);
+      if (act.length) {
+        await v.updatePending(p.id, { schedule: `due, but ${act.join('. ')}: the reveal waits` });
         continue;
       }
       await broadcastDeployReveal(p);

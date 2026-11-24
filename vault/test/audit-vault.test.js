@@ -16,19 +16,21 @@ import { chain, deployEnv, tx as helperTx, mockVerifier, testProof } from '../..
 import { Vault, STORAGE_KEY } from '../src/keys.js';
 import { NOTE_SCHEME } from '../src/notekeys.js';
 import { NoteTree, serializeEnvelope, seal } from '../src/sh20.js';
-import { planTransfer, planCarrier, revealFor, planPlainDeploy, deployEnvelope, pendingRecord, refusedSpend, deploySchedule, anchor } from '../src/send.js';
+import { planTransfer, planCarrier, revealFor, planPlainDeploy, deployEnvelope, pendingRecord, refusedSpend, refusalAt, anchorOf, deploySchedule, anchor } from '../src/send.js';
 import { withProof, pickInputs } from '../src/spend.js';
 import { planList, listOutputs, signOffer, listingFromChain, buildTake } from '../src/market.js';
-import { listingCheck, profileCheck, refusalAgreed } from '../src/consensus.js';
+import { PAY_DEPTH, actProblems, crossCheck, listingCheck, profileCheck, refusalAgreed } from '../src/consensus.js';
 import { IndexerApi, normListing, normToken } from '../src/api.js';
 import { urlList } from '../src/ui/context.js';
-import { deployMismatches } from '../src/deploy.js';
+import { deployMismatches, verifyDeploy } from '../src/deploy.js';
+import { witnessProblem } from '../src/witness.js';
 import { deployProblems } from '../src/deploy-plan.js';
 import { buildMint, mintProblems, selectCoins } from '../src/mint.js';
 import { matchNotes, matchListings } from '../src/match.js';
 import { envelopeScript, leafHash, tweakKey } from '../src/taproot.js';
 import { addressToScript, parseTx, serializeTx, txid as txidOf } from '../src/btc.js';
 import { gatewayKind } from '../src/isolation.js';
+import { spendableCoins } from '../src/coins.js';
 import { PROFILE } from '../src/profile.js';
 import { WALLETS } from '../src/wallets.js';
 import { PROFILE_MODULE, fsReader, site, writeSite } from '../build.js';
@@ -104,14 +106,22 @@ test('vault-1: a TAKE of a listing one block old pays the seller for nothing onc
   assert.equal(listing.height, 3);
 
   // the buyer's vault, one block later: two indexers agree, the LIST is on chain, the offer is the lock key's
-  const two = ['one', 'two'].map((base) => ({ base, listing: async () => apiListing(listing) }));
+  const two = ['one', 'two'].map((base) => ({ base, listing: async () => apiListing(listing), status: async () => ({ height: 3, verifier: 'plonk-bn254-hermez' }) }));
   const checked = await listingCheck(two, list.txid);
   assert.equal(checked.enough, true);
+  // fixed: both hold the LIST one block deep, and a TAKE waits for PAY_DEPTH (consensus.js, ui/market-panel.js sendTake)
+  assert.deepEqual([checked.depth, checked.deep], [1, false]);
+  assert.match(checked.depthProblem, /the listing, at one, is 1 block deep: the vault pays once it is 6 deep/);
   const l = listingFromChain(list.txid, list.hex, { ...checked.listing, amount: String(checked.listing.amount), price: String(checked.listing.price) });
   const sig = signOffer(lock.secret, l);
   const buyer = await vaultOf(cv.wallets[2].m);
-  // today: nothing between the offer and the TAKE looks at the listing's height (ui/market-panel.js sendTake)
-  const take = buildTake({ l, sig, npk: (await buyer.opening(0)).npk, payer: { address: WPKH }, utxos: [{ txid: '55'.repeat(32), vout: 1, value: 50000n }], feeRate: 1, tipHeight: 3 });
+  const takeAt = (tipHeight) => buildTake({ l, sig, npk: buyerNpk, payer: { address: WPKH }, utxos: [{ txid: '55'.repeat(32), vout: 1, value: 50000n }], feeRate: 1, tipHeight });
+  const buyerNpk = (await buyer.opening(0)).npk;
+  // fixed: the TAKE itself is refused while the listing is less than PAY_DEPTH deep (market.js buildTake)
+  assert.throws(() => takeAt(3), /not bought yet: the listing is 1 block deep: the vault pays once it is 6 deep/);
+  // what it would have paid for, had it gone: the same TAKE, which the vault now builds only PAY_DEPTH - 1 blocks later,
+  // past the one-block reorg below
+  const take = takeAt(3 + PAY_DEPTH - 1);
 
   // chain B replaces block 3: the TRANSFER comes first, then the same LIST transaction, then the TAKE.
   // Each is a valid Bitcoin transaction there too: none spends an output of another but the TAKE, which
@@ -149,8 +159,12 @@ test('vault-1: a MINT paid to the deployer of a ticker one block old pays for no
   assert.deepEqual(deployMismatches(token, deploy.hex, 2), []);
   assert.deepEqual(mintProblems(token, 3), []);
   const minter = await vaultOf(cv.wallets[1].m);
-  // today: verifyDeploy asks that the DEPLOY be confirmed, not how deep (deploy.js)
-  const mint = buildMint({ token, opening: await minter.opening(0), payer: { address: WPKH }, utxos: [{ txid: '66'.repeat(32), vout: 0, value: 100000n }], feeRate: 1, tipHeight: 2 });
+  const mintAt = async (tipHeight) => buildMint({ token, opening: await minter.opening(0), payer: { address: WPKH }, utxos: [{ txid: '66'.repeat(32), vout: 0, value: 100000n }], feeRate: 1, tipHeight });
+  // fixed: a MINT that pays waits until the DEPLOY is PAY_DEPTH deep (mint.js mintDepthProblem; deploy.js verifyDeploy, at Esplora)
+  await assert.rejects(mintAt(2), /the DEPLOY of PAID is 1 block deep: the vault pays once it is 6 deep/);
+  // what it would have paid for, had it gone: the same MINT, which the vault now builds only PAY_DEPTH - 1 blocks
+  // later, past the one-block reorg below
+  const mint = await mintAt(2 + PAY_DEPTH - 1);
 
   // chain B: block 2 without the DEPLOY, which is mined in block 3 with the MINT
   ix.rollback(1);
@@ -171,7 +185,9 @@ test('vault-2: a commit is funded with an unconfirmed coin, and a spend that nev
   const change = addressToScript(WPKH);
   const coins = [{ txid: '11'.repeat(32), vout: 0, value: 100000n, confirmed: true }, { txid: '22'.repeat(32), vout: 0, value: 3000n, confirmed: false }];
   const sel = selectCoins(coins, [{ value: 1200n, script: fromHex('5120' + '00'.repeat(32)) }], 'p2wpkh', change, 1);
-  assert.deepEqual(sel.picked.map((u) => u.confirmed), [false]); // today
+  // fixed: a coin marked unconfirmed is never taken (mint.js selectCoins), and the page hands over Esplora's confirmed ones (ui/spends.js walletUtxos)
+  assert.deepEqual(sel.picked.map((u) => u.confirmed), [true]);
+  assert.throws(() => selectCoins([coins[1]], [{ value: 1200n, script: fromHex('5120' + '00'.repeat(32)) }], 'p2wpkh', change, 1), /not confirmed yet: the vault pays from confirmed coins only/);
 
   const { ix, seller: v } = await setup();
   const plan = await planTransfer({ vault: v, sync: localSync(ix), tip: 2, ticker: 'GENE', amount: 1000n, to: v.address });
@@ -179,23 +195,41 @@ test('vault-2: a commit is funded with an unconfirmed coin, and a spend that nev
   const spent = plan.inputs[0].id;
   const note = () => v.state.notes.find((n) => n.id === spent);
   const pub = v.state.notes.map((n) => ({ pos: n.pos, kind: 'MINT', ticker: n.ticker, v: BigInt(n.v), npk: BigInt('0x' + n.npk), leaf: BigInt('0x' + n.leaf), pkEph: null, ct: null, txid: null, height: 2 }));
-  const listed = () => (v.state.pending ?? []).filter((p) => p.status !== 'prepared' && p.status !== 'replaced'); // ui/send-panel.js renderPending
+  const listed = () => (v.state.pending ?? []).filter((p) => !['replaced', 'not signed', 'given up'].includes(p.status)); // ui/send-panel.js renderPending
 
   // 1. the wallet refuses to sign the commit: carry() has saved the record and stops (ui/spends.js)
-  const pid = await v.addPending(pendingRecord('TRANSFER', r.cp, r.envelope, plan.inputs));
+  const first = await v.addPending(pendingRecord('TRANSFER', r.cp, r.envelope, plan.inputs));
   assert.equal(note().status, 'spending');
-  assert.equal(listed().length, 0, 'the page lists no spend to send again or to give up');
   assert.equal((await matchNotes(v, pub)).found, 0);
-  assert.equal(note().status, 'spending', 'a rescan from zero leaves it reserved'); // today
+  assert.equal(note().status, 'spending', 'a rescan from zero leaves it reserved: the wallet may still be signing');
   assert.equal(pickInputs(v.state.notes, 'GENE', 1001n), null, 'what the vault can spend is the other note alone');
+  // fixed: the page lists it, with a way to give it up (ui/send-panel.js renderPending), and carry() gives it up
+  // itself when the wallet refuses (ui/spends.js): its envelope went nowhere, so its notes come back at once
+  assert.deepEqual(listed().map((p) => p.status), ['prepared']);
+  assert.equal(await v.givePendingUp(first), true);
+  assert.equal(note().status, 'in tree');
+  assert.equal(listed().length, 0);
+  assert.equal(await v.givePendingUp(first), false, 'only while prepared');
 
   // 2. signed and broadcast, and the commit's coin is replaced: neither transaction is ever mined
+  const pid = await v.addPending(pendingRecord('TRANSFER', r.cp, r.envelope, plan.inputs));
   await v.updatePending(pid, { commitTxid: 'c5'.repeat(32), revealHex: r.hex, revealTxid: r.txid, status: 'broadcast' });
+  assert.equal(await v.givePendingUp(pid), false, 'a spend whose reveal may be out is never given up by hand');
   await v.updateNote(spent, { spent: 'no', pathAt: 5000 });
   const p = v.state.pending.find((x) => x.id === pid);
-  // thousands of blocks later, long after the anchor left the window: still not given back
-  assert.equal(refusedSpend(p, v.state.notes, { revealHeight: null, syncHeight: 5000, nullifiersKnown: true }), false); // today
-  assert.equal(note().status, 'spending');
+  // fixed: long after the anchor left the window, it is given back (send.js refusedSpend), once every indexer that
+  // has passed the last block that could take it lists none of its nullifiers (refusalAt, refusalAgreed)
+  assert.equal(anchorOf(p), 2);
+  assert.equal(refusedSpend(p, v.state.notes, { revealHeight: null, syncHeight: 5000, nullifiersKnown: true }), true);
+  assert.equal(refusalAt(p, null), 2 + PROFILE.anchorWindow + 5);
+  // and not while a block could still take it, even after a reorg of five blocks
+  await v.updateNote(spent, { pathAt: 2 + PROFILE.anchorWindow + 5 });
+  assert.equal(refusedSpend(p, v.state.notes, { revealHeight: null, syncHeight: 2 + PROFILE.anchorWindow + 5, nullifiersKnown: true }), false);
+  await v.updateNote(spent, { pathAt: 2 + PROFILE.anchorWindow + 6 });
+  assert.equal(refusedSpend(p, v.state.notes, { revealHeight: null, syncHeight: 2 + PROFILE.anchorWindow + 6, nullifiersKnown: true }), true);
+  assert.equal(note().status, 'spending', 'until the caller gives it back (ui/notes-panel.js settleRefused)');
+  await v.releaseInputs(p.inputs);
+  assert.equal(note().status, 'in tree');
 });
 
 // ---- vault-3 -------------------------------------------------------------------------------------
@@ -213,10 +247,16 @@ test('vault-3: a sync writes the whole state once for each note the vault holds'
   const one = storage.chars;
   storage.writes = 0;
   storage.chars = 0;
-  // what checkOwned does at every sync (ui/notes-panel.js): one updateNote, hence one save, for each note
+  // what checkOwned does at every sync (ui/notes-panel.js): one updateNote for each note
   for (const n of [...v.state.notes]) await v.updateNote(n.id, { pathAt: 7, spent: 'no' });
-  assert.equal(storage.writes, N); // today
-  assert.ok(storage.chars > N * one, `${storage.chars} characters written for a state of ${one}`);
+  // fixed: a path and a spent status are computed again at every sync and not stored (keys.js VOLATILE): nothing is written
+  assert.equal(storage.writes, 0);
+  // and what a sync does change goes in its one save: the notes that changed, a record each, then the vault's record
+  for (const n of v.state.notes.slice(0, 3)) await v.updateNote(n.id, { status: 'not in tree (reorg?)' }, { save: false });
+  assert.equal(storage.writes, 0);
+  await v.save();
+  assert.equal(storage.writes, 3 + 1);
+  assert.ok(storage.chars < one / 10, `${storage.chars} characters written, for a state of ${one}`);
 });
 
 // ---- vault-4 -------------------------------------------------------------------------------------
@@ -225,7 +265,9 @@ test('vault-4: a DEPLOY whose mint starts within N blocks passes the screen, is 
   const N = PROFILE.deployMaturity;
   const tip = 10;
   const d = { ticker: 'SOON', max: 21000000n, lim: 1000n, pre: 0n, start: tip + 2, end: 0, unlock: tip + 2, price: 0n, payMode: 0, payScript: new Uint8Array(0) };
-  assert.deepEqual(deployProblems(d, { nextHeight: tip + 1, taken: [] }), []); // today: no problem found
+  // fixed: the screen wants the mint to start after the reveal, N blocks after the commit (deploy-plan.js)
+  assert.match(deployProblems(d, { nextHeight: tip + 1, taken: [] }).join(), /the mint must start after the DEPLOY's reveal, which lands 6 blocks after its commit at the earliest \(after 17;/);
+  assert.deepEqual(deployProblems({ ...d, start: tip + 1 + N + 1, unlock: tip + 1 + N + 1 }, { nextHeight: tip + 1, taken: [] }), []);
 
   // the commit in the next block, the reveal in the first block the indexers take it in
   const ix = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n }, verifier: mockVerifier() });
@@ -236,7 +278,11 @@ test('vault-4: a DEPLOY whose mint starts within N blocks passes the screen, is 
   const t = ixTx(reveal.tx, reveal.txid);
   t.vin[0].prevHeight = tip + 1;
   // the page sends it: the schedule knows the commit's height and the proof's anchor, not the mint's start
-  assert.deepEqual(deploySchedule({ anchorHeight: null }, { commitHeight: tip + 1, tip: tip + N }), { state: 'ready', blocks: 0 }); // today
+  // fixed: the schedule knows the mint's start, and holds a reveal that would land after it (send.js revealSchedule)
+  assert.deepEqual(deploySchedule({ anchorHeight: null }, { commitHeight: tip + 1, tip: tip + N }), { state: 'ready', blocks: 0 }, 'with no terms recorded, as before');
+  assert.deepEqual(deploySchedule({ anchorHeight: null, deploy: { terms: { start: d.start } } }, { commitHeight: tip + 1, tip: tip + N }), { state: 'late', blocks: null });
+  assert.deepEqual(deploySchedule({ anchorHeight: null, deploy: { terms: { start: tip + 1 + N + 1 } } }, { commitHeight: tip + 1, tip: tip + N }), { state: 'ready', blocks: 0 });
+  // what the page would have sent, had it sent it: refused by the indexers
   const r = ix.applyBlock({ height: tip + 1 + N, hash: 'reveal', txs: [t] });
   assert.deepEqual(r.events, []);
   assert.match(JSON.stringify(r.rejected), /start must be after the DEPLOY block/);
@@ -261,7 +307,8 @@ test('vault-5: the block at which a team allocation unlocks is not compared with
   assert.equal(token.unlock, 3);
   assert.deepEqual(deployMismatches(token, reveal.hex, 2), []);
   // an indexer that says the team's half of the supply is locked for decades
-  assert.deepEqual(deployMismatches({ ...token, unlock: 4000000 }, reveal.hex, 2), []); // today: not noticed
+  // fixed: unlock is one of the terms compared with the chain (deploy.js FIELDS)
+  assert.match(deployMismatches({ ...token, unlock: 4000000 }, reveal.hex, 2).join(), /unlock: chain says 3, indexer says 4000000/);
   // every other term it could change is
   assert.match(deployMismatches({ ...token, pre: 0n }, reveal.hex, 2).join(), /pre/);
 });
@@ -275,8 +322,19 @@ test('vault-6: a DEPLOY read from Esplora is checked by its txid, which does not
   const forgedHex = toHex(serializeTx(forged));
   assert.notEqual(forgedHex, reveal.hex);
   assert.equal(txidOf(forged), reveal.txid);
-  // an indexer and an Esplora that say the same thing are believed
-  assert.deepEqual(deployMismatches({ ...token, payScript: toHex(OTHER_PAY) }, forgedHex, 2), []); // today
+  // deployMismatches alone, given what an indexer and an Esplora say alike, still sees nothing: the txid is the same
+  assert.deepEqual(deployMismatches({ ...token, payScript: toHex(OTHER_PAY) }, forgedHex, 2), []);
+  // fixed: the envelope is checked against the output it spends (witness.js), before any term is read (deploy.js
+  // verifyDeploy, and the listings of ui/market-panel.js). On the real commit transaction:
+  const commitHex = toHex(serializeTx(cp.commit.tx));
+  const real = revealFor(cp, txidOf(cp.commit.tx));
+  const realForged = parseTx(fromHex(real.hex));
+  realForged.vin[0].witness[1] = envelopeScript(cp.c.e, serializeEnvelope(deployEnvelope({ ...d, payScript: OTHER_PAY }, null)));
+  assert.equal(witnessProblem(real.hex, commitHex), null);
+  assert.match(witnessProblem(toHex(serializeTx(realForged)), commitHex), /the envelope in the witness is not the script the output it spends commits to/);
+  const esplora = (served) => ({ txHex: async (id) => (id === real.txid ? served : commitHex), txStatus: async () => ({ confirmed: true, block_height: 2 }), tipHeight: async () => 2 + 5 });
+  const liar = { ...token, deployTxid: real.txid, payScript: toHex(OTHER_PAY) };
+  await assert.rejects(verifyDeploy(esplora(toHex(serializeTx(realForged))), liar), /refusing to mint PAID: the DEPLOY that Esplora serves is not bound to the chain/);
   // BIP341 binds the script to the output spent: the leaf of the witness, under its control block, gives that output's key
   const outputKey = (w) => toHex(tweakKey(w[2].subarray(1, 33), leafHash(w[1])).key);
   const committed = toHex(cp.c.scriptPubKey.subarray(2)); // the commit's output, which the commit's txid covers
@@ -359,7 +417,10 @@ test('vault-13: one indexer written twice is the two that a TAKE needs', async (
   const apis = urls.map((u) => new IndexerApi(u));
   assert.equal(apis[0].base, apis[1].base);
   const listing = apiListing({ listTxid: 'aa'.repeat(32), ticker: 'GENE', amount: 600n, price: 5000n, payScript: toHex(SELLER_PAY), lock: `${'aa'.repeat(32)}:0`, lockKey: 'bb'.repeat(32), state: 'ACTIVE', height: 3 });
-  for (const a of apis) a.listing = async () => listing;
+  for (const a of apis) {
+    a.listing = async () => listing;
+    a.status = async () => ({ height: 9, verifier: 'plonk-bn254-hermez' }); // indexers that verify spends (vault-16)
+  }
   assert.equal((await listingCheck(apis, 'aa'.repeat(32))).enough, true);
 });
 
@@ -386,14 +447,25 @@ test('vault-14: a signet vault at the origin of a mainnet page is sent to its 12
     const { Vault: MainnetVault } = await built('keys.js');
     const origin = memStorage(); // one origin: a local copy served for signet, then for mainnet
     const signet = await Vault.fromWords(origin, WORDS, 'pass'); // the source tree's page: signet's network
+    // fixed: one record for each network (keys.js STORAGE_KEY): the mainnet page finds no vault of its own, and says
+    // that a signet one is stored here (ui/vault-panel.js), instead of sending it to the signet vault's words
+    assert.equal(MainnetVault.exists(origin), false);
+    assert.equal(MainnetVault.otherNetwork(origin), 'signet');
+    await assert.rejects(MainnetVault.open(origin, 'pass'), /no vault on this device/);
+    // its record, or its backup, read on the mainnet page: never sent to its words
+    const said = await MainnetVault.open(origin, 'pass', origin.getItem('sh20.vault.v0')).catch((e) => e.message);
+    assert.match(said, /made on signet, and this page follows mainnet: a vault holds the notes of one network\. Open it on a signet page; this network's vault is another one, made with new words of its own/);
+    assert.doesNotMatch(said, /restore it from its 12 words/);
+    // the mainnet vault is made beside it, and the signet one stays as it was
+    const own = await MainnetVault.create(origin, 'other pass');
     assert.equal(MainnetVault.exists(origin), true);
-    await assert.rejects(MainnetVault.open(origin, 'pass'), /made on signet, and this page follows mainnet: restore it from its 12 words instead/);
-    // what the message says to do is refused on that page: the other network's record is in the way, and the page removes none
-    await assert.rejects(MainnetVault.fromWords(origin, WORDS, 'pass', { restored: true }), /a vault already exists on this device/); // today
-    // at an origin of its own the words do restore: the keys of the signet vault, now on mainnet (sealing-4)
+    assert.equal((await Vault.open(origin, 'pass')).address, signet.address);
+    assert.notEqual((await own.opening(0)).npk, (await signet.opening(0)).npk, 'new words, other keys');
+    // at an origin of its own the words make a mainnet vault, with keys unrelated to the signet one's: the network
+    // is in the derivation (SPEC-NOTES §1, sealing-4)
     const mainnet = await MainnetVault.fromWords(memStorage(), WORDS, 'pass', { restored: true });
-    assert.equal((await mainnet.opening(0)).npk, (await signet.opening(0)).npk);
-    assert.equal(toHex((await mainnet.lockOutput(0)).key), toHex((await signet.lockOutput(0)).key));
+    assert.notEqual((await mainnet.opening(0)).npk, (await signet.opening(0)).npk);
+    assert.notEqual(toHex((await mainnet.lockOutput(0)).key), toHex((await signet.lockOutput(0)).key));
   });
 });
 
@@ -403,18 +475,28 @@ test('vault-15: the smallest coin that pays is spent first, whatever it carries,
   const d = { ticker: 'PAID', max: 1000000n, lim: 1000n, pre: 0n, start: 3, end: 0, unlock: 3, price: 10000n, payMode: 2, payScript: DEPLOYER_PAY };
   const { token } = await deployed(d, null);
   const coins = [{ txid: '11'.repeat(32), vout: 0, value: 500000n, confirmed: true }, { txid: '22'.repeat(32), vout: 0, value: 20000n, confirmed: true }];
-  const mint = buildMint({ token, opening: { npk: 5n }, payer: { address: WPKH }, utxos: coins, feeRate: 2, tipHeight: 2 });
-  assert.deepEqual(mint.tx.vin.map((i) => i.txid), ['22'.repeat(32)]); // today: the small coin, alone
+  // the DEPLOY, in block 2, PAY_DEPTH deep: a mint that pays may go (vault-1)
+  const mint = buildMint({ token, opening: { npk: 5n }, payer: { address: WPKH }, utxos: coins, feeRate: 2, tipHeight: 2 + PAY_DEPTH - 1 });
+  // fixed: the largest coin first (mint.js selectCoins)
+  assert.deepEqual(mint.tx.vin.map((i) => i.txid), ['11'.repeat(32)]);
   // its first sats go to the first output that holds any: the envelope's OP_RETURN holds none, the next is the deployer's
   assert.equal(mint.tx.vout[0].value, 0n);
   assert.deepEqual([toHex(mint.tx.vout[1].script), mint.tx.vout[1].value], [toHex(DEPLOYER_PAY), 10000n]);
-  // UniSat keeps everything at one address. Without getBitcoinUtxos its adapter answers null, and the page
-  // takes Esplora's list of every coin there, with no word to the user (ui/spends.js walletUtxos)
+  // and on mainnet only coins known to be plain reach it (coins.js spendableCoins): a small one at the payment address
+  // of a wallet that keeps collectibles apart is left out
+  const small = { txid: '33'.repeat(32), vout: 1, value: 546n, confirmed: true };
+  assert.deepEqual(spendableCoins({ chain: [...coins, small], apart: true, mainnet: true }).map((u) => u.value), [500000n, 20000n]);
+  // UniSat keeps everything at one address. Without getBitcoinUtxos its adapter answers null
   const had = Object.hasOwn(globalThis, 'unisat');
   const saved = globalThis.unisat;
   globalThis.unisat = {};
   try {
-    assert.equal(await WALLETS.find((w) => w.id === 'unisat').utxos(), null); // today
+    const listed = await WALLETS.find((w) => w.id === 'unisat').utxos();
+    assert.equal(listed, null);
+    // fixed: and the page refuses on mainnet, rather than take Esplora's list of every coin there (ui/spends.js walletUtxos)
+    assert.throws(() => spendableCoins({ chain: coins, listed, apart: false, mainnet: true, wallet: 'UniSat' }), /UniSat keeps inscriptions and runes at the address it pays from, and cannot list which of its coins carry none/);
+    // with its list, those coins only (and confirmed)
+    assert.deepEqual(spendableCoins({ chain: [...coins, small], listed: [coins[1], small], mainnet: true }).map((u) => u.value), [20000n, 546n], 'a listed coin is plain, whatever its size');
   } finally {
     if (had) globalThis.unisat = saved;
     else delete globalThis.unisat;
@@ -428,10 +510,23 @@ test('vault-16: two indexers that the page says verify no spend are the two a TA
   const apis = ['one', 'two'].map((base) => ({ base, status: async () => status, listing: async () => listing }));
   const check = await profileCheck(apis);
   assert.equal(check.unverified.length, 2, 'the page names both beside the balance');
-  assert.deepEqual(check.problems, [], 'and requireProfile, which reads the problems alone, lets every action through'); // today
-  assert.equal((await listingCheck(apis, listing.listTxid)).enough, true); // today
+  assert.deepEqual(check.problems, [], 'they follow the vault\'s profile');
+  // fixed: with such a primary the vault proves and sends nothing (ui/context.js requireProfile, consensus.js actProblems)
+  assert.match(actProblems(check, 'one').join(), /the primary indexer one verifies no spend: it does not check the proofs of spends \(verifier "test"\)/);
+  assert.deepEqual(actProblems(check, 'elsewhere'), [], 'a primary that verifies spends, with such indexers beside it, is not stopped by them');
+  // and only an indexer that verifies spends counts toward the two of a TAKE, or toward a mint
+  const two = await listingCheck(apis, listing.listTxid);
+  assert.deepEqual([two.agreed, two.verifying, two.enough], [2, 0, false]);
+  const mint = await crossCheck(apis.map((a) => ({ ...a, token: async () => ({ ticker: 'GENE' }) })), 'GENE', { sleep: async () => {} });
+  assert.match(mint.problems.join(), /no indexer that answered verifies spends \(one: test, two: test\): the vault mints on the word of none of them/);
   // and indexers that refuse every spend agree that a spend was refused, which the indexers that verify accepted
   const refuseAll = ['one', 'two'].map((base) => ({ base, status: async () => ({ ...PROFILE, height: 50, verifier: 'reject-all' }), nullifiers: async () => [] }));
   assert.equal((await profileCheck(refuseAll)).unverified.length, 2);
-  assert.deepEqual(await refusalAgreed(refuseAll, ['ab'.repeat(32)], { atLeast: 10 }), { ok: true, why: null }); // today
+  // fixed: their word that the spend was refused is not taken; one that verifies spends must vouch
+  assert.deepEqual(await refusalAgreed(refuseAll, ['ab'.repeat(32)], { atLeast: 10 }), { ok: false, why: 'no indexer that verifies spends vouches for it' });
+  const verifying = { base: 'three', status: async () => ({ ...PROFILE, height: 50, verifier: 'plonk-bn254-hermez' }), nullifiers: async () => [] };
+  assert.deepEqual(await refusalAgreed([...refuseAll, verifying], ['ab'.repeat(32)], { atLeast: 10 }), { ok: true, why: null }, 'the others are not counted');
+  // and one of them that lists the nullifier spent still keeps the notes reserved: it can refuse a refund, never allow one
+  const listsIt = { ...refuseAll[0], nullifiers: async () => [{ nullifier: 'ab'.repeat(32), height: 30 }] };
+  assert.deepEqual(await refusalAgreed([listsIt, verifying], ['ab'.repeat(32)], { atLeast: 10 }), { ok: false, why: 'one has its nullifier spent at block 30' });
 });

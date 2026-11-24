@@ -3,18 +3,20 @@
 import { addressToScript } from '../btc.js';
 import { toHex } from '../bytes.js';
 import { listOutputs, planBurn, planList, poolProblem } from '../market.js';
-import { planFromPending, planTransfer, revealFor } from '../send.js';
-import { NET, busy, esplora, fill, h, indexers, isolation, resultBox, sats, short, st, units } from './context.js';
+import { buildSweep, planFromPending, planTransfer, revealFor } from '../send.js';
+import { NET, busy, esplora, feeRateOf, fill, h, indexers, isolation, proposedFee, resultBox, sats, short, st, units } from './context.js';
 import { NETWORK_HRP } from '../notekeys.js';
 import { broadcastDeployReveal, processDeploys, reproveDeploy } from './deploy-panel.js';
 import { renderMarket } from './market-panel.js';
 import { getSyncer } from './notes-panel.js';
 import { carry } from './spends.js';
+import { renderAll } from './render.js';
 import { agreementText } from '../consensus.js';
 
 // ---- send ------------------------------------------------------------------------
 
-export const sendForm = { action: 'transfer', ticker: '', amount: '', to: '', fee: '2', price: '', payTo: '' };
+// fee: what the user typed; empty, the page proposes Esplora's estimate (context.js proposedFee, vault-17)
+export const sendForm = { action: 'transfer', ticker: '', amount: '', to: '', fee: '', price: '', payTo: '' };
 
 export function balances() {
   const out = new Map();
@@ -73,7 +75,7 @@ export function renderSend() {
       h('label', {}, 'Ticker ', ticker),
       h('label', {}, 'Amount ', input('amount', { inputmode: 'numeric', name: 'amount' })),
       f.action === 'list' ? h('label', {}, 'Price (sats) ', input('price', { inputmode: 'numeric', name: 'price' })) : null,
-      h('label', {}, 'Fee rate (sat/vB) ', input('fee', { type: 'number', min: '0.1', step: '0.1', name: 'fee' }))),
+      h('label', {}, 'Fee rate (sat/vB) ', input('fee', { type: 'number', min: '0.1', step: '0.1', name: 'fee', value: sendForm.fee || String(proposedFee() ?? ''), placeholder: 'type a rate' }))),
     f.action === 'transfer' ? h('label', {}, `To (an sh20 address, ${NETWORK_HRP}1…) `, input('to', { name: 'to', class: 'wide' })) : null,
     f.action === 'list' ? h('label', {}, `Paid to (a ${NET} address) `, input('payTo', { name: 'payTo', class: 'wide' })) : null,
     h('div', { class: 'row' }, b),
@@ -107,7 +109,7 @@ async function sendBurn(out) {
   const tip = await esplora.tipHeight();
   if (!confirm(`Burn ${units(amount)} ${f.ticker}? They leave the supply for good.`)) return;
   await carry({
-    kind: 'BURN', out, feeRate: Number(f.fee), tip,
+    kind: 'BURN', out, feeRate: feeRateOf(f.fee), tip,
     plan: () => planBurn({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount }),
     label: `BURN of ${units(amount)} ${f.ticker}`,
   });
@@ -124,7 +126,7 @@ async function sendList(out) {
   const lockIndex = await st.vault.reserveLock();
   const lock = await st.vault.lockOutput(lockIndex);
   await carry({
-    kind: 'LIST', out, feeRate: Number(f.fee), tip,
+    kind: 'LIST', out, feeRate: feeRateOf(f.fee), tip,
     plan: () => planList({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount, price, payScript, lockKey: lock.key }),
     outputs: listOutputs(lock.script),
     label: `LIST of ${units(amount)} ${f.ticker} for ${sats(price)}`,
@@ -138,19 +140,48 @@ async function sendTransfer(out) {
   const s = await getSyncer();
   const tip = await esplora.tipHeight();
   await carry({
-    kind: 'TRANSFER', out, feeRate: Number(f.fee), tip,
+    kind: 'TRANSFER', out, feeRate: feeRateOf(f.fee), tip,
     plan: () => planTransfer({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount, to: f.to }),
     label: `TRANSFER of ${units(amount)} ${f.ticker}`,
   });
 }
 
 /** Spends whose reveal may still need sending: their one-time key is in the vault. */
+// spends that are over, with nothing to do or to show: their notes are back (vault-2), or never left
+const CLOSED = ['replaced', 'not signed', 'given up', 'swept'];
+
 export function renderPending() {
-  const open = (st.vault?.state.pending ?? []).filter((p) => p.status !== 'prepared' && p.status !== 'replaced');
+  const open = (st.vault?.state.pending ?? []).filter((p) => !CLOSED.includes(p.status));
   if (!open.length) return fill('pending-body');
   fill('pending-body', h('h3', {}, 'Spends sent from this vault'), h('div', { class: 'table-wrap' }, h('table', {},
     h('thead', {}, h('tr', {}, ['What', 'Status', 'Commit', 'Reveal', ''].map((x) => h('th', {}, x)))),
     h('tbody', {}, open.map((p) => {
+      if (p.status === 'prepared') {
+        // the wallet was asked and never answered (the page closed, the window was dismissed): nothing was signed
+        // or sent, and the notes are reserved until this spend is given up (vault-2)
+        const up = h('button', { type: 'button', class: 'small secondary', name: 'give-up' }, 'Give up');
+        up.addEventListener('click', busy(up, async () => {
+          if (!confirm(`Give up this ${p.kind}? The wallet never signed its commit, so nothing was sent; its notes come back to your balance.`)) return;
+          await st.vault.givePendingUp(p.id);
+          renderAll();
+        }));
+        return h('tr', {}, h('td', {}, p.kind), h('td', {}, 'prepared, never signed by the wallet: its notes stay reserved until you give it up'), h('td', {}, '—'), h('td', {}, '—'), h('td', {}, up));
+      }
+      if (p.status === 'start passed') {
+        // a DEPLOY whose mint would have started before its reveal could land (vault-4): never revealed
+        const back = h('button', { type: 'button', class: 'small secondary', name: 'sweep', disabled: !st.wallet || !p.commitTxid }, 'Take the commit back');
+        back.addEventListener('click', busy(back, async () => {
+          const sw = buildSweep(p, { toScript: addressToScript(st.wallet.address), feeRate: feeRateOf(sendForm.fee) });
+          if (!confirm(`Send the ${sats(sw.tx.vout[0].value)} of the commit of ${p.deploy.ticker} back to ${st.wallet.address} (fee ${sats(sw.fee)})?`)) return;
+          await esplora.broadcast(sw.hex);
+          await st.vault.updatePending(p.id, { status: 'swept', sweepTxid: sw.txid });
+          renderPending();
+        }));
+        return h('tr', {}, h('td', {}, p.kind), h('td', {}, `${p.deploy.ticker}: its mint would start before the reveal could land, so it is not revealed; its notes are back. Deploy again with a later start`), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', {}, '—'), h('td', {}, back));
+      }
+      if (/^expired/.test(p.status)) {
+        return h('tr', {}, h('td', {}, p.kind), h('td', {}, 'never mined, and its anchor left the window: no block can take it now; its notes are back'), h('td', { class: 'mono' }, short(p.commitTxid ?? '')), h('td', { class: 'mono' }, short(p.revealTxid ?? '')), h('td', {}));
+      }
       if (p.status === 'anchor expired') {
         const re = h('button', { type: 'button', class: 'small', name: 'reprove' }, 'Prove again');
         re.addEventListener('click', busy(re, () => reproveDeploy(p)));

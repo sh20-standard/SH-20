@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { Indexer } from '../../indexer/src/indexer.js';
 import { deployEnv, tx as helperTx, chain } from '../../indexer/test/helpers.js';
 import { buildMint, mintProblems, selectCoins } from '../src/mint.js';
+import { PAY_DEPTH } from '../src/consensus.js';
 import { normToken } from '../src/api.js';
 import { noteOpening } from '../src/keys.js';
 import { parsePsbt, addressToScript, scriptType, estimateVsize, txid, vsize } from '../src/btc.js';
@@ -27,12 +28,14 @@ function fakeSign(psbt, type) {
   return p.tx.vin.map(() => (type === 'p2tr' ? [new Uint8Array(64)] : [new Uint8Array(71), new Uint8Array(33)]));
 }
 
-function setup(over) {
+function setup(over, { deep = true } = {}) {
   // N = 0 here: the DEPLOY is only setup (test/deploy-maturity.test.js tests N = 6); its commit is one block old
   const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n, deployMaturity: 0 } });
   const c = chain(idx);
   const r = c.block(helperTx({ env: deployEnv(over), prevHeight: c.next - 1 }));
   assert.equal(r.events.at(-1)?.type, 'DEPLOY', JSON.stringify(r.rejected));
+  // a mint that pays waits until the DEPLOY is PAY_DEPTH blocks deep (vault-1, test/pay-depth.test.js)
+  if (deep) for (let k = 1; k < PAY_DEPTH; k++) c.block();
   return { idx, c };
 }
 
@@ -76,7 +79,7 @@ for (const [label, over, payer] of [
 }
 
 test('pre-flight refuses mints the indexer would reject (no refund)', async () => {
-  const { idx, c } = setup({ start: 5, end: 6, unlock: 5, max: 3000n, lim: 1000n });
+  const { idx, c } = setup({ start: 5, end: 6, unlock: 5, max: 3000n, lim: 1000n }, { deep: false });
   const t = normToken(idx.token('GENE'));
   assert.match(mintProblems(t, 4).join(), /opens at block 5/);
   assert.deepEqual(mintProblems(t, 5), []);
@@ -85,11 +88,12 @@ test('pre-flight refuses mints the indexer would reject (no refund)', async () =
   assert.throws(() => buildMint({ token: t, opening: OPEN0, payer: { address: WPKH }, utxos: [utxo(1e5)], feeRate: 1, tipHeight: c.next - 1 }), /opens at block 5/);
 });
 
-test('coin selection: smallest single input, no change when it would be dust, several inputs if needed', async () => {
+test('coin selection: largest single input, no change when it would be dust, several inputs if needed', async () => {
   const s = addressToScript(WPKH);
   const fixed = [{ value: 1000n, script: new Uint8Array(76).fill(0x6a) }];
-  const one = selectCoins([utxo(50000n, 0), utxo(5000n, 1), utxo(900n, 2)], fixed, 'p2wpkh', s, 1);
-  assert.deepEqual(one.picked.map((u) => u.value), [5000n]);
+  // the largest first: small coins are where an inscription or runes sit (vault-15)
+  const one = selectCoins([utxo(5000n, 1), utxo(50000n, 0), utxo(900n, 2)], fixed, 'p2wpkh', s, 1);
+  assert.deepEqual(one.picked.map((u) => u.value), [50000n]);
   assert.ok(one.change > 0n);
   const fee0 = BigInt(estimateVsize(['p2wpkh'], [fixed[0].script]));
   const exact = selectCoins([utxo(1000n + fee0 + 100n)], fixed, 'p2wpkh', s, 1);

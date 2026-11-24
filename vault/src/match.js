@@ -12,9 +12,10 @@ import { toHex } from './bytes.js';
  * A note whose scan throws does not stop the others (docs/AUDIT.md §8.6): the rest are scanned, and
  * `failed` lists each one that threw, by position, with its error. The caller keeps the sync's
  * leaves from the first of them unscanned (`Sync.scanned(failed[0].pos)`), so the next sync reads
- * them again. Returns { found, failed }.
+ * them again. With `defer`, the sealed notes found are left to the caller's next save (a sync makes one:
+ * docs/audit/2026-11-24-vault.md, vault-3). Returns { found, failed }.
  */
-export async function matchNotes(v, pub, { onProgress } = {}) {
+export async function matchNotes(v, pub, { onProgress, defer = false } = {}) {
   let found = 0;
   const failed = new Map(); // pos → the first error of that note
   const attempt = async (n, f) => {
@@ -27,7 +28,7 @@ export async function matchNotes(v, pub, { onProgress } = {}) {
   };
   for (const n of pub) {
     if (n.kind !== 'OUT' || !n.pkEph || !n.ct || n.leaf === null || n.pos === null) continue;
-    if (await attempt(n, () => v.receive(n))) found++;
+    if (await attempt(n, () => v.receive(n, { save: !defer }))) found++;
   }
   // public notes: repeat while a match moves the window of keys to look for (a restore)
   for (let before = -1; before !== v.state.next;) {

@@ -9,14 +9,14 @@
 // and the `ct` sealing format.
 
 import { serializeEnvelope, CodecError, PAY_MODE, PROOF_BYTES } from './sh20.js';
-import { GENESIS } from './profile.js';
+import { GENESIS, PROFILE } from './profile.js';
 
 const U32 = 2 ** 32 - 1;
 const U64 = 2n ** 64n - 1n;
 const PAYSCRIPT_MAX = 34;
 
 /** Same rules as the indexer, plus the ticker being free. `nextHeight` = the first block the DEPLOY can land in. */
-export function deployProblems(d, { nextHeight, taken = [] }) {
+export function deployProblems(d, { nextHeight, taken = [], N = PROFILE.deployMaturity }) {
   const p = [];
   if (!/^[A-Z0-9]{4}$/.test(d.ticker)) p.push('the ticker is 4 characters, A–Z and 0–9');
   else if (d.ticker === GENESIS.ticker) p.push(`${GENESIS.ticker} is the genesis token: it is never deployed`);
@@ -29,7 +29,9 @@ export function deployProblems(d, { nextHeight, taken = [] }) {
     if (d.pre >= d.max) p.push('the team allocation must leave a public mint (pre < max)');
     else if ((d.max - d.pre) % d.lim !== 0n) p.push('max − pre must be a multiple of the amount per mint');
   }
-  if (Number.isInteger(nextHeight) && d.start <= nextHeight) p.push(`the mint must start after the DEPLOY block (after ${nextHeight}; leave a margin, it may confirm later)`);
+  // the reveal lands N blocks after its commit at the earliest, and the indexers want the mint to start after the
+  // reveal's block (vault-4): a start before that passes no chain, and the reveal would show its ticker for nothing
+  if (Number.isInteger(nextHeight) && d.start <= nextHeight + N) p.push(`the mint must start after the DEPLOY's reveal, which lands ${N} blocks after its commit at the earliest (after ${nextHeight + N}; leave a margin, the commit may confirm later)`);
   if (d.end !== 0 && d.end < d.start) p.push('the mint ends before it starts');
   if (d.unlock < d.start) p.push('the team unlock is before the mint starts');
   if (![PAY_MODE.NONE, PAY_MODE.BURN, PAY_MODE.PAY].includes(d.payMode)) p.push('unknown payment mode');

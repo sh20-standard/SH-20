@@ -22,7 +22,8 @@ test('the vault refuses exactly the DEPLOYs the indexer rejects', () => {
     const c = chain(idx);
     c.block(); c.block(); c.block(); // SH20 at block 1; the DEPLOY lands in block 4
     const env = base(over);
-    const vault = deployProblems({ ...env, payScript: new Uint8Array(env.payScript) }, { nextHeight: c.next, taken: [...idx.tokens.keys()] });
+    // the indexer here runs N = 0: the reveal in the next block, which is where the screen's start check looks (N, vault-4)
+    const vault = deployProblems({ ...env, payScript: new Uint8Array(env.payScript) }, { nextHeight: c.next, taken: [...idx.tokens.keys()], N: 0 });
     const r = c.block(helperTx({ env, prevHeight: c.next - 1 }));
     const accepted = r.events.some((e) => e.type === 'DEPLOY');
     assert.equal(vault.length === 0, accepted, `${JSON.stringify(over, (_, v) => (typeof v === 'bigint' ? String(v) : v))}: vault ${vault.join('; ') || 'ok'}, indexer ${r.rejected[0]?.reason ?? 'accepted'}`);
@@ -53,7 +54,8 @@ test('a burn is paid by one or two unspent SH20 notes', () => {
 test('the plan shows the burn: D SH20 with a proof in the witness, or no proof when D = 0', () => {
   const d = { ...base(), payScript: new Uint8Array(0) };
   const notes = [{ ticker: 'SH20', v: 1000n, status: 'in tree', spent: 'no' }];
-  const p = planDeploy(d, { nextHeight: 4, taken: ['SH20'], deployBurn: 1000n, notes });
+  // the commit in block 3, its reveal N = 6 blocks later at the earliest, before the mint's start at block 10 (vault-4)
+  const p = planDeploy(d, { nextHeight: 3, taken: ['SH20'], deployBurn: 1000n, notes });
   assert.deepEqual(p.problems, []);
   assert.equal(p.burn, 1000n);
   assert.equal(p.proof, true);
@@ -61,7 +63,7 @@ test('the plan shows the burn: D SH20 with a proof in the witness, or no proof w
   assert.equal(p.bytes, 880);
   assert.equal(p.inputs.pick.length, 1);
   assert.equal(p.mints, 21000n);
-  const free = planDeploy(d, { nextHeight: 4, taken: ['SH20'], deployBurn: 0n, notes });
+  const free = planDeploy(d, { nextHeight: 3, taken: ['SH20'], deployBurn: 0n, notes });
   assert.deepEqual([free.burn, free.proof, free.carrier, free.bytes, free.inputs], [0n, false, 'witness', 56, null], 'a DEPLOY is always in the witness (SPEC-WIRE §5)');
   assert.equal(planDeploy(d, { nextHeight: 4, taken: [], deployBurn: null }).burn, null, 'D unknown is shown as unknown, not as 0');
   assert.match(planDeploy({ ...d, ticker: 'ab!' }, { nextHeight: 4, deployBurn: 0n }).problems.join(), /4 characters/);

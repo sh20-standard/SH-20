@@ -63,3 +63,16 @@ test('verifier-4: the page says it on the status line and beside the balance, fr
   assert.match(notes, /fill\('notes-body', h\('p', \{ class: 'muted' \}, 'No note yet\.'\), unverified\)/);
   assert.match(notes, /h\('p', \{ id: 'balance' \}[^\n]*\n\s*unverified,/);
 });
+
+test('vault-16: where the page acts, an indexer that verifies no spend counts for nothing', () => {
+  const context = src('ui/context.js');
+  const require = context.slice(context.indexOf('export async function requireProfile('), context.indexOf('\n}\n', context.indexOf('export async function requireProfile(')));
+  assert.match(require, /const act = actProblems\(st\.profile, indexer\?\.base\);\s*if \(act\.length\) throw/, 'no spend on the tree of a primary that verifies none');
+  const deploys = src('ui/deploy-panel.js');
+  assert.match(deploys, /const act = actProblems\(pc, indexer\?\.base\);\s*if \(act\.length\) \{/, 'a DEPLOY reveal waits');
+  assert.match(deploys, /const act = actProblems\(pr, indexer\?\.base\);/, 'the deploy screen offers no D');
+  const consensus = src('consensus.js');
+  assert.match(consensus, /enough: verifying >= TAKE_QUORUM/, 'a TAKE');
+  assert.match(consensus, /if \(!verifying\.length\) problems\.push\(/, 'a mint');
+  assert.match(consensus, /if \(!verifiesSpends\(status\)\) continue;[\s\S]*if \(!vouched\) return \{ ok: false/, 'a refusal');
+});

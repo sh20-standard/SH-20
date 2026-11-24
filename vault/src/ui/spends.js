@@ -4,8 +4,9 @@
 import { finalizePsbt, sameUnsignedTx } from '../btc.js';
 import { loadProver, unloadProver } from '../prover.js';
 import { pendingRecord, planCarrier, proveSpend, revealFor } from '../send.js';
-import { PROFILE } from '../profile.js';
-import { MAX_FEE_SATS, esplora, explorerTx, h, noCoins, requireProfile, result, sats, st } from './context.js';
+import { IS_MAINNET, PROFILE } from '../profile.js';
+import { spendableCoins, unverifiedCoins } from '../coins.js';
+import { MAX_FEE_SATS, esplora, explorerTx, h, noCoins, requireProfile, result, sats, short, st } from './context.js';
 import { processDeploys } from './deploy-panel.js';
 import { renderAll } from './render.js';
 
@@ -13,12 +14,32 @@ import { renderAll } from './render.js';
 
 export const txLink = (id) => h('p', {}, h('a', { href: explorerTx(id), target: '_blank', rel: 'noopener noreferrer', class: 'mono' }, id));
 
+/**
+ * The wallet's coins that pay a transaction of the vault (coins.js spendableCoins): confirmed ones only, by
+ * Esplora's word (vault-2), and on mainnet plain ones only (vault-15): the wallet's own list of the coins that carry
+ * nothing, or, for a wallet that keeps its collectibles at another address, the coins above SMALL_COIN at the one
+ * it pays from. A wallet that does neither is refused on mainnet.
+ */
 export async function walletUtxos() {
   const w = st.wallet;
-  let utxos = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
-  if (!utxos) utxos = await esplora.utxos(w.address);
+  const chain = await esplora.utxos(w.address);
+  const listed = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
+  const apart = !!w.otherAddress && w.otherAddress !== w.address;
+  const utxos = spendableCoins({ chain, listed, apart, mainnet: IS_MAINNET, wallet: w.adapter.name, address: w.address });
   if (!utxos.length) throw new Error(noCoins(w.address));
+  // on mainnet, coins no list vouches for are spent only on the user's word, each time, naming them (unverifiedCoins)
+  const ask = unverifiedCoins({ listed, mainnet: IS_MAINNET, wallet: w.adapter.name, coins: utxos });
+  if (ask && !confirm(ask)) throw new Error('not spent: the coins were not confirmed as plain');
   return utxos;
+}
+
+/** The wallet's coins a transaction spends, as `txid:vout (value)`: named before the wallet is asked (vault-15). */
+export function coinsText(tx, utxos) {
+  return tx.vin
+    .map((i) => [i, utxos.find((u) => u.txid === i.txid && u.vout === i.vout)])
+    .filter(([, u]) => u)
+    .map(([i, u]) => `${short(i.txid)}:${i.vout} (${sats(u.value)})`)
+    .join(', ');
 }
 
 /** Has the wallet sign a PSBT the vault built, and checks it signed exactly that transaction. */
@@ -66,15 +87,26 @@ async function carryOnce({ kind, out, feeRate, tip, plan, label, outputs, onReve
     }
     proveS = ((performance.now() - t0) / 1000).toFixed(1);
   }
-  const cp = planCarrier({ envelope, payer: st.wallet, utxos: await walletUtxos(), feeRate, tipHeight: tip, outputs, sweep });
+  const coins = await walletUtxos();
+  const cp = planCarrier({ envelope, payer: st.wallet, utxos: coins, feeRate, tipHeight: tip, outputs, sweep });
   const draft = revealFor(cp, '00'.repeat(32));
   const wait = deploy ? ` The reveal goes out once the commit is ${PROFILE.deployMaturity} blocks deep (SPEC-WIRE §5): keep the vault open, or come back.` : '';
-  if (!confirm(`${label}${proveS ? `: proved in ${proveS} s` : ''}. Commit ≈ ${cp.commit.vsizeEstimate} vB, reveal ${draft.vsize} vB, network fees ≈ ${sats(cp.commit.fee + draft.fee)}.${wait} Sign the commit with ${st.wallet.adapter.name}?`)) {
+  if (!confirm(`${label}${proveS ? `: proved in ${proveS} s` : ''}. Commit ≈ ${cp.commit.vsizeEstimate} vB, reveal ${draft.vsize} vB, network fees ≈ ${sats(cp.commit.fee + draft.fee)}.${wait} The commit spends ${coinsText(cp.commit.tx, coins)}. Sign it with ${st.wallet.adapter.name}?`)) {
     status('Not sent.');
     return;
   }
   const pid = await st.vault.addPending({ ...pendingRecord(kind, cp, envelope, built.inputs), ...(deploy ? { deploy, anchorHeight: built.anchorHeight ?? null } : {}) });
-  const done = await signFunded(cp.commit);
+  let done;
+  try {
+    done = await signFunded(cp.commit);
+  } catch (e) {
+    // not signed: the envelope went nowhere (the vault signs the reveal only after the commit), so its notes come back now (vault-2)
+    await st.vault.givePendingUp(pid, 'not signed');
+    renderAll();
+    throw e;
+  }
+  // given up meanwhile from the list of spends: the notes are back, and nothing goes out
+  if (st.vault.state.pending.find((x) => x.id === pid)?.status !== 'prepared') throw new Error('given up while the wallet was signing: nothing was sent');
   const reveal = revealFor(cp, done.txid);
   await st.vault.updatePending(pid, { commitTxid: done.txid, commitHex: done.hex, revealHex: reveal.hex, revealTxid: reveal.txid, status: 'signed' });
   await onRevealed?.(reveal);

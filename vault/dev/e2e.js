@@ -257,6 +257,10 @@ async function main() {
   if (!(await evaluate(`document.querySelector('#notes-body tbody').innerText.includes('2,000')`))) throw new Error('the batch note is not 2,000');
   step('my notes: ' + (await evaluate(`document.querySelector('#notes-body tbody').innerText.replace(/\\s+/g, ' ')`)));
   step('sync: ' + (await evaluate(`document.querySelector('#sync-status').innerText`)));
+  // the notes are records of their own in IndexedDB, and localStorage holds the vault's record alone (vault-3)
+  const noteRecords = await evaluate(`new Promise((done) => { const r = indexedDB.open('sh20.vault.v0.notes'); r.onsuccess = () => { const q = r.result.transaction('notes').objectStore('notes').getAllKeys(); q.onsuccess = () => done({ notes: q.result, local: Object.keys(localStorage).filter((k) => k.startsWith('sh20.vault')), format: JSON.parse(localStorage.getItem('sh20.vault.v0')).v }); }; })`);
+  if (!noteRecords.notes.length || noteRecords.local.join() !== 'sh20.vault.v0' || noteRecords.format !== 1) throw new Error(`the notes are not stored one record each: ${JSON.stringify(noteRecords)}`);
+  step(`stored: ${noteRecords.notes.length} note record(s) in IndexedDB (${noteRecords.notes.join(', ')}), the vault's record in localStorage`);
   const leaks = urls.filter((u) => /\/path\/|\/nullifier\//.test(u));
   if (leaks.length) throw new Error('per-note requests sent: ' + leaks.join(', '));
   step(`${urls.filter((u) => u.includes(':80')).length} requests to the indexers and Esplora, none per note`);
@@ -349,6 +353,16 @@ async function main() {
   await evaluate(`(() => { const t = document.querySelector('#market-body textarea[name=offer]'); t.value = ${JSON.stringify(offer)}; t.dispatchEvent(new Event('input')); })()`);
   await evaluate(`document.querySelector('#market-body button[name=check]').click()`);
   await waitFor(`!!document.querySelector('#market-body button[name=buy]')`, 'the offer checked');
+  // the LIST is one block deep: Buy stays off until it is six deep everywhere (vault-1)
+  if (!(await evaluate(`document.querySelector('#market-body button[name=buy]').disabled`))) throw new Error('Buy is offered for a listing one block deep');
+  step('checked, too early: ' + (await evaluate(`document.querySelector('#listing-shallow')?.innerText ?? ''`)));
+  await mine(5);
+  for (let i = 0; ; i++) { // the indexers follow the five blocks, then the offer is checked again
+    await evaluate(`document.querySelector('#market-body button[name=check]').click()`);
+    await sleep(500);
+    if (await evaluate(`!!document.querySelector('#market-body button[name=buy]') && !document.querySelector('#market-body button[name=buy]').disabled`)) break;
+    if (i > 60) throw new Error(`Buy still off six blocks after the LIST: ${await evaluate(`document.querySelector('#market-body').innerText`)}`);
+  }
   step('checked: ' + (await evaluate(`document.querySelector('#market-body dl').innerText.replace(/\\n/g, ' | ')`)));
   await evaluate(`document.querySelector('#market-body button[name=buy]').click()`);
   await waitFor(`/broadcast/.test(document.querySelector('#buy-out')?.innerText ?? '')`, 'the TAKE broadcast');

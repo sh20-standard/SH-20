@@ -8,7 +8,11 @@ What works today, without proofs:
 
 - a vault seed created in the browser, stored in `localStorage`, encrypted with AES-GCM under
   a PBKDF2-SHA256 passphrase key (600,000 iterations), which can be added or changed at any time,
-  with backup (only ever encrypted) and restore;
+  with backup (only ever encrypted) and restore. Each note is a record of its own in IndexedDB,
+  encrypted under the same key with its id as associated data, written when it changes and only
+  then (`src/notestore.js`); a sync writes once, and a note's path and spent status, which every sync
+  computes again, are not stored (docs/audit/2026-11-24-vault.md, vault-3: notes anyone sends no
+  longer make each sync rewrite the whole vault, nor fill the 5 MB of `localStorage`);
 - connecting a wallet and signing PSBTs that the vault builds itself;
 - **MINT** end to end: the 42-byte OP_RETURN envelope of `docs/SPEC-WIRE.md` (43 bytes for a
   batch of `k` mints), serialised by `indexer/src/codec.js` itself, in one transaction of 164 vB;
@@ -29,11 +33,12 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 182 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 213 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
 npm run release          # a verifiable release from the current commit, on the signet profile (below)
+node release.js --mainnet   # the same on the mainnet profile, from the A the commit fixes in src/profile.js
 ```
 
 The whole flow on Bitcoin Core regtest (what the CI runs, job `vault-regtest`):
@@ -103,7 +108,12 @@ folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
   is known before publishing and anyone can recompute it from the commit.
 - **On the signet profile:** a release replaces `src/profile-name.js` with `'signet'`, the one file
   that differs from `npm run build` (`build.js`), and refuses while `src/profile.js` has no signet
-  activation height (`test/signet.test.js`).
+  activation height (`test/signet.test.js`). `node release.js --mainnet` makes the mainnet release
+  the same way, `release/sh20-vault-<version>-mainnet.tar`, recorded under `<version> (mainnet)` with
+  its activation height: the height the commit fixes in `src/profile.js` (`MAINNET_ACTIVATION_HEIGHT`),
+  never one given on the command line, so the record is what anyone rebuilds from that commit
+  (docs/audit/2026-11-24-vault.md, vault-17). Every fee field proposes Esplora's estimate for about two
+  blocks; without one, a mainnet page proposes none and the rate is typed.
 - **Publish, never from your own machine:** an IPFS node announces its IP address for every block it
   provides. `release/sh20-vault-<version>.car` holds the blocks of the CID (CARv1, imported by kubo
   0.32.1 with the same root); a pinning service takes it from the `release` workflow's artifact.
@@ -149,7 +159,8 @@ folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
   is flagged: treat its words as exposed.
 - Each CID is its own origin with its own empty storage. When moving to a new version, download
   the backup first and restore it on the new page.
-- The backup file is the stored record, and is only written encrypted: a vault without a
+- The backup file is the whole vault, its notes in it, in one record as earlier versions wrote it,
+  and is only written encrypted: a vault without a
   passphrase has to set one first ("Set a passphrase"; "Change passphrase" asks the current one).
   A clear backup from an earlier version, restored with a passphrase, is encrypted with it. On an
   encrypted vault the recovery words are shown after the passphrase. A tab that holds the vault
@@ -189,8 +200,16 @@ vout n  change to the payer                                     only if above du
   asks for more mints than are left: an indexer gives a late batch only what is left and keeps the
   whole payment, which the panel says when `k > 1`.
 - payMode 1 burns the price **on the envelope output itself**, so a burn mint has no extra output.
-- Coins: the smallest single UTXO that pays everything, else the fewest UTXOs (largest first);
-  the change output is dropped when it would be dust.
+- Coins: confirmed ones only, by Esplora's word, a wallet's own list included (`ui/spends.js`
+  `walletUtxos`): an unconfirmed coin can be replaced by whoever paid it, and the transaction funded
+  with it leaves every mempool. On mainnet, plain ones only (`src/coins.js`; vault-15): the
+  wallet's own list of the coins that carry nothing (UniSat's), or, for a wallet that keeps its
+  collectibles at an address of their own (Xverse, Leather), the coins above 10,000 sats at the
+  one it pays from, since the small coins are where an inscription or runes sit, and those only
+  after a dialog that names them, each time: nothing on the chain shows a collectible, and a payment
+  address can be sent one. A wallet that does neither is refused there, never spent from on a guess. Of those, the largest single UTXO that
+  pays everything, else the fewest UTXOs (largest first); the change output is dropped when it
+  would be dust. The mint screen and the dialog before a commit name each coin spent.
 - Before anything is signed, the vault checks what the indexers will check (window open at the
   next block, not sold out, `k` not above what is left, payment present), because a rejected mint is not refunded.
 - **The genesis token SH20** is part of the profile, not a DEPLOY (`/tokens` lists it first, with
@@ -218,7 +237,12 @@ vout n  change to the payer                                     only if above du
 - **The network follows the profile** (`src/profile.js` `CHAIN`): Bitcoin addresses (`btc.js`, `tb1…`
   on signet, `bc1…`, `1…`, `3…` on mainnet), SH-20 addresses (`tsh20…` or `sh20…`, SPEC-NOTES §2),
   what Xverse, UniSat and Leather are asked for, and the network a vault records: a vault or a backup
-  made on another network is not opened (its 12 words give other keys here, SPEC-NOTES §1: another vault).
+  made on another network is not opened. Each network has its own record (`sh20.vault.v0` for signet,
+  `sh20.vault.bitcoin.v0` for mainnet), so a page finds its own vault or none, and says when the other
+  network's is stored at its origin: that one stays, and this network's vault is made with new words
+  of its own. The page never sends a vault to its words on the other network: there they give
+  another vault, with other keys (SPEC-NOTES §1; docs/audit/2026-11-24-vault.md, vault-14;
+  docs/audit/2026-11-24-sealing.md, sealing-4).
 - **Default servers** (`src/servers.js`), for the profile the page follows: on signet, the two mirrors
   the site serves beside the page (`../api/js/` and `../api/rs/`, `docs/API.md`, "The static mirror")
   and mempool.space's signet Esplora; on mainnet, no indexer (Settings asks for one: your own
@@ -265,7 +289,9 @@ openings without `rho` (it was 196 vB). A batch adds one byte for `k` mints. Wit
 ## Deploy screen
 
 `src/deploy-plan.js` checks a new ticker's terms with the same rules as the indexer (free 4-character
-ticker, `pre < max`, `(max − pre)` a multiple of `lim`, `start` after the DEPLOY block, `end` and
+ticker, `pre < max`, `(max − pre)` a multiple of `lim`, `start` after the reveal's block, which comes
+`N = 6` blocks after the commit at the earliest (docs/audit/2026-11-24-vault.md, vault-4; the form
+proposes the tip + N + 18), `end` and
 `unlock` not before `start`, payMode 0 ⇔ price 0; `test/deploy-plan.test.js` runs each case through
 the reference indexer and requires the same verdict). It then shows what the DEPLOY costs:
 
@@ -300,7 +326,11 @@ original goes in. So the vault:
 5. if the proof's anchor would be out of the window `W = 100` by then (a commit that stayed
    unconfirmed for long), marks the DEPLOY "Prove again": the vault proves it on today's tree and
    makes a new commit, which spends the old commit output by its key path (the one-time key, tweaked
-   with the leaf), so its sats come back; the new commit matures in its turn.
+   with the leaf), so its sats come back; the new commit matures in its turn;
+6. if its mint would start before any block can take the reveal (a commit slow to confirm, a page
+   closed long), never reveals it: the indexers would refuse it and its ticker would show for
+   nothing (vault-4). The notes it burns come back, and "Take the commit back" sends the commit's
+   sats to the wallet by the same key path; deploy again with a later start.
 
 A team allocation gets one of the vault's public note keys, found by the sync when its block comes.
 Before signing, the vault asks the indexers again for their profile, the tickers taken and the tip.
@@ -310,7 +340,13 @@ back and says so (`send.js` `refusedSpend`; only the network fees are lost). Not
 indexer it synced from: every configured indexer must answer, follow the vault's profile and list none
 of those nullifiers in its full list from block 0, where an earlier spend of one would show too
 (`consensus.js` `refusalAgreed`); else the notes
-stay reserved and the next sync asks again.
+stay reserved and the next sync asks again. A spend that is never mined (its commit or its reveal
+dropped, or replaced with the coin that paid it) gives its notes back the same way once the synced
+tip is `W + 6` blocks past its anchor: a spend lands only where `anchorHeight ≥ H − W`, so no block
+can take it any more, in that transaction or in a copy, and every indexer must have passed its
+anchor plus `W` (docs/audit/2026-11-24-vault.md, vault-2). One the wallet never signed gives them
+back at once: the vault signs the reveal only after the commit, so its envelope went nowhere. One
+left "prepared" (the page closed while the wallet asked) is listed with **Give up**.
 `test/deploy-maturity.test.js` checks the schedule (the countdown, the anchor window), a DEPLOY
 without a burn refused one block early and accepted at `N`, one in an OP_RETURN refused, the key-path
 sweep of an old commit, and the reserved notes kept across a reload; `test/spend.test.js` runs a
@@ -384,17 +420,34 @@ control block, signature message) is checked against the BIP341 vectors (`test/t
   that fails there is refused. Only when the vault cannot check (no nullifier of its notes, a local
   tree that does not reach the anchor, a prover that cannot run) does the page show the price and
   payee and ask. The signed terms are shown with the offer.
+- **Envelopes read from Esplora** (a DEPLOY before a mint, a LIST before a TAKE or after a restore)
+  are taken only as the chain committed to them (`src/witness.js`; docs/audit/2026-11-24-vault.md,
+  vault-6): no txid covers a witness, so the vault also fetches the transaction its input 0 spends,
+  and requires the tapscript of the witness, as the one leaf under its control block's key (and of
+  its parity), to give the key of that output. A tree of two leaves would let the same txid fit
+  either, so it binds nothing and is refused. Esplora can then withhold a transaction, never hand
+  over another envelope in it.
 - **TAKE** ("Buy from an offer"): the vault reads the LIST from the chain (Esplora) and requires
   every indexer that answers to report the same listing, ACTIVE: one that does not know it refuses
   it, and at least two must agree (`consensus.js` `listingCheck`, `TAKE_QUORUM`), since a LIST the
-  indexers rejected still looks like one on chain. It checks the seller's signature for
-  that price and payee. The payee shows as an address only when its script is a whole standard
+  indexers rejected still looks like one on chain. Only an indexer whose verifier is
+  `plonk-bn254-hermez` counts toward the two: one that verifies no spend would vouch for a LIST
+  whose proof is anything (docs/audit/2026-11-24-vault.md, vault-16). It can refuse a listing, never
+  make it enough; the same holds for a mint and for a spend the vault believes refused, and nothing
+  is proved or sent while the primary indexer verifies no spend. It checks the seller's signature for
+  that price and payee. And it waits: Buy stays off, with the count, until the LIST is six blocks
+  deep at every indexer that answers and at Esplora (`consensus.js` `PAY_DEPTH`). A TAKE pays the
+  seller whatever the indexers later decide, and a reorg of the LIST's block can leave the LIST
+  transaction in the chain with its envelope refused: the price would be paid for nothing. The payee shows as an address only when its script is a whole standard
   template (P2PKH, P2SH, P2WPKH, P2WSH, P2TR; `btc.js` `scriptType`); any other script shows as its
   hex, and Buy stays off with the reason, since the network would not relay a TAKE that pays it
   (`market.js` `payeeProblem`). Then it builds the buyer's transaction: the lock at input 0 with the seller's
   signature, the price at output 0, the TAKE (an OP_RETURN with a public note key of this vault) and
   the wallet's own inputs, which are the only ones the wallet signs. The tokens become a public note
-  of the buyer. A lock is spent once: a sale can be neither doubled nor left unpaid.
+  of the buyer. A lock is spent once: a sale can be neither doubled nor left unpaid for the seller.
+  The buyer relies on the LIST being accepted where the TAKE lands: two indexers that agree, and
+  six blocks. A MINT that pays its deployer or burns its price waits the same six blocks after the
+  DEPLOY, for the same reason; a free mint, SH20's among them, does not wait.
 - **Cancel**: a TAKE by the seller itself, the lock signed by the vault (SIGHASH_DEFAULT): the
   tokens come back as a public note. A TAKE whose outputs pay the payee at least the price counts
   as SOLD, so the cancel sends its change to the wallet's other address when it has one and the
@@ -453,7 +506,18 @@ checks every request the page sends). Instead `src/sync.js`:
   WebCrypto failed, which is an error, not "not ours") are read again until it has. A note whose
   scan fails does not stop the others: they are scanned, the page shows the error, and the next
   sync reads again from that note (`match.js`). "Rescan from
-  zero" ignores the cache; a restored vault always rescans everything to find its notes.
+  zero" ignores the cache; a restored vault always rescans everything to find its notes;
+- asks every server what it needs **before the scan, and nothing after it** (`ui/notes-panel.js`
+  `syncOnce`; docs/audit/2026-11-24-sealing.md, sealing-1). An output that opens costs its owner about
+  0.2 s to scan and one that does not a fraction of a millisecond, and the `pkEph` and `ct` beside a
+  leaf are the indexer's word: a request that waited on the scan would tell the indexer, by its own
+  clock, whether the vault holds an address and how many outputs are its own. So the notes already
+  held, the spends refused, the listings, the DEPLOY reveals and a restored vault's count of keys are
+  all read first; the scan then runs with nothing to send until the next sync, which the user or an
+  unlock starts, and the DEPLOY timer keeps its own minute (`test/scan-timing.test.js`). The scan
+  runs on the page's thread, between WebCrypto calls: a timer that falls during it waits at most one
+  output's leaf check, about 0.2 s. (A worker would remove that too; `circuit/js` imports
+  `node:crypto`, which only the page's import map resolves.)
 
 Loading a cached tree recomputes it (about 0.2 ms per leaf) to check it against the cached root.
 A public note key costs about 170 ms (two BabyJubJub multiplications in `circuit/js`), so a new
@@ -535,6 +599,7 @@ outputs, public notes, a whole spend) through `webcrypto.js` in that exact setup
 | `src/ui/notes-panel.js`, `market-panel.js` | the notes and the private sync; listings and buying from an offer |
 | `src/ui/settings-panel.js`, `render.js` | the servers; `renderAll` |
 | `src/keys.js` | master secret, recovery words, encrypted storage, backup, the vault's notes, spends under way |
+| `src/notestore.js` | where the notes are kept: one record each, in IndexedDB beside the page's localStorage |
 | `src/bip39.js`, `src/bip39-english.js` | the 12 recovery words |
 | `src/send.js` | a TRANSFER or a DEPLOY with a burn, end to end: plan, prove, commit and reveal |
 | `src/market.js` | BURN, LIST, offers, TAKE, cancel and CLAIM |

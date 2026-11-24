@@ -5,13 +5,14 @@ import { finalizePsbt, sameUnsignedTx, scriptType } from '../btc.js';
 import { toHex } from '../bytes.js';
 import { TERMS, crossCheck, profileCheck, unverifiedSpends } from '../consensus.js';
 import { verifyMintTerms } from '../deploy.js';
-import { buildMint, mintProblems, mintsLeft } from '../mint.js';
+import { buildMint, mintDepthProblem, mintProblems, mintsLeft } from '../mint.js';
 import { PROFILE, PROFILE_NAME } from '../profile.js';
 import { MINT_BATCH_MAX, PAY_MODE } from '../sh20.js';
-import { $, MAX_FEE_SATS, NO_INDEXER, busy, esplora, explorerTx, fill, h, indexer, indexers, noCoins, report, sats, short, st, units } from './context.js';
+import { $, MAX_FEE_SATS, NO_INDEXER, busy, esplora, explorerTx, fill, h, indexer, indexers, proposedFee, report, sats, short, st, units } from './context.js';
 import { processDeploys, renderDeploy } from './deploy-panel.js';
 import { renderNotes } from './notes-panel.js';
 import { renderAll } from './render.js';
+import { coinsText, walletUtxos } from './spends.js';
 
 // ---- tokens ----------------------------------------------------------------------
 
@@ -55,6 +56,7 @@ export async function refresh() {
   } catch {
     st.tip = null;
   }
+  st.feeRate = await esplora.feeEstimate(); // the rate every fee field proposes (vault-17)
   renderTokens();
   renderDeploy();
   processDeploys().catch(report);
@@ -79,7 +81,8 @@ export function renderTokens() {
   }
   const H = chainHeight();
   const rows = st.tokens.map((t) => {
-    const problems = H === null ? ['chain height unknown'] : mintProblems(t, H + 1);
+    // the terms at the next block, then the DEPLOY's depth for a mint that pays (vault-1)
+    const problems = H === null ? ['chain height unknown'] : [...mintProblems(t, H + 1), mintDepthProblem(t, H)].filter(Boolean);
     const b = h('button', { type: 'button', class: 'small', disabled: problems.length > 0, title: problems.join('; ') }, 'Mint');
     b.addEventListener('click', () => openMint(t.ticker));
     return h('tr', {},
@@ -106,7 +109,8 @@ async function openMint(ticker) {
   $('mint').scrollIntoView({ behavior: 'smooth' });
   try {
     const check = await crossCheck(indexers, ticker);
-    renderMint(check, await esplora.feeRate());
+    st.feeRate = await esplora.feeEstimate();
+    renderMint(check, proposedFee());
   } catch (e) {
     fill('mint-body', h('p', { class: 'err' }, e.message));
   }
@@ -124,7 +128,7 @@ function renderMint(check, defaultFee) {
   const need = check.problems.length ? ['resolve the indexer disagreement'] : [];
   if (!st.vault) need.push('unlock the vault');
   if (!st.wallet) need.push('connect a wallet');
-  const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: String(defaultFee), class: 'narrow' });
+  const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: defaultFee === null ? '' : String(defaultFee), placeholder: 'sat/vB', class: 'narrow' });
   // batch mint (wire v0.3): k mints in one envelope, one note of k × lim for k × price, never more than what is left
   const most = Math.min(MINT_BATCH_MAX, Number(mintsLeft(token)));
   const count = h('input', { type: 'number', min: '1', max: String(Math.max(1, most)), step: '1', value: '1', class: 'narrow', name: 'k' });
@@ -160,9 +164,7 @@ async function prepareMint(shown, feeRate, k, out) {
   const source = await verifyMintTerms(esplora, token);
   const tip = await esplora.tipHeight();
   const w = st.wallet;
-  let utxos = w.adapter.utxos ? await w.adapter.utxos(w.address) : null;
-  if (!utxos) utxos = await esplora.utxos(w.address);
-  if (!utxos.length) throw new Error(noCoins(w.address));
+  const utxos = await walletUtxos(); // confirmed coins only (vault-2)
   const opening = await st.vault.opening(st.vault.state.next); // reserved only when signed
   const m = buildMint({ token, opening, payer: w, utxos, feeRate, tipHeight: tip, k });
 
@@ -170,7 +172,8 @@ async function prepareMint(shown, feeRate, k, out) {
   sign.addEventListener('click', busy(sign, () => signAndSend(token, m, opening, out)));
   out.replaceChildren(
     h('dl', {},
-      h('dt', {}, 'Inputs'), h('dd', {}, `${m.tx.vin.length} from ${short(w.address)}`),
+      // each coin named, before the wallet is asked (vault-15)
+      h('dt', {}, 'Inputs'), h('dd', { id: 'mint-coins' }, `${m.tx.vin.length} from ${short(w.address)}: ${coinsText(m.tx, utxos)}`),
       h('dt', {}, 'Outputs'), h('dd', {}, m.tx.vout.map((o, i) => `#${i} ${scriptType(o.script)} ${sats(o.value)}`).join(' · ')),
       h('dt', {}, 'Size'), h('dd', {}, `≈ ${m.vsizeEstimate} vB (a plain P2TR payment is ≈ 154 vB)`),
       h('dt', {}, 'Network fee'), h('dd', {}, sats(m.fee)),

@@ -49,7 +49,8 @@ block, when `digest` is `digest_{A−1}` and `root` the empty root. `genesis`: t
 `tokens`, `leaves`, `nullifiers`: counts. `deployBurn` is a decimal string; `deployMaturity`, `anchorWindow` and
 `anchorMinDepth` are numbers. `verifier`: `plonk-bn254-hermez` (the PLONK verifier of `circuit/`, keyed by `VK_DIGEST`),
 `test` (the vectors' rule, for differential runs) or `reject-all` (every spend refused). The vault takes any verifier but
-`plonk-bn254-hermez` for one that verifies no spend, and says so on its status line and beside the balance.
+`plonk-bn254-hermez` for one that verifies no spend, says so on its status line and beside the balance, and acts on nothing
+it says: no TAKE, no mint and no refused spend counted on its word, and nothing proved while it is the primary.
 
 **Blocks.** `{ height, hash, digest, root, leaves, events, rejected, eventsH }`: `events` in API shape (below), `rejected`
 as `[{ txid, reason }]` with `envelope` in a batch, and `eventsH` the byte string of SPEC-WIRE §6 in hex, the one form of

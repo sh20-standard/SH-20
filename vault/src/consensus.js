@@ -62,6 +62,9 @@ export function unverifiedSpends(status) {
   return `it does not check the proofs of spends (${named}): a note it lists may not exist`;
 }
 
+/** Whether the indexer that answered `status` verifies spends: only its word counts where the vault acts (vault-16). */
+export const verifiesSpends = (status) => unverifiedSpends(status) === null;
+
 /**
  * Asks every indexer's /status now. `problems` (profileProblems) must refuse any action; an
  * indexer that does not answer is not compared, but at least one must. `unverified` names each
@@ -77,22 +80,43 @@ export async function profileCheck(apis) {
 }
 
 /**
+ * What stops the vault from proving or sending anything, from a profileCheck `check` (docs/audit/2026-11-24-vault.md,
+ * vault-16): an indexer on another profile, and a primary indexer that verifies no spend, since the notes, the tree
+ * and the paths a spend is built on are its word, and it accepts whatever spend it is sent. [] when the vault may act.
+ */
+export function actProblems(check, primary) {
+  const out = [...check.problems];
+  const p = check.unverified?.find((u) => u.base === primary);
+  if (p) out.push(`the primary indexer ${primary} verifies no spend: ${p.why}. The notes and the tree it serves are not checked; put an indexer with the PLONK verifier (${SPEND_VERIFIER}) first in Settings`);
+  return out;
+}
+
+/**
  * Before the vault gives back the notes of a spend it believes refused (send.js refusedSpend, from the
  * primary indexer's sync): every configured indexer must answer, follow the vault's profile, have
  * passed block `atLeast`, and list none of `nullifiers` (hex) in its full list of spent nullifiers,
  * from block 0, whatever height it gives them: a note spent by this spend or by an earlier one shows
  * there, and no height the primary reported narrows the search (never a question about one
  * nullifier). A primary that hid a nullifier would otherwise have the vault offer spent notes
- * again. Asked only when a spend looks refused. Returns { ok, why }.
+ * again. An indexer that verifies no spend is not taken at its word (vault-16): one that refuses every
+ * spend lists no nullifier of a spend the others accepted. It can still keep the notes reserved (a
+ * nullifier it lists spent), never give them back: at least one indexer that verifies spends must vouch. Asked only when a spend looks refused. Returns { ok, why }.
  */
 export async function refusalAgreed(apis, nullifiers, { atLeast }) {
   if (!apis.length) return { ok: false, why: 'no indexer configured' };
   const mine = new Set(nullifiers);
   const settled = await Promise.allSettled(apis.map(async (a) => ({ status: await a.status(), list: await a.nullifiers(0) })));
+  let vouched = 0;
   for (const [i, r] of settled.entries()) {
     const base = apis[i].base;
     if (r.status === 'rejected') return { ok: false, why: `${base} did not answer` };
     const { status, list } = r.value;
+    // any indexer that lists one of these nullifiers spent keeps the notes reserved, whatever its verifier:
+    // its word blocks a refund, and only the word of one that verifies spends can allow it
+    const spentThere = list?.find((n) => mine.has(n.nullifier));
+    if (spentThere) return { ok: false, why: `${base} has its nullifier spent at block ${spentThere.height}` };
+    if (!verifiesSpends(status)) continue;
+    vouched++;
     const diff = profileDiff(status);
     if (diff.length) return { ok: false, why: `${base} follows another profile: ${diff.join('; ')}` };
     if (!Number.isInteger(status.height) || status.height < atLeast) return { ok: false, why: `${base} is at block ${status.height}, not yet ${atLeast}` };
@@ -100,6 +124,7 @@ export async function refusalAgreed(apis, nullifiers, { atLeast }) {
     const spent = list.find((n) => mine.has(n.nullifier));
     if (spent) return { ok: false, why: `${base} has its nullifier spent at block ${spent.height}` };
   }
+  if (!vouched) return { ok: false, why: 'no indexer that verifies spends vouches for it' };
   return { ok: true, why: null };
 }
 
@@ -131,6 +156,9 @@ export async function crossCheck(apis, ticker, { retries = 2, delayMs = 1500, sl
     const problems = [];
     const warnings = [];
     problems.push(...profileProblems(ok)); // each against the vault's own profile, not against each other
+    // a mint is made on the word of indexers that verify spends; the others are compared, and not counted (vault-16)
+    const verifying = ok.filter((r) => verifiesSpends(r.status));
+    if (!verifying.length) problems.push(`no indexer that answered verifies spends (${ok.map((r) => `${r.base}: ${r.status?.verifier || 'no verifier named'}`).join(', ')}): the vault mints on the word of none of them`);
 
     const ref = ok[0];
     if (!ref.token && ok.every((r) => !r.token)) throw new Error(`unknown ticker ${ticker}`);
@@ -157,7 +185,8 @@ export async function crossCheck(apis, ticker, { retries = 2, delayMs = 1500, sl
     if (down.length) warnings.push(`unreachable, not compared: ${down.join(', ')}`);
     if (ok.length === 1) warnings.push('only one indexer answered: which DEPLOY of this ticker came first is not cross-checked. Add independent indexers in Settings.');
 
-    return { token: ref.token, profile: PROFILE, agreed: problems.length ? 0 : ok.length, problems, warnings };
+    if (verifying.length < ok.length) warnings.push(`not counted, since they verify no spend: ${ok.filter((r) => !verifiesSpends(r.status)).map((r) => r.base).join(', ')}`);
+    return { token: ref.token, profile: PROFILE, agreed: problems.length ? 0 : verifying.length, problems, warnings };
   }
 }
 
@@ -171,23 +200,53 @@ export async function crossCheck(apis, ticker, { retries = 2, delayMs = 1500, sl
  */
 export const TAKE_QUORUM = 2;
 
+// How deep what a payment buys must be before the vault pays (docs/audit/2026-11-24-vault.md, vault-1): a TAKE
+// pays the seller whatever the indexers later decide, and a MINT pays or burns its price whatever becomes of the
+// DEPLOY. A reorg of the LIST's block, or of the DEPLOY's, can leave the transaction in the chain with its envelope
+// refused: the price is then paid for nothing. Six blocks, as the vault waits elsewhere (sync.js REORG_MARGIN,
+// send.js REFUSAL_DEPTH).
+export const PAY_DEPTH = 6;
+
+/**
+ * Why the vault does not pay yet for `what`, confirmed at `height`, with the chain at `tip`; null once it is
+ * PAY_DEPTH blocks deep. A height or a tip that is not an integer is a reason too.
+ */
+export function payDepthProblem(what, height, tip) {
+  if (!Number.isInteger(height)) return `${what} has no block yet`;
+  if (!Number.isInteger(tip)) return 'the chain tip is unknown';
+  const deep = tip - height + 1;
+  if (deep >= PAY_DEPTH) return null;
+  return `${what} is ${deep < 1 ? 'not in the chain yet' : `${deep} block${deep > 1 ? 's' : ''} deep`}: the vault pays once it is ${PAY_DEPTH} deep, so that a reorg cannot leave the price paid for nothing`;
+}
+
 const listingKey = (l) => JSON.stringify(l, (_, x) => (typeof x === 'bigint' ? String(x) : x));
 
 /**
  * Asks every indexer about `listTxid`. One that answers and does not know the listing counts
  * against it, like one that reports other terms or another state: either refuses. An unreachable
- * one is not counted. Returns { listing, agreed, down, enough }: `enough` when at least
- * TAKE_QUORUM indexers agree.
+ * one is not counted; one whose /status does not answer is counted, at a depth unknown (not deep). Returns { listing, agreed, verifying, down, enough,
+ * depth, deep, depthProblem }: `enough` when at least TAKE_QUORUM indexers that verify spends agree (`verifying` of them); `depth`, how many
+ * blocks deep the shallowest of them holds the LIST (its height against the listing's), and `deep`
+ * once that is PAY_DEPTH, with `depthProblem` saying why not.
  */
 export async function listingCheck(apis, listTxid) {
-  const settled = await Promise.allSettled(apis.map((a) => a.listing(listTxid)));
+  // with each listing, the indexer's own height: how deep it holds the LIST (vault-1). The two answers stay
+  // apart: the listing alone says known, unknown or down, so an indexer that refuses the listing still
+  // refuses it when its /status fails; a /status that fails only leaves that indexer's depth unknown
+  const settled = await Promise.allSettled(apis.map(async (a) => {
+    const [listing, status] = await Promise.all([a.listing(listTxid), a.status().catch(() => null)]);
+    return listing ? { ...listing, at: status?.height, verifies: verifiesSpends(status) } : listing;
+  }));
   const known = [];
   const unknown = [];
   const down = [];
   settled.forEach((s, i) => {
     const base = apis[i].base;
     if (s.status === 'rejected') down.push(base);
-    else if (s.value) known.push({ base, listing: s.value });
+    else if (s.value) {
+      const { at, verifies, ...listing } = s.value;
+      known.push({ base, listing, at, verifies });
+    }
     else unknown.push(base);
   });
   if (!known.length) throw new Error(unknown.length ? `no indexer knows this listing (${unknown.join(', ')})` : `no indexer reachable (${down.join(', ')})`);
@@ -200,7 +259,13 @@ export async function listingCheck(apis, listTxid) {
     const diff = Object.keys({ ...ref.listing, ...k.listing }).filter((f) => listingKey(k.listing[f]) !== listingKey(ref.listing[f]));
     throw new Error(`${k.base} and ${ref.base} disagree on this listing: ${diff.map((f) => `${f} ${listingKey(k.listing[f])} ≠ ${listingKey(ref.listing[f])}`).join(', ')}`);
   }
-  return { listing: ref.listing, agreed: known.length, down, enough: known.length >= TAKE_QUORUM };
+  // the shallowest of them: a TAKE waits until every indexer that answers holds the LIST PAY_DEPTH deep
+  const problems = known.map((k) => payDepthProblem(`the listing, at ${k.base},`, ref.listing.height, k.at));
+  const depth = Math.min(...known.map((k) => (Number.isInteger(k.at) && Number.isInteger(ref.listing.height) ? k.at - ref.listing.height + 1 : 0)));
+  // only an indexer that verifies spends counts toward the quorum (vault-16): two that take any bytes as a proof would
+  // vouch for a LIST whose proof is the vectors' fixed string. The others can refuse the listing, never make it enough
+  const verifying = known.filter((k) => k.verifies).length;
+  return { listing: ref.listing, agreed: known.length, verifying, down, enough: verifying >= TAKE_QUORUM, depth, deep: problems.every((p) => p === null), depthProblem: problems.find((p) => p) ?? null };
 }
 
 // ---- the synced state, at every sync -----------------------------------------------------------------

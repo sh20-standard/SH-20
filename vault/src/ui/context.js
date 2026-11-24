@@ -3,8 +3,8 @@
 // has passed its checks (app.js) and by applySettings() from the settings panel.
 
 import { Esplora, IndexerApi } from '../api.js';
-import { profileCheck } from '../consensus.js';
-import { CHAIN, PROFILE, PROFILE_NAME } from '../profile.js';
+import { actProblems, profileCheck } from '../consensus.js';
+import { CHAIN, IS_MAINNET, PROFILE, PROFILE_NAME } from '../profile.js';
 import { defaultSettings } from '../servers.js';
 
 // ---- settings -----------------------------------------------------------------
@@ -79,7 +79,22 @@ export const explorerTx = (id) => settings.esplora.replace(/\/api\/?$/, '') + '/
 // ---- state ----------------------------------------------------------------------
 
 // profile: what the last /status of every indexer said against the vault's profile (consensus.js profileCheck)
-export const st = { vault: null, wallet: null, tokens: [], status: null, tip: null, sync: null, profile: { answered: 0, problems: [] }, results: {} };
+export const st = { vault: null, wallet: null, tokens: [], status: null, tip: null, feeRate: null, sync: null, profile: { answered: 0, problems: [] }, results: {} };
+
+/**
+ * The fee rate the page proposes (docs/audit/2026-11-24-vault.md, vault-17): Esplora's estimate for about two
+ * blocks, read with the tip. A commit at a rate the network does not take waits for days, and then its spend is
+ * never mined or its DEPLOY reveal lands late. Without an estimate, 2 sat/vB on signet and the test chains, and
+ * none on mainnet, where the rate is then typed.
+ */
+export const proposedFee = () => st.feeRate ?? (IS_MAINNET ? null : 2);
+
+/** The rate a transaction is built at: the one typed, else the one proposed; none is an error, never a guess. */
+export function feeRateOf(typed) {
+  const r = Number(String(typed ?? '').trim() || proposedFee());
+  if (!(r > 0)) throw new Error('no fee rate: Esplora gives no estimate now, so type one (sat/vB)');
+  return r;
+}
 
 /**
  * Before any action (a DEPLOY and its reveal, a burn, a spend, a TAKE, a cancel, a CLAIM): every
@@ -89,6 +104,9 @@ export const st = { vault: null, wallet: null, tokens: [], status: null, tip: nu
 export async function requireProfile() {
   st.profile = await profileCheck(indexers);
   if (st.profile.problems.length) throw new Error(`nothing was done: ${st.profile.problems.join('. ')}. Remove that indexer in Settings, or use one that follows this vault's profile.`);
+  // nor on the notes and the tree of a primary that verifies no spend (vault-16)
+  const act = actProblems(st.profile, indexer?.base);
+  if (act.length) throw new Error(`nothing was done: ${act.join('. ')}.`);
 }
 
 /** Shows `nodes` in the panel `id` and keeps them there across renders. */

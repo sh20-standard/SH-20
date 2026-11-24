@@ -6,11 +6,12 @@ import { frHex } from '../fr.js';
 import { loadProver } from '../prover.js';
 import { matchListings } from '../match.js';
 import { buildCancel, buildClaim, buildTake, claimProblem, decodeOffer, encodeOffer, listingFromChain, offerTerms, offerValid, payeeProblem, signOffer } from '../market.js';
-import { busy, esplora, fill, h, indexer, indexers, requireProfile, result, resultBox, sats, short, st, units } from './context.js';
+import { busy, esplora, feeRateOf, fill, h, indexer, indexers, requireProfile, result, resultBox, sats, short, st, units } from './context.js';
 import { renderAll } from './render.js';
 import { sendForm } from './send-panel.js';
 import { signFunded, txLink, walletUtxos } from './spends.js';
-import { listingCheck, TAKE_QUORUM } from '../consensus.js';
+import { PAY_DEPTH, listingCheck, payDepthProblem, TAKE_QUORUM } from '../consensus.js';
+import { committedHex } from '../witness.js';
 import { getSyncer } from './notes-panel.js';
 
 // ---- market: the vault's listings, and buying from an offer --------------------------------------
@@ -39,7 +40,7 @@ export async function syncListings() {
   const union = new Map(all.filter((l) => l.listTxid).map((l) => [l.listTxid, l]));
   for (const r of others) if (r.status === 'fulfilled' && Array.isArray(r.value)) for (const l of r.value) if (l?.listTxid && !union.has(l.listTxid)) union.set(l.listTxid, l);
   // found again by its lock key: its terms come from the LIST on chain, not from the indexer's word
-  await matchListings(v, [...union.values()], async (l) => listingFromChain(l.listTxid, await esplora.txHex(l.listTxid), { ...l, amount: String(l.amount), price: String(l.price) }));
+  await matchListings(v, [...union.values()], async (l) => listingFromChain(l.listTxid, await committedHex(esplora, l.listTxid), { ...l, amount: String(l.amount), price: String(l.price) }));
   // every list read: a restored vault may reserve lock keys again
   if (others.every((r) => r.status === 'fulfilled')) await v.chainChecked('locks');
 }
@@ -47,12 +48,17 @@ export async function syncListings() {
 /**
  * A listing read from the chain and reported the same way by every indexer that answers; one that
  * answers "unknown" refuses it (consensus.js listingCheck, docs/AUDIT.md §8.3). `enough` says
- * whether TAKE_QUORUM of them agree, which a TAKE needs.
+ * whether TAKE_QUORUM of them that verify spends agree (vault-16), which a TAKE needs; `deep` whether every one of them, and
+ * Esplora, holds the LIST PAY_DEPTH blocks deep, which a TAKE needs too (vault-1), with `shallow`
+ * saying why not.
  */
 async function checkedListing(listTxid) {
-  const { listing: indexed, agreed, down, enough } = await listingCheck(indexers, listTxid);
-  const l = listingFromChain(listTxid, await esplora.txHex(listTxid), { ...indexed, amount: String(indexed.amount), price: String(indexed.price) });
-  return { l, state: indexed.state, agreed, down, enough };
+  const { listing: indexed, agreed, verifying, down, enough, depth, depthProblem } = await listingCheck(indexers, listTxid);
+  // the LIST's envelope as the chain committed to it (vault-6): the output it spends binds its witness
+  const [hex, tx, tip] = await Promise.all([committedHex(esplora, listTxid), esplora.txStatus(listTxid), esplora.tipHeight()]);
+  const l = listingFromChain(listTxid, hex, { ...indexed, amount: String(indexed.amount), price: String(indexed.price) });
+  const shallow = depthProblem ?? payDepthProblem('the LIST transaction, at Esplora,', tx?.confirmed ? tx.block_height : null, tip);
+  return { l, state: indexed.state, agreed, verifying, down, enough, depth, deep: !shallow, shallow };
 }
 
 /**
@@ -63,7 +69,7 @@ async function ownListing(rec) {
   const indexed = (await indexer.listings()).find((l) => l.listTxid === rec.listTxid);
   if (!indexed) throw new Error('the indexer does not list it (yet): sync after the next block');
   const sent = (st.vault.state.pending ?? []).find((p) => p.revealTxid === rec.listTxid)?.revealHex;
-  const l = listingFromChain(rec.listTxid, sent ?? (await esplora.txHex(rec.listTxid)), { ...indexed, amount: String(indexed.amount), price: String(indexed.price) });
+  const l = listingFromChain(rec.listTxid, sent ?? (await committedHex(esplora, rec.listTxid)), { ...indexed, amount: String(indexed.amount), price: String(indexed.price) });
   return { l, state: indexed.state };
 }
 
@@ -97,7 +103,7 @@ export function renderMarket() {
   let buy = null;
   const badPayee = c ? payeeProblem(c.l.payScript) : null; // a TAKE to it would not be relayed
   if (c) {
-    buy = h('button', { type: 'button', disabled: !st.wallet || c.state !== 'ACTIVE' || !c.enough || !!badPayee, name: 'buy', title: badPayee ?? (c.enough ? null : `a TAKE needs ${TAKE_QUORUM} indexers that report this listing`) }, `Buy ${units(c.l.amount)} ${c.l.ticker} for ${sats(c.l.price)}`);
+    buy = h('button', { type: 'button', disabled: !st.wallet || c.state !== 'ACTIVE' || !c.enough || !c.deep || !!badPayee, name: 'buy', title: badPayee ?? (!c.enough ? `a TAKE needs ${TAKE_QUORUM} indexers that verify spends and report this listing` : c.shallow) }, `Buy ${units(c.l.amount)} ${c.l.ticker} for ${sats(c.l.price)}`);
     buy.addEventListener('click', busy(buy, () => sendTake(c)));
   }
   fill('market-body',
@@ -113,9 +119,11 @@ export function renderMarket() {
       h('dt', {}, 'Tokens'), h('dd', {}, `${units(c.l.amount)} ${c.l.ticker}, as a public note of this vault`),
       h('dt', {}, 'Price'), h('dd', {}, `${sats(c.l.price)} to ${payee(c.l.payScript)}`),
       h('dt', {}, 'State'), h('dd', {}, c.state),
+      h('dt', {}, 'Depth'), h('dd', { id: 'listing-depth' }, c.deep ? `the LIST is ${PAY_DEPTH} blocks deep or more everywhere` : `${c.depth > 0 ? `${c.depth} of ${PAY_DEPTH} blocks` : 'not confirmed'}: check the offer again after ${PAY_DEPTH - Math.max(c.depth, 0)} more block${PAY_DEPTH - Math.max(c.depth, 0) > 1 ? 's' : ''}`),
       h('dt', {}, 'Checked'), h('dd', {}, `the LIST on chain, the seller's signature for this price and payee, ${c.agreed} indexer${c.agreed > 1 ? 's' : ''} ${c.agreed > 1 ? 'agree' : 'knows it'}${c.down.length ? ` (${c.down.length} unreachable, not counted)` : ''}`)) : null,
     badPayee ? h('p', { class: 'warn err', id: 'payee-problem' }, `Cannot buy: ${badPayee}.`) : null,
-    c && !c.enough ? h('p', { class: 'warn err' }, `Not enough to buy: ${c.agreed} indexer${c.agreed > 1 ? 's' : ''} ${c.agreed > 1 ? 'report' : 'reports'} this listing, and a TAKE needs ${TAKE_QUORUM} that agree. The chain alone cannot show whether the indexers accepted the LIST; one indexer could report a listing the others rejected, and the price would be paid for nothing. Add an independent indexer in Settings.`) : null,
+    c && !c.enough ? h('p', { class: 'warn err' }, `Not enough to buy: ${c.agreed} indexer${c.agreed > 1 ? 's' : ''} ${c.agreed > 1 ? 'report' : 'reports'} this listing, ${c.verifying} of them verifying spends, and a TAKE needs ${TAKE_QUORUM} that verify spends and agree. An indexer that verifies no spend would vouch for a LIST whose proof is anything. The chain alone cannot show whether the indexers accepted the LIST; one indexer could report a listing the others rejected, and the price would be paid for nothing. Add an independent indexer in Settings.`) : null,
+    c && c.enough && !c.deep ? h('p', { class: 'warn', id: 'listing-shallow' }, `Not yet: ${c.shallow}.`) : null,
     buy,
     resultBox('buy-out'));
 }
@@ -176,10 +184,11 @@ async function sendTake(c) {
   if (fresh.state !== 'ACTIVE') throw new Error(`the listing is ${fresh.state} now`);
   const bad = payeeProblem(fresh.l.payScript);
   if (bad) throw new Error(`not bought: ${bad}`);
-  if (!fresh.enough) throw new Error(`not bought: ${fresh.agreed} indexer${fresh.agreed > 1 ? 's' : ''} ${fresh.agreed > 1 ? 'report' : 'reports'} this listing, and a TAKE needs ${TAKE_QUORUM} that agree (add one in Settings)`);
+  if (!fresh.enough) throw new Error(`not bought: ${fresh.agreed} indexer${fresh.agreed > 1 ? 's' : ''} ${fresh.agreed > 1 ? 'report' : 'reports'} this listing, ${fresh.verifying} of them verifying spends, and a TAKE needs ${TAKE_QUORUM} that verify spends and agree (add one in Settings)`);
+  if (!fresh.deep) throw new Error(`not bought yet: ${fresh.shallow}`);
   const tip = await esplora.tipHeight();
   const o = await st.vault.reserveNote(); // the tokens come as this public note
-  const m = buildTake({ l: fresh.l, sig: c.sig, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: tip });
+  const m = buildTake({ l: fresh.l, sig: c.sig, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: feeRateOf(sendForm.fee), tipHeight: tip });
   if (!confirm(`Pay ${sats(fresh.l.price)} plus ${sats(m.fee)} of fees for ${units(fresh.l.amount)} ${fresh.l.ticker}?`)) return;
   await sendFunded(m, 'buy-out', `TAKE of ${units(fresh.l.amount)} ${fresh.l.ticker}`, { index: o.index, ticker: fresh.l.ticker, v: fresh.l.amount });
   marketForm.checked = null;
@@ -190,7 +199,7 @@ async function sendCancel(rec) {
   if (state !== 'ACTIVE') throw new Error(`the listing is ${state}`);
   if (!confirm(`Take ${units(l.amount)} ${l.ticker} back? The listing ends.`)) return;
   const o = await st.vault.reserveNote();
-  const m = buildCancel({ l, lockSecret: (await st.vault.lockOutput(rec.lockIndex)).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: await esplora.tipHeight() });
+  const m = buildCancel({ l, lockSecret: (await st.vault.lockOutput(rec.lockIndex)).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: feeRateOf(sendForm.fee), tipHeight: await esplora.tipHeight() });
   await sendFunded(m, 'listing-out', `Cancel of ${units(l.amount)} ${l.ticker}`, { index: o.index, ticker: l.ticker, v: l.amount });
 }
 
@@ -205,6 +214,6 @@ async function sendClaim(rec) {
   const problem = claimProblem(l, out.spent && out.txid ? await esplora.txHex(out.txid) : null);
   if (problem) throw new Error(`not claimed: ${problem}`);
   const o = await st.vault.reserveNote();
-  const m = buildClaim({ listTxid: rec.listTxid, lockSecret: (await st.vault.lockOutput(rec.lockIndex)).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: await esplora.tipHeight() });
+  const m = buildClaim({ listTxid: rec.listTxid, lockSecret: (await st.vault.lockOutput(rec.lockIndex)).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: feeRateOf(sendForm.fee), tipHeight: await esplora.tipHeight() });
   await sendFunded(m, 'listing-out', `CLAIM of ${units(rec.amount)} ${rec.ticker}`, { index: o.index, ticker: rec.ticker, v: BigInt(rec.amount) });
 }

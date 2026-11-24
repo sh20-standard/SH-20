@@ -3,8 +3,11 @@
 // so the words alone recover every note, public or sealed, by rescanning the indexer.
 // (A vault made before the words existed has a random m and no words: its backup file restores it.)
 // The state lives in localStorage, encrypted with AES-GCM under a PBKDF2 passphrase
-// key when a passphrase is set. A passphrase can be added or changed at any time; a backup file is
-// only ever written encrypted (docs/AUDIT.md §8.4).
+// key when a passphrase is set: one record for the keys, the counters, the listings and the spends,
+// and one record for each note, in IndexedDB (notestore.js), each encrypted on its own under the same
+// key and written when it changes, and only then (docs/audit/2026-11-24-vault.md, vault-3). What a
+// sync recomputes each time (a note's path and spent status) is not stored. A passphrase can be added
+// or changed at any time; a backup file is only ever written encrypted (docs/AUDIT.md §8.4), whole.
 //
 // A note is identified by its tree position, never by its leaf (SPEC-NOTES §4): its id is
 // `pub:<i>` for the vault's i-th public note (a MINT), `out:<pos>` for a sealed output it received.
@@ -17,6 +20,7 @@ import { keyPathOutput } from './taproot.js';
 import { keyFromBytes } from './secp256k1.js';
 import { gatewayKind } from './isolation.js';
 import { CHAIN } from './profile.js';
+import { defaultNoteStore } from './notestore.js';
 
 /** How many lock keys past the last one used a restored vault looks for among the listings. */
 export const LOCK_GAP = 10;
@@ -30,8 +34,15 @@ export const RESTORE_SKIP = 10;
 export const LOCK_SKIP = 3;
 import { toHex, fromHex, toBase64, fromBase64, utf8, concat, u32le } from './bytes.js';
 
-export const STORAGE_KEY = 'sh20.vault.v0';
+// One record for each network (docs/audit/2026-11-24-vault.md, vault-14): a page finds its own network's vault or
+// none, never the other one's in its way. Signet (and the test chains) keep the key every vault has had so far.
+const keyFor = (bitcoin) => (bitcoin === 'signet' ? 'sh20.vault.v0' : `sh20.vault.${bitcoin}.v0`);
+export const STORAGE_KEY = keyFor(CHAIN.bitcoin);
+const NETWORK_NAMES = { signet: 'signet', bitcoin: 'mainnet' };
 const PBKDF2_ITER = 600000;
+// what a sync computes again each time from the local tree (ui/notes-panel.js checkOwned): never written
+const VOLATILE = ['pathAt', 'spent'];
+const persisted = (note) => JSON.stringify(note, (k, x) => (VOLATILE.includes(k) ? undefined : x));
 
 async function aesKey(passphrase, salt) {
   const base = await crypto.subtle.importKey('raw', utf8(passphrase), 'PBKDF2', false, ['deriveKey']);
@@ -72,9 +83,15 @@ export class Vault {
   #openings = new Map(); // index -> public opening, cached (each costs two BabyJubJub multiplications, ~170 ms)
   #locks = new Map(); // index -> lock output (market.js), cached
   #state; // { v, network, scheme, next, notes, obsolete?, npks?, pending? }, null once locked
+  #notes; // the note store (notestore.js): one record a note
+  #written = new Map(); // id → the note as last stored (its persisted JSON), to write only what changed
 
-  constructor(storage, state, seed, key, salt, words = null) {
+  constructor(storage, state, seed, key, salt, words = null, notes = defaultNoteStore(storage, STORAGE_KEY), written = new Map()) {
     this.storage = storage;
+    this.#notes = notes;
+    this.#written = written;
+    /** Notes the vault record names and the note store does not hold (a store cleared apart): a full rescan finds them. */
+    this.missingNotes = 0;
     this.#state = state;
     this.#seed = seed;
     this.#words = words;
@@ -124,6 +141,12 @@ export class Vault {
     return storage.getItem(STORAGE_KEY) !== null;
   }
 
+  /** The network of a vault stored at this origin for another network than the page's, or null (vault-14). */
+  static otherNetwork(storage) {
+    for (const [bitcoin, name] of Object.entries(NETWORK_NAMES)) if (bitcoin !== CHAIN.bitcoin && storage.getItem(keyFor(bitcoin)) !== null) return name;
+    return null;
+  }
+
   get encrypted() {
     return this.#key !== null;
   }
@@ -142,13 +165,14 @@ export class Vault {
    * BIP39 passphrase (none is used). `restored`: the words of a vault that may have been used, whose
    * counters start at 0 and are checked against the chain before an index is reserved (reserveNote).
    */
-  static async fromWords(storage, words, passphrase = '', { restored = false } = {}) {
+  static async fromWords(storage, words, passphrase = '', { restored = false, notes = defaultNoteStore(storage, STORAGE_KEY) } = {}) {
     refuseSharedOrigin();
     if (Vault.exists(storage)) throw new Error('a vault already exists on this device');
     const m = Uint8Array.from(await masterSecret(await mnemonicToSeed(words), NETWORK_HRP));
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const key = passphrase ? await aesKey(passphrase, salt) : null;
-    const v = await new Vault(storage, { v: 0, network: CHAIN.bitcoin, scheme: NOTE_SCHEME, next: 0, notes: [], ...(restored ? { unchecked: Vault.#unchecked() } : {}) }, m, key, salt, words.normalize('NFKD').trim().toLowerCase().split(/\s+/).join(' ')).#init();
+    await notes.clear(); // records of a vault no longer stored here are not this one's
+    const v = await new Vault(storage, { v: 0, network: CHAIN.bitcoin, scheme: NOTE_SCHEME, next: 0, notes: [], ...(restored ? { unchecked: Vault.#unchecked() } : {}) }, m, key, salt, words.normalize('NFKD').trim().toLowerCase().split(/\s+/).join(' '), notes).#init();
     await v.save();
     return v;
   }
@@ -159,12 +183,16 @@ export class Vault {
     return this.#words;
   }
 
-  /** Opens a stored record (or a backup text). Wrong passphrase throws. */
-  static async open(storage, passphrase = '', text = storage.getItem(STORAGE_KEY)) {
+  /**
+   * Opens a stored record (or a backup text). Wrong passphrase throws. A record of format 1 names its
+   * notes, read from the note store; one of format 0 (a backup, or a vault stored before vault-3) holds
+   * them, and its next save moves them to the store.
+   */
+  static async open(storage, passphrase = '', text = storage.getItem(STORAGE_KEY), notes = defaultNoteStore(storage, STORAGE_KEY)) {
     refuseSharedOrigin();
     if (text === null) throw new Error('no vault on this device');
     const rec = JSON.parse(text);
-    if (rec.v !== 0) throw new Error('unknown vault format');
+    if (rec.v !== 0 && rec.v !== 1) throw new Error('unknown vault format');
     let inner;
     let key = null;
     let salt = null;
@@ -182,12 +210,63 @@ export class Vault {
       }
       inner = JSON.parse(new TextDecoder().decode(clear));
     }
-    const { seed, words = null, ...state } = inner;
+    const { seed, words = null, noteIds, ...state } = inner;
+    const written = new Map();
+    let missing = 0;
+    if (rec.v === 1) {
+      // its notes, from the store, in the vault's order; a record that does not open under this key and this id is refused
+      const texts = await notes.read(noteIds ?? []);
+      state.notes = [];
+      for (const id of noteIds ?? []) {
+        if (!texts.has(id)) {
+          missing++;
+          continue;
+        }
+        const note = await Vault.#openNote(key, id, texts.get(id));
+        state.notes.push(note);
+        written.set(id, persisted(note));
+      }
+    }
     // its notes, listings and spends are those of one network: a vault (or a backup) of another is not
     // opened here. Its words give other keys on this network (SPEC-NOTES §1): restoring from them makes another vault.
     const made = state.network ?? 'signet'; // a vault written before the network was recorded is a signet one
-    if (made !== CHAIN.bitcoin) throw new Error(`this vault was made on ${made === 'bitcoin' ? 'mainnet' : made}, and this page follows ${CHAIN.label}: restore it from its 12 words instead`);
-    return new Vault(storage, state, fromHex(seed), key, salt ?? crypto.getRandomValues(new Uint8Array(16)), words).#init();
+    // and never "restore it from its words" (vault-14): here they give another vault, with other keys and none of
+    // its notes (docs/audit/2026-11-24-sealing.md, sealing-4)
+    if (made !== CHAIN.bitcoin) {
+      const there = NETWORK_NAMES[made] ?? made;
+      throw new Error(`this vault was made on ${there}, and this page follows ${CHAIN.label}: a vault holds the notes of one network. Open it on a ${there} page; this network's vault is another one, made with new words of its own (its words give another vault here, with other keys and none of its notes)`);
+    }
+    const v = new Vault(storage, state, fromHex(seed), key, salt ?? crypto.getRandomValues(new Uint8Array(16)), words, notes, written);
+    v.missingNotes = missing;
+    return v.#init();
+  }
+
+  /** A note record (notestore.js): in clear, or AES-GCM under the vault's key with its id as associated data. */
+  async #sealNote(id, json) {
+    if (!this.#key) return JSON.stringify({ plain: JSON.parse(json) });
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: utf8(id) }, this.#key, utf8(json));
+    return JSON.stringify({ iv: toBase64(iv), ct: toBase64(new Uint8Array(ct)) });
+  }
+
+  static async #openNote(key, id, text) {
+    const r = JSON.parse(text);
+    let note;
+    if (r.plain) {
+      if (key) throw new Error(`note ${id} is stored in clear in an encrypted vault`);
+      note = r.plain;
+    } else {
+      if (!key) throw new Error(`note ${id} is encrypted in a vault stored in clear`);
+      let clear;
+      try {
+        clear = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromBase64(r.iv), additionalData: utf8(id) }, key, fromBase64(r.ct));
+      } catch {
+        throw new Error(`note ${id} does not open under this vault's key`);
+      }
+      note = JSON.parse(new TextDecoder().decode(clear));
+    }
+    if (note.id !== id) throw new Error(`the record of note ${id} holds note ${note.id}`);
+    return note;
   }
 
   /**
@@ -195,10 +274,11 @@ export class Vault {
    * written in clear (by an earlier version) is encrypted with `passphrase` when one is given,
    * never silently kept in clear under a passphrase the user believes protects it.
    */
-  static async restore(storage, text, passphrase = '') {
+  static async restore(storage, text, passphrase = '', { notes = defaultNoteStore(storage, STORAGE_KEY) } = {}) {
     refuseSharedOrigin();
     if (Vault.exists(storage)) throw new Error('a vault already exists on this device');
-    const v = await Vault.open(storage, passphrase, text);
+    await notes.clear(); // records of a vault no longer stored here are not this one's
+    const v = await Vault.open(storage, passphrase, text, notes);
     // a backup's counters are those of the day it was written: the indices used since are on chain
     v.state.unchecked = Vault.#unchecked();
     if (!v.encrypted && passphrase) await v.setPassphrase(passphrase);
@@ -229,15 +309,25 @@ export class Vault {
     const salt = crypto.getRandomValues(new Uint8Array(16));
     this.#key = await aesKey(passphrase, salt);
     this.#salt = salt;
-    await this.#write();
+    await this.#write({ all: true }); // every note again, under the new key
   }
 
-  async #record() {
-    const inner = { ...this.state, seed: toHex(this.#seed), ...(this.#words ? { words: this.#words } : {}) };
-    if (!this.#key) return { v: 0, plain: inner };
+  /**
+   * The vault's record: format 1 (the ids of its notes, which are records of their own) for the device,
+   * format 0 (the whole state, its notes in it) for a backup, which any version restores.
+   */
+  async #record({ whole = false } = {}) {
+    const { notes, ...rest } = this.state;
+    const inner = {
+      ...rest,
+      ...(whole ? { notes: notes.map((n) => JSON.parse(persisted(n))) } : { noteIds: notes.map((n) => n.id) }),
+      seed: toHex(this.#seed), ...(this.#words ? { words: this.#words } : {}),
+    };
+    const v = whole ? 0 : 1;
+    if (!this.#key) return { v, plain: inner };
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, this.#key, utf8(JSON.stringify(inner)));
-    return { v: 0, salt: toBase64(this.#salt), iv: toBase64(iv), ct: toBase64(new Uint8Array(ct)) };
+    return { v, salt: toBase64(this.#salt), iv: toBase64(iv), ct: toBase64(new Uint8Array(ct)) };
   }
 
   /**
@@ -250,8 +340,20 @@ export class Vault {
     await this.#write();
   }
 
-  async #write() {
-    this.storage.setItem(STORAGE_KEY, JSON.stringify(await this.#record()));
+  /**
+   * The notes that changed since they were last stored (`all`: every one), in one write of the note store,
+   * then the vault's record, which names them: a note is stored before the record that lists it.
+   */
+  async #write({ all = false } = {}) {
+    const now = new Map(this.state.notes.map((n) => [n.id, persisted(n)]));
+    const put = [];
+    for (const [id, json] of now) if (all || this.#written.get(id) !== json) put.push([id, await this.#sealNote(id, json)]);
+    const del = [...this.#written.keys()].filter((id) => !now.has(id));
+    const record = JSON.stringify(await this.#record());
+    if (put.length || del.length) await this.#notes.write(put, del);
+    this.storage.setItem(STORAGE_KEY, record);
+    for (const [id] of put) this.#written.set(id, now.get(id));
+    for (const id of del) this.#written.delete(id);
   }
 
   #checkUnchanged() {
@@ -272,13 +374,13 @@ export class Vault {
   }
 
   /**
-   * The backup is the stored record itself, and only when it is encrypted: a file in the downloads
-   * folder, synced or mailed, must not hold the master secret and the words in clear.
+   * The backup: the whole state in one record of format 0, its notes in it, and only encrypted: a file
+   * in the downloads folder, synced or mailed, must not hold the master secret and the words in clear.
    */
-  exportBackup() {
-    const text = this.storage.getItem(STORAGE_KEY);
-    if (!this.#key || JSON.parse(text).plain) throw new Error('no backup in clear: set a passphrase first, it encrypts the backup and the copy on this device');
-    return text;
+  async exportBackup() {
+    this.#checkUnchanged();
+    if (!this.#key) throw new Error('no backup in clear: set a passphrase first, it encrypts the backup and the copy on this device');
+    return JSON.stringify(await this.#record({ whole: true }));
   }
 
   /**
@@ -366,8 +468,9 @@ export class Vault {
    * Opens a sealed output `{ pos, leaf, pkEph, ct, txid }` found by a sync. Records it and returns
    * the note when it is this vault's, has a value (v = 0 is an unused output, kept out of the
    * balance) and hashes to its leaf; otherwise null. Already known positions are not added twice.
+   * `save: false` leaves the write to the caller's next save (a sync makes one, vault-3).
    */
-  async receive(out) {
+  async receive(out, { save = true } = {}) {
     const id = `out:${out.pos}`;
     if (this.state.notes.some((n) => n.id === id)) return null;
     const got = await scanOutput(this.#w, { leaf: out.leaf, pkEph: out.pkEph, ct: out.ct });
@@ -378,7 +481,7 @@ export class Vault {
       leaf: frHex(out.leaf), txid: out.txid ?? null, status: 'in tree', pos: out.pos,
     };
     this.state.notes.push(note);
-    await this.save();
+    if (save) await this.save();
     return note;
   }
 
@@ -432,6 +535,20 @@ export class Vault {
     return id;
   }
 
+  /**
+   * Gives up spend `id` while it is still `prepared`: the wallet never signed its commit, so the vault never
+   * signed its reveal and its envelope went nowhere. Its notes come back, and the record keeps its one-time
+   * key (a commit a wallet broadcast anyway can still be swept). Returns false for any other status (vault-2).
+   */
+  async givePendingUp(id, status = 'given up') {
+    const p = (this.state.pending ?? []).find((x) => x.id === id);
+    if (!p || p.status !== 'prepared') return false;
+    p.status = status;
+    for (const n of this.state.notes) if ((p.inputs ?? []).includes(n.id) && n.status === 'spending') n.status = 'in tree';
+    await this.save();
+    return true;
+  }
+
   /** Gives back the notes a spend under way had reserved (a DEPLOY whose ticker was taken meanwhile). */
   async releaseInputs(ids = []) {
     for (const n of this.state.notes) if (ids.includes(n.id) && n.status === 'spending') n.status = 'in tree';
@@ -446,16 +563,20 @@ export class Vault {
   }
 
   /** Forgets a note (a sealed output no longer in the tree: scanning finds it again wherever it is). */
-  async dropNote(id) {
+  async dropNote(id, { save = true } = {}) {
     this.state.notes = this.state.notes.filter((n) => n.id !== id);
-    await this.save();
+    if (save) await this.save();
   }
 
-  async updateNote(id, patch) {
+  /**
+   * Changes note `id`. A path or a spent status alone (VOLATILE: a sync computes them again each time)
+   * writes nothing; anything else is saved, at once or with the caller's next save (`save: false`).
+   */
+  async updateNote(id, patch, { save = true } = {}) {
     const n = this.state.notes.find((x) => x.id === id);
     if (!n) return;
     Object.assign(n, patch);
-    await this.save();
+    if (save && Object.keys(patch).some((k) => !VOLATILE.includes(k))) await this.save();
   }
 
   /**
