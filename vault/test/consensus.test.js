@@ -5,7 +5,7 @@ import { crossCheck } from '../src/consensus.js';
 import { PROFILE } from '../src/profile.js';
 
 // what an honest indexer on the vault's profile reports in /status
-const ON_PROFILE = { activationHeight: PROFILE.activationHeight, deployBurn: String(PROFILE.deployBurn), deployMaturity: PROFILE.deployMaturity, anchorWindow: PROFILE.anchorWindow, genesis: PROFILE.genesis };
+const ON_PROFILE = { activationHeight: PROFILE.activationHeight, deployBurn: String(PROFILE.deployBurn), deployMaturity: PROFILE.deployMaturity, anchorWindow: PROFILE.anchorWindow, genesis: PROFILE.genesis, verifier: 'plonk-bn254-hermez' };
 
 const GENE = {
   ticker: 'GENE', t: 1195724357n, max: 21000000n, lim: 1000n, pre: 0n, start: 2, end: 0, unlock: 2, price: 1000n,

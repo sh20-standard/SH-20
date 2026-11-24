@@ -33,7 +33,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 199 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 200 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
@@ -400,7 +400,11 @@ control block, signature message) is checked against the BIP341 vectors (`test/t
 - **TAKE** ("Buy from an offer"): the vault reads the LIST from the chain (Esplora) and requires
   every indexer that answers to report the same listing, ACTIVE: one that does not know it refuses
   it, and at least two must agree (`consensus.js` `listingCheck`, `TAKE_QUORUM`), since a LIST the
-  indexers rejected still looks like one on chain. It checks the seller's signature for
+  indexers rejected still looks like one on chain. Only an indexer whose verifier is
+  `plonk-bn254-hermez` counts toward the two: one that verifies no spend would vouch for a LIST
+  whose proof is anything (docs/audit/2026-11-24-vault.md, vault-16). It can refuse a listing, never
+  make it enough; the same holds for a mint and for a spend the vault believes refused, and nothing
+  is proved or sent while the primary indexer verifies no spend. It checks the seller's signature for
   that price and payee. And it waits: Buy stays off, with the count, until the LIST is six blocks
   deep at every indexer that answers and at Esplora (`consensus.js` `PAY_DEPTH`). A TAKE pays the
   seller whatever the indexers later decide, and a reorg of the LIST's block can leave the LIST

@@ -23,7 +23,7 @@ test('vault-1: six blocks, counted with the block itself; no height, no tip, no 
 });
 
 const LISTED = { listTxid: 'ab'.repeat(32), ticker: 'GENE', amount: 600n, price: 5000n, payScript: '0014' + '66'.repeat(20), lock: `${'ab'.repeat(32)}:0`, lockKey: 'cd'.repeat(32), state: 'ACTIVE', height: 100 };
-const at = (base, height) => ({ base, listing: async () => LISTED, status: async () => ({ height }) });
+const at = (base, height) => ({ base, listing: async () => LISTED, status: async () => ({ height, verifier: 'plonk-bn254-hermez' }) });
 
 test('vault-1: listingCheck counts the depth at the shallowest indexer, and names it', async () => {
   let r = await listingCheck([at('a', 110), at('b', 105)], LISTED.listTxid);

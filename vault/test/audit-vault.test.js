@@ -19,7 +19,7 @@ import { NoteTree, serializeEnvelope, seal } from '../src/sh20.js';
 import { planTransfer, planCarrier, revealFor, planPlainDeploy, deployEnvelope, pendingRecord, refusedSpend, refusalAt, anchorOf, deploySchedule, anchor } from '../src/send.js';
 import { withProof, pickInputs } from '../src/spend.js';
 import { planList, listOutputs, signOffer, listingFromChain, buildTake } from '../src/market.js';
-import { PAY_DEPTH, listingCheck, profileCheck, refusalAgreed } from '../src/consensus.js';
+import { PAY_DEPTH, actProblems, crossCheck, listingCheck, profileCheck, refusalAgreed } from '../src/consensus.js';
 import { IndexerApi, normListing, normToken } from '../src/api.js';
 import { urlList } from '../src/ui/context.js';
 import { deployMismatches } from '../src/deploy.js';
@@ -104,7 +104,7 @@ test('vault-1: a TAKE of a listing one block old pays the seller for nothing onc
   assert.equal(listing.height, 3);
 
   // the buyer's vault, one block later: two indexers agree, the LIST is on chain, the offer is the lock key's
-  const two = ['one', 'two'].map((base) => ({ base, listing: async () => apiListing(listing), status: async () => ({ height: 3 }) }));
+  const two = ['one', 'two'].map((base) => ({ base, listing: async () => apiListing(listing), status: async () => ({ height: 3, verifier: 'plonk-bn254-hermez' }) }));
   const checked = await listingCheck(two, list.txid);
   assert.equal(checked.enough, true);
   // fixed: both hold the LIST one block deep, and a TAKE waits for PAY_DEPTH (consensus.js, ui/market-panel.js sendTake)
@@ -397,7 +397,10 @@ test('vault-13: one indexer written twice is the two that a TAKE needs', async (
   const apis = urls.map((u) => new IndexerApi(u));
   assert.equal(apis[0].base, apis[1].base);
   const listing = apiListing({ listTxid: 'aa'.repeat(32), ticker: 'GENE', amount: 600n, price: 5000n, payScript: toHex(SELLER_PAY), lock: `${'aa'.repeat(32)}:0`, lockKey: 'bb'.repeat(32), state: 'ACTIVE', height: 3 });
-  for (const a of apis) a.listing = async () => listing;
+  for (const a of apis) {
+    a.listing = async () => listing;
+    a.status = async () => ({ height: 9, verifier: 'plonk-bn254-hermez' }); // indexers that verify spends (vault-16)
+  }
   assert.equal((await listingCheck(apis, 'aa'.repeat(32))).enough, true);
 });
 
@@ -467,10 +470,23 @@ test('vault-16: two indexers that the page says verify no spend are the two a TA
   const apis = ['one', 'two'].map((base) => ({ base, status: async () => status, listing: async () => listing }));
   const check = await profileCheck(apis);
   assert.equal(check.unverified.length, 2, 'the page names both beside the balance');
-  assert.deepEqual(check.problems, [], 'and requireProfile, which reads the problems alone, lets every action through'); // today
-  assert.equal((await listingCheck(apis, listing.listTxid)).enough, true); // today
+  assert.deepEqual(check.problems, [], 'they follow the vault\'s profile');
+  // fixed: with such a primary the vault proves and sends nothing (ui/context.js requireProfile, consensus.js actProblems)
+  assert.match(actProblems(check, 'one').join(), /the primary indexer one verifies no spend: it does not check the proofs of spends \(verifier "test"\)/);
+  assert.deepEqual(actProblems(check, 'elsewhere'), [], 'a primary that verifies spends, with such indexers beside it, is not stopped by them');
+  // and only an indexer that verifies spends counts toward the two of a TAKE, or toward a mint
+  const two = await listingCheck(apis, listing.listTxid);
+  assert.deepEqual([two.agreed, two.verifying, two.enough], [2, 0, false]);
+  const mint = await crossCheck(apis.map((a) => ({ ...a, token: async () => ({ ticker: 'GENE' }) })), 'GENE', { sleep: async () => {} });
+  assert.match(mint.problems.join(), /no indexer that answered verifies spends \(one: test, two: test\): the vault mints on the word of none of them/);
   // and indexers that refuse every spend agree that a spend was refused, which the indexers that verify accepted
   const refuseAll = ['one', 'two'].map((base) => ({ base, status: async () => ({ ...PROFILE, height: 50, verifier: 'reject-all' }), nullifiers: async () => [] }));
   assert.equal((await profileCheck(refuseAll)).unverified.length, 2);
-  assert.deepEqual(await refusalAgreed(refuseAll, ['ab'.repeat(32)], { atLeast: 10 }), { ok: true, why: null }); // today
+  // fixed: their word that the spend was refused is not taken; one that verifies spends must vouch
+  assert.deepEqual(await refusalAgreed(refuseAll, ['ab'.repeat(32)], { atLeast: 10 }), { ok: false, why: 'no indexer that verifies spends vouches for it' });
+  const verifying = { base: 'three', status: async () => ({ ...PROFILE, height: 50, verifier: 'plonk-bn254-hermez' }), nullifiers: async () => [] };
+  assert.deepEqual(await refusalAgreed([...refuseAll, verifying], ['ab'.repeat(32)], { atLeast: 10 }), { ok: true, why: null }, 'the others are not counted');
+  // and one of them that lists the nullifier spent still keeps the notes reserved: it can refuse a refund, never allow one
+  const listsIt = { ...refuseAll[0], nullifiers: async () => [{ nullifier: 'ab'.repeat(32), height: 30 }] };
+  assert.deepEqual(await refusalAgreed([listsIt, verifying], ['ab'.repeat(32)], { atLeast: 10 }), { ok: false, why: 'one has its nullifier spent at block 30' });
 });
