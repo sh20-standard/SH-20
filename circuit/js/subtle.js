@@ -98,6 +98,12 @@ export function canonicalU(u) {
   return c;
 }
 
+/** True when u is written the one way an address may carry it: below p, bit 255 clear (canonicalU changes nothing). */
+export function isCanonicalU(u) {
+  const c = canonicalU(u);
+  return c.every((b, i) => b === u[i]);
+}
+
 /**
  * X25519(k, u). All zeros when u is a point of low order, and only then. That is decided here, from
  * u, and the platform is not asked: most refuse such a point with an OperationError, which is also

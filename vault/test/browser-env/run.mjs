@@ -49,10 +49,13 @@ for (const w of cv.wallets) wallets[w.name] = await wallet(hex(w.m));
 out.wallets = [];
 for (const w of cv.wallets) {
   const k = wallets[w.name];
-  out.wallets.push(h(await masterSecret(hex(w.bip39Seed))) === w.m && k.ask.toString() === w.ask && k.nsk.toString() === w.nsk
-    && h(k.ivk) === w.ivk && h(k.address.ivkPub) === w.IVK
-    && sh20.encodeAddress('sh20', k.address) === w.address && k.addressString === w.addressTest
-    && h((await sh20.decodeAddress('tsh20', w.addressTest)).ivkPub) === w.IVK);
+  // the network is in the derivation (SPEC-NOTES §1): the keys of the test networks, and other ones on mainnet
+  const main = await sh20.walletKeys(await masterSecret(hex(w.bip39Seed), 'sh20'));
+  out.wallets.push(h(await masterSecret(hex(w.bip39Seed), 'tsh20')) === w.m && k.ask.toString() === w.ask && k.nsk.toString() === w.nsk
+    && h(k.ivk) === w.ivk && h(k.address.ivkPub) === w.IVK && k.addressString === w.addressTest
+    && h((await sh20.decodeAddress('tsh20', w.addressTest)).ivkPub) === w.IVK
+    && h(await masterSecret(hex(w.bip39Seed), 'sh20')) === w.mainnet.m && h(main.address.ivkPub) === w.mainnet.IVK && w.mainnet.IVK !== w.IVK
+    && sh20.encodeAddress('sh20', main.address) === w.mainnet.address);
 }
 out.invalidAddresses = [];
 for (const { address } of cv.invalidAddresses) {

@@ -9,7 +9,7 @@
 // A note is identified by its tree position, never by its leaf (SPEC-NOTES §4): its id is
 // `pub:<i>` for the vault's i-th public note (a MINT), `out:<pos>` for a sealed output it received.
 
-import { NOTE_SCHEME, wallet, publicNote, scanOutput, nullifierOf } from './notekeys.js';
+import { NOTE_SCHEME, NETWORK_HRP, wallet, publicNote, scanOutput, nullifierOf } from './notekeys.js';
 import { frHex } from './fr.js';
 import { noteLeaf, tickerT, PUBLIC_RHO, masterSecret, hmacSha512 } from './sh20.js';
 import { newMnemonic, mnemonicToSeed } from './bip39.js';
@@ -145,7 +145,7 @@ export class Vault {
   static async fromWords(storage, words, passphrase = '', { restored = false } = {}) {
     refuseSharedOrigin();
     if (Vault.exists(storage)) throw new Error('a vault already exists on this device');
-    const m = Uint8Array.from(await masterSecret(await mnemonicToSeed(words)));
+    const m = Uint8Array.from(await masterSecret(await mnemonicToSeed(words), NETWORK_HRP));
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const key = passphrase ? await aesKey(passphrase, salt) : null;
     const v = await new Vault(storage, { v: 0, network: CHAIN.bitcoin, scheme: NOTE_SCHEME, next: 0, notes: [], ...(restored ? { unchecked: Vault.#unchecked() } : {}) }, m, key, salt, words.normalize('NFKD').trim().toLowerCase().split(/\s+/).join(' ')).#init();
@@ -184,7 +184,7 @@ export class Vault {
     }
     const { seed, words = null, ...state } = inner;
     // its notes, listings and spends are those of one network: a vault (or a backup) of another is not
-    // opened here. Its words are not bound to a network: restoring from them finds what it has on this one.
+    // opened here. Its words give other keys on this network (SPEC-NOTES §1): restoring from them makes another vault.
     const made = state.network ?? 'signet'; // a vault written before the network was recorded is a signet one
     if (made !== CHAIN.bitcoin) throw new Error(`this vault was made on ${made === 'bitcoin' ? 'mainnet' : made}, and this page follows ${CHAIN.label}: restore it from its 12 words instead`);
     return new Vault(storage, state, fromHex(seed), key, salt ?? crypto.getRandomValues(new Uint8Array(16)), words).#init();

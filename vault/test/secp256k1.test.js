@@ -4,11 +4,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { bip340Sign as sign, bip340PublicKey as publicKey, pointOf, tweakSecret, keyFromBytes, isSecretKey, arithmetic as ar } from '../src/secp256k1.js';
 import * as ref from '../../indexer/src/schnorr.js';
 import { keyPathOutput, oneTimeSecret } from '../src/taproot.js';
-import { Vault } from '../src/keys.js';
+import { Vault, STORAGE_KEY } from '../src/keys.js';
+import { NOTE_SCHEME } from '../src/notekeys.js';
+import { mnemonicToSeed } from '../src/bip39.js';
 import { toHex, fromHex } from '../src/bytes.js';
 
 const P = 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2fn;
@@ -94,10 +96,18 @@ test('8.7 the field and scalar arithmetic at its edges, against BigInt', () => {
 });
 
 test('8.7 the keys of existing vaults do not change: lock outputs and key-path outputs', async () => {
-  // recorded with the BigInt code of main before this change
+  // recorded with the BigInt code of main before this change, for the vault these words gave then: its master secret
+  // had no network in it (SPEC-NOTES §8, sealing-4). A vault keeps its master secret in its record, so one made
+  // before that change still opens with the keys it had.
   const m = new Map();
   const storage = { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k) };
-  const v = await Vault.fromWords(storage, 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about');
+  const words = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+  const before = createHmac('sha512', 'sh20/v0/seed').update(await mnemonicToSeed(words)).digest().subarray(0, 32);
+  storage.setItem(STORAGE_KEY, JSON.stringify({ v: 0, plain: { v: 0, network: 'signet', scheme: NOTE_SCHEME, next: 0, notes: [], seed: toHex(before) } }));
+  const v = await Vault.open(storage);
+  // the same words today, on the same network: another vault
+  const now = await Vault.fromWords({ getItem: () => null, setItem: () => {}, removeItem: () => {} }, words);
+  assert.notEqual(now.address, v.address);
   const locks = {
     0: ['512023e878bacbfb3d55f9b456768ebd5790877bff864242b148ee65087f59c71aba', 'c0966873d92ee3eb38d57c8650368ae98cd7686fec67cceb48dd6380a849a941'],
     1: ['51201d3dbbb98ffe91d48a7cad06586c2fc7d98fadd7f6110ac8b987f2407032383a', 'ff62ad12450a7de8668d6c7371fa0bb96c4222528db173c6a171ad0596120294'],

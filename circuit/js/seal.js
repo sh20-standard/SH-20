@@ -5,9 +5,10 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync } from 'node:crypto';
 import { FR } from '../../indexer/src/constants.js';
 import { noteLeaf, tickerT } from '../../indexer/src/notes.js';
-import { x25519, x25519Public } from './address.js';
+import { HRP, x25519, x25519Public } from './address.js';
 import { L, add, mulBase8 } from './babyjub.js';
 import { noteKeys, npkOf } from './notes.js';
+import { isCanonicalU } from './subtle.js';
 
 /** The domain-separation tags of docs/SPEC-NOTES.md (shared with webcrypto.js). */
 export const TAG = Object.freeze({
@@ -44,9 +45,28 @@ const hkdf = (salt, ikm, info, length) => Buffer.from(hkdfSync('sha256', ikm, Bu
 
 // ── keys (§1) ──
 
-/** m = the first 32 bytes of HMAC-SHA512(key = "sh20/v0/seed", data = the 64-byte BIP39 seed). */
-export function masterSecret(bip39Seed) {
-  return createHmac('sha512', TAG.seed).update(bip39Seed).digest().subarray(0, 32);
+/**
+ * What the master secret is derived from, checked: the 64-byte BIP39 seed followed by the address
+ * prefix of the network, "sh20" or "tsh20" (shared with webcrypto.js). The network is in the
+ * derivation so that one set of words gives unrelated keys on mainnet and on the test networks.
+ */
+export function masterSecretInput(bip39Seed, hrp) {
+  if (!(bip39Seed instanceof Uint8Array) || bip39Seed.length !== 64) throw new RangeError('the BIP39 seed must be 64 bytes');
+  if (hrp !== HRP.mainnet && hrp !== HRP.test) throw new RangeError('masterSecret needs the address prefix of the network: "sh20" or "tsh20"');
+  // a plain Uint8Array (webcrypto.js calls this in a browser, where there is no Buffer), filled without
+  // the seed going through an array of numbers; whoever asked for it clears it once it is hashed
+  const data = new Uint8Array(64 + hrp.length);
+  data.set(bip39Seed);
+  for (let i = 0; i < hrp.length; i++) data[64 + i] = hrp.charCodeAt(i);
+  return data;
+}
+
+/** m = the first 32 bytes of HMAC-SHA512(key = "sh20/v0/seed", data = the 64-byte BIP39 seed ‖ hrp). */
+export function masterSecret(bip39Seed, hrp) {
+  const data = masterSecretInput(bip39Seed, hrp);
+  const m = createHmac('sha512', TAG.seed).update(data).digest().subarray(0, 32);
+  data.fill(0);
+  return m;
 }
 
 /** { ask, nsk, ivk, address: { ivkPub, a, n } } from the master secret. */
@@ -84,6 +104,8 @@ function aeadKey(s, leafBytes) {
 export function seal(address, ticker, v, e) {
   if (!TICKER.test(ticker)) throw new RangeError('not a ticker');
   if (typeof v !== 'bigint' || v < 0n || v >= 1n << 64n) throw new RangeError('v must be a BigInt below 2^64');
+  // an address that was decoded has passed this; one built by hand has not
+  if (!isCanonicalU(bytes32('IVK', address.ivkPub))) throw new Error('address: IVK is not in its one encoding');
   const pkEph = x25519Public(e);
   const z = x25519(e, address.ivkPub);
   if (isZero(z)) throw new Error('address: IVK is a low-order point');

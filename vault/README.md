@@ -218,7 +218,7 @@ vout n  change to the payer                                     only if above du
 - **The network follows the profile** (`src/profile.js` `CHAIN`): Bitcoin addresses (`btc.js`, `tb1…`
   on signet, `bc1…`, `1…`, `3…` on mainnet), SH-20 addresses (`tsh20…` or `sh20…`, SPEC-NOTES §2),
   what Xverse, UniSat and Leather are asked for, and the network a vault records: a vault or a backup
-  made on another network is not opened (its 12 words restore it).
+  made on another network is not opened (its 12 words give other keys here, SPEC-NOTES §1: another vault).
 - **Default servers** (`src/servers.js`), for the profile the page follows: on signet, the two mirrors
   the site serves beside the page (`../api/js/` and `../api/rs/`, `docs/API.md`, "The static mirror")
   and mempool.space's signet Esplora; on mainnet, no indexer (Settings asks for one: your own
@@ -418,8 +418,8 @@ are checked against the BIP341 vectors.
 
 A new vault gets 12 BIP39 words (128 bits of entropy), shown once on creation and again on
 request. They give the master secret of SPEC-NOTES §1: `m` = the first 32 bytes of
-HMAC-SHA512("sh20/v0/seed", BIP39 seed), with the BIP39 seed from PBKDF2-HMAC-SHA512 (2,048 rounds,
-no BIP39 passphrase). Restoring from the words on an empty page derives the same keys and address
+HMAC-SHA512("sh20/v0/seed", BIP39 seed ‖ the network's address prefix), with the BIP39 seed from PBKDF2-HMAC-SHA512
+(2,048 rounds, no BIP39 passphrase). Restoring from the words on an empty page of the same network derives the same keys and address
 and rescans every leaf: public notes by their keys, sealed ones by opening them. A phrase with a
 mistyped word or a wrong checksum is refused, never turned into other keys. `src/bip39.js`, with the
 English list in `src/bip39-english.js` (checked against its SHA-256) and the BIP39 vectors

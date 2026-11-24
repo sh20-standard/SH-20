@@ -1,9 +1,9 @@
 // BIP39 recovery words: 12 words (128 bits of entropy and a 4-bit checksum) that stand for the
 // vault. The vault's master secret is SPEC-NOTES §1's: m = the first 32 bytes of
-// HMAC-SHA512("sh20/v0/seed", BIP39 seed) (circuit/js masterSecret), with the BIP39 seed
+// HMAC-SHA512("sh20/v0/seed", BIP39 seed ‖ the network's address prefix) (circuit/js masterSecret), with the BIP39 seed
 // PBKDF2-HMAC-SHA512(NFKD(words), "mnemonic" ‖ NFKD(passphrase), 2,048 rounds, 64 bytes).
 // Any wallet that follows SPEC-NOTES restores the same keys, the same notes and the same address
-// from the same words. Checked against the BIP39 vectors (test/bip39.test.js).
+// from the same words on the same network. Checked against the BIP39 vectors (test/bip39.test.js).
 
 import { WORDS } from './bip39-english.js';
 import { sha256 } from './hash.js';

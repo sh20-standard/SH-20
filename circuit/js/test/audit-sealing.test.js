@@ -236,7 +236,7 @@ function smallOrderPoints() {
   return found;
 }
 
-// Property 2. What a payer must refuse, beyond the thirteen addresses of the vectors: an IVK that is any of the
+// Property 2. What a payer must refuse, beyond the fifteen addresses of the vectors: an IVK that is any of the
 // fourteen encodings of a point of low order, A or N of order 2, 4 or 8 or with such a part, one bit of padding,
 // one byte more or less, another network, spaces. Each is a well-formed bech32m string with a valid checksum.
 test('addresses a payer must refuse, beyond the vectors', async () => {
@@ -293,21 +293,34 @@ test('addresses a payer must refuse, beyond the vectors', async () => {
   await refused(withChecksum(data.slice(0, -1) + CHARSET[last | 1]), 'a padding bit set');
 });
 
-// Finding sealing-4. Nothing of the network enters a wallet's keys: the same words give the same IVK, A and N, the
-// same public openings and, in the vault, the same lock keys on signet and on mainnet. A public opening and a lock
-// key are written on the chain in the clear, so whoever used a set of words on signet is recognised on mainnet at
-// its first MINT or LIST.
-test('sealing-4: one seed gives the same keys, addresses and public openings on every network', async () => {
-  for (const w of vectors.wallets) {
-    const [main, testnet] = [node.decodeAddress('sh20', w.address), node.decodeAddress('tsh20', w.addressTest)];
-    assert.deepEqual([hex(main.ivkPub), main.a, main.n], [hex(testnet.ivkPub), testnet.a, testnet.n], 'the address now depends on the network: update the report');
-    // a public opening takes the viewing key, the address and a counter: no network
-    const keys = node.walletKeys(unhex(w.m));
-    assert.equal(node.publicOpening(keys.ivk, main, 0).npk, node.publicOpening(keys.ivk, testnet, 0).npk);
+// Finding sealing-4, fixed. Nothing of the network entered a wallet's keys: the same words gave the same IVK, A and N,
+// the same public openings and, in the vault, the same lock keys on signet and on mainnet, and whoever used a set of
+// words on signet was recognised on mainnet at its first MINT or LIST. The address prefix of the network is now in the
+// derivation of the master secret (SPEC-NOTES §1), so everything that follows from it differs.
+test('sealing-4: one seed gives other keys, addresses and public openings on mainnet than on the test networks', async () => {
+  for (const [name, lib] of both) {
+    for (const w of vectors.wallets) {
+      const seed = Uint8Array.from(unhex(w.bip39Seed));
+      const [m, mTest] = [await lib.masterSecret(seed, 'sh20'), await lib.masterSecret(seed, 'tsh20')];
+      assert.deepEqual([hex(m), hex(mTest)], [w.mainnet.m, w.m], `${name}: the vectors`);
+      assert.notEqual(hex(m), hex(mTest), 'the same master secret on both networks: the report says this is fixed');
+      const [main, testnet] = [await lib.walletKeys(m), await lib.walletKeys(mTest)];
+      assert.notEqual(hex(main.address.ivkPub), hex(testnet.address.ivkPub));
+      assert.notDeepEqual(main.address.a, testnet.address.a);
+      assert.notDeepEqual(main.address.n, testnet.address.n);
+      assert.ok(main.ask !== testnet.ask && main.nsk !== testnet.nsk && hex(main.ivk) !== hex(testnet.ivk));
+      // what a MINT, a TAKE and a CLAIM write on the chain in the clear
+      for (const i of [0, 1, 2]) assert.notEqual((await lib.publicOpening(main.ivk, main.address, i)).npk, (await lib.publicOpening(testnet.ivk, testnet.address, i)).npk);
+      // each address is read on its own network only, and they are two payloads
+      const [a, aTest] = [await lib.decodeAddress('sh20', w.mainnet.address), await lib.decodeAddress('tsh20', w.addressTest)];
+      assert.notEqual(hex(a.ivkPub), hex(aTest.ivkPub));
+      await assert.rejects(async () => lib.decodeAddress('tsh20', w.mainnet.address), /another network/);
+    }
+    // the network is named, by its address prefix and by nothing else
+    const seed = Uint8Array.from(unhex(vectors.wallets[0].bip39Seed));
+    for (const hrp of [undefined, null, '', 'bc', 'SH20', 'mainnet', 'sh20\0']) await assert.rejects(async () => lib.masterSecret(seed, hrp), RangeError, `${name}: ${hrp}`);
   }
-  // m itself: the BIP39 seed under one fixed key
-  assert.equal(hex(node.masterSecret(unhex(vectors.wallets[0].bip39Seed))), vectors.wallets[0].m);
-  assert.equal(node.masterSecret.length, 1, 'masterSecret now takes more than the seed: update the report');
+  assert.equal(node.masterSecret.length, 2);
 });
 
 // Property 7, measured: what scanning one output that is not for the wallet costs.
@@ -427,19 +440,27 @@ test('sealing-1: how long a scan takes tells whoever served the outputs whether 
   }
 });
 
-// Finding sealing-6. An address whose IVK is written with bit 255 set is accepted by every decoder: X25519 reads it
-// as the same key. But the 32 bytes of IVK are also hashed into the note's secret, as the address writes them, and
-// the owner scans with its own writing of them. What is sealed to that second address is never found by the wallet.
-test('sealing-6: a second encoding of IVK is an address that every payer accepts and whose notes are not found', async () => {
+// Finding sealing-6, fixed. An address whose IVK was written with bit 255 set, or with p added, was accepted by every
+// decoder: X25519 reads it as the same key. But the 32 bytes of IVK are also hashed into the note's secret as the
+// address writes them, and the owner scans with its own writing: what was sealed to that second address was never
+// found. An address now has one encoding of IVK (SPEC-NOTES §2): the other is refused where an address is read, and
+// by `seal` for an address built by hand.
+test('sealing-6: a second encoding of IVK is refused wherever an address is read', async () => {
   for (const [name, lib] of both) {
     const me = await wallet(lib, 'twin');
-    const twin = { ...me.address, ivkPub: Uint8Array.from(topBit(Buffer.from(me.address.ivkPub))) };
-    const address = lib.encodeAddress('tsh20', twin);
-    assert.notEqual(address, lib.encodeAddress('tsh20', me.address));
-    const decoded = await lib.decodeAddress('tsh20', address); // accepted
-    assert.equal(hex(await lib.x25519(Uint8Array.from(bytes('twin/k')), decoded.ivkPub)), hex(await lib.x25519(Uint8Array.from(bytes('twin/k')), me.address.ivkPub)), 'one key for X25519');
+    const seconds = [topBit(Buffer.from(me.address.ivkPub))];
+    for (let k = 0n; k <= 18n; k++) seconds.push(toLe(P + k), topBit(toLe(P + k)));
+    for (const u of seconds) {
+      const twin = { ...me.address, ivkPub: Uint8Array.from(u) };
+      const address = lib.encodeAddress('tsh20', twin);
+      await assert.rejects(async () => lib.decodeAddress('tsh20', address), /one encoding/, `${name}: ${hex(u)} is read as an address`);
+      await assert.rejects(async () => lib.seal(twin, 'GENE', 700n, Uint8Array.from(bytes('twin/e'))), /one encoding/, `${name}: sealed to ${hex(u)}`);
+    }
+    // the first writing is read, and what is sealed to it is found
+    const decoded = await lib.decodeAddress('tsh20', lib.encodeAddress('tsh20', me.address));
+    assert.equal(hex(decoded.ivkPub), hex(me.address.ivkPub));
+    assert.equal(hex(await lib.x25519(Uint8Array.from(bytes('twin/k')), Uint8Array.from(seconds[0]))), hex(await lib.x25519(Uint8Array.from(bytes('twin/k')), me.address.ivkPub)), 'one key for X25519');
     const out = await sealedTo(lib, { address: decoded }, 'GENE', 700n, 'twin/e');
-    assert.equal(await lib.scan(me.ivk, me.address, out), null, `${name}: the decoders now refuse it, or the owner finds it: update the report`);
-    assert.equal((await lib.scan(me.ivk, twin, out)).v, 700n, 'it opens only for a scan that writes IVK the same second way');
+    assert.equal((await lib.scan(me.ivk, me.address, out)).v, 700n);
   }
 });
