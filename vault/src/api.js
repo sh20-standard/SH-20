@@ -250,12 +250,16 @@ export class Esplora {
    * [1, MAX_FEE_RATE] so a dishonest server cannot suggest a ruinous fee.
    */
   async feeRate() {
+    return (await this.feeEstimate()) ?? 1;
+  }
+  /** The same estimate, or null when the server gives none (no answer, no number): the page then proposes no rate on mainnet. */
+  async feeEstimate() {
     try {
       const j = await getJson(`${this.base}/fee-estimates`);
-      const r = Number(j['2'] ?? j['3'] ?? j['6'] ?? 1);
-      return Number.isFinite(r) ? Math.min(MAX_FEE_RATE, Math.max(1, Math.ceil(r * 10) / 10)) : 1;
+      const r = Number(j['2'] ?? j['3'] ?? j['6']);
+      return Number.isFinite(r) && r > 0 ? Math.min(MAX_FEE_RATE, Math.max(1, Math.ceil(r * 10) / 10)) : null;
     } catch {
-      return 1;
+      return null;
     }
   }
   async broadcast(hex) {

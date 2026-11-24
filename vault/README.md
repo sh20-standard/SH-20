@@ -33,11 +33,12 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 200 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 203 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
 npm run release          # a verifiable release from the current commit, on the signet profile (below)
+node release.js --mainnet   # the same on the mainnet profile, from the A the commit fixes in src/profile.js
 ```
 
 The whole flow on Bitcoin Core regtest (what the CI runs, job `vault-regtest`):
@@ -107,7 +108,12 @@ folder's IPFS CID in [`RELEASES.md`](RELEASES.md), which you then commit.
   is known before publishing and anyone can recompute it from the commit.
 - **On the signet profile:** a release replaces `src/profile-name.js` with `'signet'`, the one file
   that differs from `npm run build` (`build.js`), and refuses while `src/profile.js` has no signet
-  activation height (`test/signet.test.js`).
+  activation height (`test/signet.test.js`). `node release.js --mainnet` makes the mainnet release
+  the same way, `release/sh20-vault-<version>-mainnet.tar`, recorded under `<version> (mainnet)` with
+  its activation height: the height the commit fixes in `src/profile.js` (`MAINNET_ACTIVATION_HEIGHT`),
+  never one given on the command line, so the record is what anyone rebuilds from that commit
+  (docs/audit/2026-11-24-vault.md, vault-17). Every fee field proposes Esplora's estimate for about two
+  blocks; without one, a mainnet page proposes none and the rate is typed.
 - **Publish, never from your own machine:** an IPFS node announces its IP address for every block it
   provides. `release/sh20-vault-<version>.car` holds the blocks of the CID (CARv1, imported by kubo
   0.32.1 with the same root); a pinning service takes it from the `release` workflow's artifact.

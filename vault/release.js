@@ -3,6 +3,10 @@
 //   npm run release                    build from the current git commit, write
 //                                      release/, record SHA-256 and CID in RELEASES.md
 //   node release.js --check <sha256>   rebuild from the current commit and compare
+//   node release.js --mainnet [--check <sha256>]
+//                                      the same on the mainnet profile, from the activation height
+//                                      the commit fixes in vault/src/profile.js (never from the
+//                                      command line: the record must be what anyone rebuilds)
 //
 // The package is built from the git objects of the commit (`git cat-file`), not
 // from the working tree, so local edits, line-ending settings or file dates
@@ -18,7 +22,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { site, writeSite, sha256 } from './build.js';
+import { activationIn, site, writeSite, sha256 } from './build.js';
 import { tar, ipfsCid, car } from './tools/pack.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -33,14 +37,24 @@ export function gitReader(commit) {
   };
 }
 
-/** The release of `commit`: on the signet profile, so only once its activation height is fixed. */
-export function buildRelease(commit, { signet = true } = {}) {
+/**
+ * The release of `commit`: on the signet profile, or on the mainnet one (docs/audit/2026-11-24-vault.md, vault-17),
+ * each only once the commit fixes its activation height. A mainnet release is named and recorded apart from the
+ * signet release of the same version, with its activation height in its record.
+ */
+export function buildRelease(commit, { mainnet = false, signet = !mainnet } = {}) {
   const { version } = JSON.parse(git('cat-file', 'blob', `${commit}:vault/package.json`).toString('utf8'));
-  const entries = site(gitReader(commit), { signet });
-  const name = `sh20-vault-${version}`;
+  const reader = gitReader(commit);
+  const entries = site(reader, { signet, mainnet });
+  const profile = mainnet ? 'mainnet' : signet ? 'signet' : 'test';
+  const name = mainnet ? `sh20-vault-${version}-mainnet` : `sh20-vault-${version}`;
   const pkg = tar(entries, name);
-  return { version, name, entries, pkg, sha256: sha256(pkg), cid: ipfsCid(entries), bytes: pkg.length };
+  const activation = profile === 'test' ? null : activationIn(reader, profile);
+  return { version, name, profile, activation, entries, pkg, sha256: sha256(pkg), cid: ipfsCid(entries), bytes: pkg.length };
 }
+
+/** The heading of a release in RELEASES.md: its version, and the network when it is not signet's. */
+export const releaseHeading = (r) => `## ${r.version}${r.profile === 'mainnet' ? ' (mainnet)' : ''}`;
 
 const HEAD_TEXT = `# Vault releases
 
@@ -64,8 +78,9 @@ A public gateway is trusted to serve the right blocks; a local node or a verifyi
 `;
 
 function entryText(r, commit) {
-  return `## ${r.version}
+  return `${releaseHeading(r)}
 
+- Profile: ${r.profile}, from block ${r.activation}
 - Source commit: \`${commit}\`
 - Package: \`${r.name}.tar\`, ${r.bytes} bytes, ${r.entries.length} files
 - SHA-256: \`${r.sha256}\`
@@ -73,17 +88,22 @@ function entryText(r, commit) {
 `;
 }
 
-function record(r, commit) {
-  const file = join(here, 'RELEASES.md');
-  let text = existsSync(file) ? readFileSync(file, 'utf8') : HEAD_TEXT;
-  const re = new RegExp(`## ${r.version.replace(/\./g, '\\.')}\\n[\\s\\S]*?SHA-256: \`([0-9a-f]{64})\``);
+/** `text` (RELEASES.md) with release `r` recorded, or null when it already is, with the same bytes. */
+export function recordIn(text, r, commit) {
+  const re = new RegExp(`${releaseHeading(r).replace(/[.()]/g, '\\$&')}\\n[\\s\\S]*?SHA-256: \`([0-9a-f]{64})\``);
   const m = text.match(re);
   if (m && m[1] !== r.sha256) {
-    throw new Error(`version ${r.version} is already released with SHA-256 ${m[1]}; bump the version in vault/package.json`);
+    throw new Error(`version ${r.version}${r.profile === 'mainnet' ? ' (mainnet)' : ''} is already released with SHA-256 ${m[1]}; bump the version in vault/package.json`);
   }
-  if (m) return false; // same bytes: already recorded
+  if (m) return null; // same bytes: already recorded
   const at = text.indexOf('\n## ', text.indexOf('## How to verify') + 1);
-  text = at < 0 ? `${text.trimEnd()}\n\n${entryText(r, commit)}` : `${text.slice(0, at + 1)}${entryText(r, commit)}\n${text.slice(at + 1)}`;
+  return at < 0 ? `${text.trimEnd()}\n\n${entryText(r, commit)}` : `${text.slice(0, at + 1)}${entryText(r, commit)}\n${text.slice(at + 1)}`;
+}
+
+function record(r, commit) {
+  const file = join(here, 'RELEASES.md');
+  const text = recordIn(existsSync(file) ? readFileSync(file, 'utf8') : HEAD_TEXT, r, commit);
+  if (text === null) return false;
   writeFileSync(file, text);
   return true;
 }
@@ -94,7 +114,10 @@ function main(argv) {
     .split('\n').filter((l) => l && !l.endsWith('vault/RELEASES.md') && !/ vault\/(dist|release)\//.test(l));
   if (dirty.length) console.warn(`note: uncommitted changes are NOT in the release (built from ${commit.slice(0, 12)}):\n${dirty.join('\n')}\n`);
 
-  const r = buildRelease(commit);
+  for (const a of argv) {
+    if (a.startsWith('--') && !['--check', '--mainnet'].includes(a)) throw new Error(`unknown option ${a}: node release.js [--mainnet] [--check <sha256>] (a mainnet release takes its activation height from the commit, never from the command line)`);
+  }
+  const r = buildRelease(commit, { mainnet: argv.includes('--mainnet') });
   const i = argv.indexOf('--check');
   if (i >= 0) {
     const want = argv[i + 1];

@@ -8,7 +8,7 @@ import { verifyMintTerms } from '../deploy.js';
 import { buildMint, mintDepthProblem, mintProblems, mintsLeft } from '../mint.js';
 import { PROFILE, PROFILE_NAME } from '../profile.js';
 import { MINT_BATCH_MAX, PAY_MODE } from '../sh20.js';
-import { $, MAX_FEE_SATS, NO_INDEXER, busy, esplora, explorerTx, fill, h, indexer, indexers, report, sats, short, st, units } from './context.js';
+import { $, MAX_FEE_SATS, NO_INDEXER, busy, esplora, explorerTx, fill, h, indexer, indexers, proposedFee, report, sats, short, st, units } from './context.js';
 import { processDeploys, renderDeploy } from './deploy-panel.js';
 import { renderNotes } from './notes-panel.js';
 import { renderAll } from './render.js';
@@ -56,6 +56,7 @@ export async function refresh() {
   } catch {
     st.tip = null;
   }
+  st.feeRate = await esplora.feeEstimate(); // the rate every fee field proposes (vault-17)
   renderTokens();
   renderDeploy();
   processDeploys().catch(report);
@@ -108,7 +109,8 @@ async function openMint(ticker) {
   $('mint').scrollIntoView({ behavior: 'smooth' });
   try {
     const check = await crossCheck(indexers, ticker);
-    renderMint(check, await esplora.feeRate());
+    st.feeRate = await esplora.feeEstimate();
+    renderMint(check, proposedFee());
   } catch (e) {
     fill('mint-body', h('p', { class: 'err' }, e.message));
   }
@@ -126,7 +128,7 @@ function renderMint(check, defaultFee) {
   const need = check.problems.length ? ['resolve the indexer disagreement'] : [];
   if (!st.vault) need.push('unlock the vault');
   if (!st.wallet) need.push('connect a wallet');
-  const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: String(defaultFee), class: 'narrow' });
+  const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: defaultFee === null ? '' : String(defaultFee), placeholder: 'sat/vB', class: 'narrow' });
   // batch mint (wire v0.3): k mints in one envelope, one note of k × lim for k × price, never more than what is left
   const most = Math.min(MINT_BATCH_MAX, Number(mintsLeft(token)));
   const count = h('input', { type: 'number', min: '1', max: String(Math.max(1, most)), step: '1', value: '1', class: 'narrow', name: 'k' });
