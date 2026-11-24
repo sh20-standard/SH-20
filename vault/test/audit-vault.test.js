@@ -351,11 +351,15 @@ test('vault-7: two open copies of one vault reserve the same public-note key, an
   const first = await a.reserveNote();
   await a.addPending({ kind: 'TRANSFER', secret: '01'.repeat(32), inputs: [], status: 'prepared' });
   // the page locks a tab when it hears another one write (app.js); a save already under way is not stopped
-  const second = await b.reserveNote(); // today: accepted
-  assert.equal(second.index, first.index);
-  assert.equal(second.npk, first.npk);
+  // fixed: a copy writes over no record but the one it last read or wrote (keys.js #checkUnchanged), and locks instead
+  await assert.rejects(b.reserveNote(), /the vault was changed in another tab \(a spend, a note, a counter or its passphrase\): this one is locked/);
+  assert.equal(b.locked, true);
   const stored = JSON.parse(storage.getItem(STORAGE_KEY)).plain;
-  assert.equal(stored.pending, undefined, 'the one-time key the first copy saved is gone from the device');
+  assert.equal(stored.next, first.index + 1, 'the index the first copy reserved stays reserved');
+  assert.equal(stored.pending.length, 1, 'and so does the one-time key it saved');
+  // unlocked again, the second copy reads what the first wrote, and reserves the next key
+  const again = await Vault.open(storage);
+  assert.equal((await again.reserveNote()).index, first.index + 1);
 });
 
 // ---- vault-8 -------------------------------------------------------------------------------------
@@ -454,15 +458,14 @@ test('vault-14: a signet vault at the origin of a mainnet page is sent to its 12
     await assert.rejects(MainnetVault.open(origin, 'pass'), /no vault on this device/);
     // its record, or its backup, read on the mainnet page: never sent to its words
     const said = await MainnetVault.open(origin, 'pass', origin.getItem('sh20.vault.v0')).catch((e) => e.message);
-    assert.match(said, /made on signet, and this page follows mainnet: a vault holds the notes of one network\. Open it on a signet page; this network's vault is another one, made with new words of its own/);
+    assert.match(said, /^this vault belongs to signet, and this page follows mainnet: it opens in the signet vault, or from its backup file there\./);
     assert.doesNotMatch(said, /restore it from its 12 words/);
     // the mainnet vault is made beside it, and the signet one stays as it was
     const own = await MainnetVault.create(origin, 'other pass');
     assert.equal(MainnetVault.exists(origin), true);
     assert.equal((await Vault.open(origin, 'pass')).address, signet.address);
     assert.notEqual((await own.opening(0)).npk, (await signet.opening(0)).npk, 'new words, other keys');
-    // at an origin of its own the words make a mainnet vault, with keys unrelated to the signet one's: the network
-    // is in the derivation (SPEC-NOTES §1, sealing-4)
+    // and since sealing-4 (#98), the signet words restored on mainnet give another, empty wallet, not the signet one
     const mainnet = await MainnetVault.fromWords(memStorage(), WORDS, 'pass', { restored: true });
     assert.notEqual((await mainnet.opening(0)).npk, (await signet.opening(0)).npk);
     assert.notEqual(toHex((await mainnet.lockOutput(0)).key), toHex((await signet.lockOutput(0)).key));
