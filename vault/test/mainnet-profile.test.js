@@ -110,9 +110,14 @@ test('the built mainnet page: its profile, Bitcoin and SH-20 addresses, servers,
     const sv = await SignetVault.fromWords(signetStore, WORDS, 'pass');
     assert.match(sv.address, /^tsh201/);
     assert.notEqual(sv.address.slice(5, -6), v.address.slice(4, -6), 'SPEC-NOTES §1: the network is in the derivation, the same words give other keys on mainnet (sealing-4)');
-    await assert.rejects(Vault.open(signetStore, 'pass'), /made on signet, and this page follows mainnet: restore it from its 12 words/);
-    await assert.rejects(Vault.restore(memStorage(), await sv.exportBackup(), 'pass'), /made on signet/, 'nor its backup');
-    await assert.rejects(SignetVault.open(store, 'pass'), /made on mainnet, and this page follows signet/);
+    // one record a network (vault-14): a signet vault is not this page's, and is never sent to its words
+    await assert.rejects(Vault.open(signetStore, 'pass'), /no vault on this device/);
+    assert.equal(Vault.otherNetwork(signetStore), 'signet');
+    await assert.rejects(Vault.open(signetStore, 'pass', signetStore.getItem('sh20.vault.v0')), /this vault belongs to signet, and this page follows mainnet: it opens in the signet vault, or from its backup file there/);
+    await assert.rejects(Vault.restore(memStorage(), await sv.exportBackup(), 'pass'), /belongs to signet/, 'nor its backup');
+    await assert.rejects(SignetVault.open(store, 'pass'), /no vault on this device/);
+    assert.equal(SignetVault.otherNetwork(store), 'mainnet');
+    await assert.rejects(SignetVault.open(store, 'pass', store.getItem('sh20.vault.bitcoin.v0')), /belongs to mainnet, and this page follows signet: it opens in the mainnet vault, or from its backup file there/);
     const again = await Vault.fromWords(memStorage(), WORDS, 'p2', { restored: true });
     assert.equal(again.address, v.address, 'the words restore it on mainnet');
 

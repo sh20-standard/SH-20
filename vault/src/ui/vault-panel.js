@@ -123,8 +123,12 @@ export function renderVault() {
     renderAll();
     syncNotes({ full: true }).catch(report); // looks for its notes in every leaf
   }));
+  // a vault of the other network stored at this origin (a copy served for signet, then for mainnet): it stays, and is
+  // not this page's; this network's vault is made apart, with words of its own (vault-14, sealing-4)
+  const other = Vault.otherNetwork(localStorage);
   fill('vault-body',
-    h('p', {}, 'No vault on this device. Its 12 recovery words are generated here and never leave it.'),
+    h('p', {}, `No ${NET} vault on this device. Its 12 recovery words are generated here and never leave it.`),
+    other ? h('p', { class: 'warn', id: 'other-network' }, `A ${other} vault is stored on this device too; it stays as it is, and opens on a ${other} page, or from its backup file there. This page follows ${NET}: its vault is another one. The same 12 words give another wallet on mainnet than on the test networks, so the ${other} words restored here make a different, empty vault.`) : null,
     form,
     h('p', { class: 'muted' }, 'Or restore one:'),
     h('label', {}, 'From its recovery words', words),
