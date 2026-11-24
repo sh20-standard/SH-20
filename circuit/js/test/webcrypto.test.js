@@ -46,6 +46,11 @@ test('the known answers are also what node:crypto computes', () => {
   for (const k of KAT.x25519) assert.equal(toHex(node.x25519(k.k, k.u)), k.want);
   assert.equal(toHex(node.x25519Public(KAT.x25519Public.k)), KAT.x25519Public.want);
   for (const u of KAT.lowOrder) assert.ok(node.x25519(KAT.x25519[0].k, u).every((b) => b === 0));
+  // the five that some libraries refuse: OpenSSL asked directly with the bytes as they are, then through index.js
+  for (const m of KAT.maskedFirst) {
+    assert.equal(toHex(rawNode(KAT.x25519Public.k, m.u)), m.want);
+    assert.equal(toHex(node.x25519(KAT.x25519Public.k, m.u)), m.want);
+  }
   for (const k of KAT.aesGcm) {
     const c = createCipheriv('aes-256-gcm', k.key, k.nonce).setAAD(k.aad);
     assert.equal(toHex(Buffer.concat([c.update(k.plaintext), c.final(), c.getAuthTag()])), k.want);

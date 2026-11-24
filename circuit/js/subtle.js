@@ -84,17 +84,33 @@ export function isLowOrder(u) {
 }
 
 /**
+ * The one encoding of u that every library reads the same way: bit 255 cleared, and p subtracted
+ * when what is left is p or more (p + n for n < 19, so n). RFC 7748 §5 has X25519 do both by
+ * itself, and X25519 of this encoding is X25519 of u. Not every platform follows it on the bytes
+ * it is handed: Firefox refuses five values that have bit 255 set and are ordinary points once it
+ * is cleared (docs/audit/2026-11-24-sealing.md, sealing-2). u is public: no care about time.
+ */
+export function canonicalU(u) {
+  const c = Uint8Array.from(bytes('public key', u, 32));
+  c[31] &= 0x7f;
+  // p = 2^255 − 19 is ed ff … ff 7f, least significant byte first
+  if (c[31] === 0x7f && c[0] >= 0xed && c.subarray(1, 31).every((b) => b === 0xff)) return Uint8Array.of(c[0] - 0xed, ...new Uint8Array(31));
+  return c;
+}
+
+/**
  * X25519(k, u). All zeros when u is a point of low order, and only then. That is decided here, from
  * u, and the platform is not asked: most refuse such a point with an OperationError, which is also
- * how they report a failure of their own. Every failure of the platform is thrown, as is an all-zero
- * answer for any other point: a wallet that read one as a zero secret would take a note it could
- * not try to open for somebody else's.
+ * how they report a failure of their own. Every other u goes to the platform in its canonical
+ * encoding. Every failure of the platform is thrown, as is an all-zero answer for any other point:
+ * a wallet that read one as a zero secret would take a note it could not try to open for somebody
+ * else's.
  */
 export async function x25519(k, u) {
   bytes('private key', k, 32);
   if (isLowOrder(u)) return new Uint8Array(32);
   const priv = await subtle().importKey('pkcs8', concat(PKCS8, k), { name: 'X25519' }, false, ['deriveBits']);
-  const pub = await subtle().importKey('raw', u, { name: 'X25519' }, true, []);
+  const pub = await subtle().importKey('raw', canonicalU(u), { name: 'X25519' }, true, []);
   const z = new Uint8Array(await subtle().deriveBits({ name: 'X25519', public: pub }, priv, 256));
   let any = 0;
   for (const b of z) any |= b;

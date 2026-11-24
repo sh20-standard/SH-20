@@ -37,6 +37,17 @@ export const KAT = Object.freeze({
     'edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
     'eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
   ].map(h),
+  // Five values with bit 255 set that are points of low order when read as 256-bit integers (p plus each point of
+  // order 8, 2p − 1, 2p, 2p + 1) and ordinary points when read as RFC 7748 says, with bit 255 masked first. Some
+  // libraries refuse them by their bytes (Firefox 160: DataError). The secrets are OpenSSL's, for the private key
+  // of x25519Public.
+  maskedFirst: [
+    { u: h('cdeb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b880'), want: '505b4140a379dd9b2387c9405deb202fda1b07b52f8dfc31f0ecc4393a02774a' },
+    { u: h('4c9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f11d7'), want: '7939f05ebbab0596cd8abef57b19b5d623b98a92fc30ba16d33a82d7fff7c554' },
+    { u: h('d9ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'), want: '174c2f0b5c626f6e5076568729062540ae08b83ef699c24b2cc95b1738ee7b32' },
+    { u: h('daffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'), want: '4fc107b4e8847b8521fade96190160692c8399280ee4652ca1a59a3173608149' },
+    { u: h('dbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'), want: '90e61197abc9504d0025443fd7cc31854604394798c64e7bae6bb9a40c0dbd6b' },
+  ],
   aesGcm: [
     // "The Galois/Counter Mode of Operation" (McGrew, Viega), test case 16
     {
@@ -86,6 +97,7 @@ export async function knownAnswers(s) {
     const [two, above] = [Uint8Array.of(2, ...new Uint8Array(31)), Uint8Array.of(0xef, ...fill(30, 0xff), 0x7f)];
     return String(hex(await s.x25519(k, above)) === hex(await s.x25519(k, two)));
   });
+  for (const m of KAT.maskedFirst) await check(`X25519 masks bit 255 before anything else (${hex(m.u).slice(0, 8)}…)`, m.want, async () => hex(await s.x25519(KAT.x25519Public.k, m.u)));
   await check('X25519 refuses a 31-byte key', 'RangeError', async () => s.x25519(KAT.x25519[0].k.subarray(1), KAT.x25519[0].u).then(() => 'no error', (e) => e.name));
   for (const [i, k] of KAT.aesGcm.entries()) {
     const sealed = h(k.want);
