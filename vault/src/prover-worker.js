@@ -11,10 +11,11 @@ import { proverApi, threadedImports } from '../../circuit/web/host.js';
 
 /**
  * Proves `witness` with a seed of 32 bytes drawn from crypto.getRandomValues for this proof alone.
- * The seed makes the proof's blinding scalars: the same seed with two witnesses would give the same
- * blinding, and the difference of their commitments would come out unblinded (docs/AUDIT.md, doubt
- * 6.6). So it is never reused, never stored, and never derived from a key or from the witness.
- * test/prover-seed.test.js checks it.
+ * The seed makes the proof's blinding scalars. The module hashes it with the witness before it
+ * seeds its generator (circuit/src/ffi.rs blinding_seed, since the audit's verifier-3), so one seed
+ * no longer gives two witnesses the same blinding; it is still all that an observer cannot
+ * recompute (docs/AUDIT.md, doubt 6.6). So it is never reused, never stored, and never derived from
+ * a key or from the witness. test/prover-seed.test.js checks it.
  */
 export function proveWithFreshSeed(prover, witness, random = (b) => crypto.getRandomValues(b)) {
   const seed = random(new Uint8Array(32));
