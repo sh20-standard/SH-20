@@ -33,7 +33,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 210 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 213 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
@@ -421,6 +421,13 @@ control block, signature message) is checked against the BIP341 vectors (`test/t
   that fails there is refused. Only when the vault cannot check (no nullifier of its notes, a local
   tree that does not reach the anchor, a prover that cannot run) does the page show the price and
   payee and ask. The signed terms are shown with the offer.
+- **Envelopes read from Esplora** (a DEPLOY before a mint, a LIST before a TAKE or after a restore)
+  are taken only as the chain committed to them (`src/witness.js`; docs/audit/2026-11-24-vault.md,
+  vault-6): no txid covers a witness, so the vault also fetches the transaction its input 0 spends,
+  and requires the tapscript of the witness, as the one leaf under its control block's key (and of
+  its parity), to give the key of that output. A tree of two leaves would let the same txid fit
+  either, so it binds nothing and is refused. Esplora can then withhold a transaction, never hand
+  over another envelope in it.
 - **TAKE** ("Buy from an offer"): the vault reads the LIST from the chain (Esplora) and requires
   every indexer that answers to report the same listing, ACTIVE: one that does not know it refuses
   it, and at least two must agree (`consensus.js` `listingCheck`, `TAKE_QUORUM`), since a LIST the

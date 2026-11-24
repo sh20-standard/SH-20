@@ -21,12 +21,15 @@ function honest() {
   const secret = oneTimeSecret();
   const c = commitment(secret, new Uint8Array(serializeEnvelope(env)));
   const back = addressToScript('tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx');
-  const { tx } = signReveal({ secret, c, commitTxid: '77'.repeat(32), value: commitValue(c, back, 1), returnScript: back, feeRate: 1 });
+  // the commit, a transaction of its own: its output is what binds the reveal's witness (vault-6)
+  const commitTx = { version: 2, locktime: 0, vin: [{ txid: '66'.repeat(32), vout: 0, sequence: 0xfffffffd, scriptSig: new Uint8Array(0), witness: [new Uint8Array(64)] }], vout: [{ value: commitValue(c, back, 1), script: c.scriptPubKey }] };
+  const commitTxid = txid(commitTx);
+  const { tx } = signReveal({ secret, c, commitTxid, value: commitValue(c, back, 1), returnScript: back, feeRate: 1 });
   const idx = new Indexer({ profile: { activationHeight: 1, deployBurn: 0n, deployMaturity: 0 } });
-  const itx = { txid: txid(tx), vin: [{ txid: '77'.repeat(32), vout: 0, witness: tx.vin[0].witness.map((w) => Buffer.from(w)), prevHeight: 0 }], vout: tx.vout.map((o) => ({ value: o.value, script: Buffer.from(o.script) })) };
+  const itx = { txid: txid(tx), vin: [{ txid: commitTxid, vout: 0, witness: tx.vin[0].witness.map((w) => Buffer.from(w)), prevHeight: 0 }], vout: tx.vout.map((o) => ({ value: o.value, script: Buffer.from(o.script) })) };
   const r = idx.applyBlock({ height: 1, hash: 'h1', txs: [itx] });
   assert.equal(r.events.at(-1)?.type, 'DEPLOY', JSON.stringify(r.rejected));
-  return { token: normToken(JSON.parse(JSON.stringify(idx.token('GENE'), (_, v) => (typeof v === 'bigint' ? v.toString() : v)))), hex: toHex(serializeTx(tx)) };
+  return { token: normToken(JSON.parse(JSON.stringify(idx.token('GENE'), (_, v) => (typeof v === 'bigint' ? v.toString() : v)))), hex: toHex(serializeTx(tx)), commitHex: toHex(serializeTx(commitTx)), commitTxid };
 }
 
 test('an honest indexer matches the DEPLOY on chain', () => {
@@ -36,13 +39,13 @@ test('an honest indexer matches the DEPLOY on chain', () => {
 });
 
 test('an indexer that lies about payScript is caught, and the mint refused', async () => {
-  const { token, hex } = honest();
+  const { token, hex, commitHex, commitTxid } = honest();
   const lying = { ...token, payScript: ATTACKER };
   assert.match(deployMismatches(lying, hex, 1).join(), /payScript: chain says 0014666/);
   let tip = 6; // the DEPLOY, in block 1, six blocks deep: a mint that pays may go (vault-1)
   globalThis.fetch = async (url) => ({
     ok: true, status: 200,
-    text: async () => (url.endsWith('/blocks/tip/height') ? String(tip) : hex),
+    text: async () => (url.endsWith('/blocks/tip/height') ? String(tip) : url.includes(commitTxid) ? commitHex : hex),
     json: async () => ({ confirmed: true, block_height: 1 }),
     url,
   });

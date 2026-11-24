@@ -22,7 +22,8 @@ import { planList, listOutputs, signOffer, listingFromChain, buildTake } from '.
 import { PAY_DEPTH, actProblems, crossCheck, listingCheck, profileCheck, refusalAgreed } from '../src/consensus.js';
 import { IndexerApi, normListing, normToken } from '../src/api.js';
 import { urlList } from '../src/ui/context.js';
-import { deployMismatches } from '../src/deploy.js';
+import { deployMismatches, verifyDeploy } from '../src/deploy.js';
+import { witnessProblem } from '../src/witness.js';
 import { deployProblems } from '../src/deploy-plan.js';
 import { buildMint, mintProblems, selectCoins } from '../src/mint.js';
 import { matchNotes, matchListings } from '../src/match.js';
@@ -321,8 +322,19 @@ test('vault-6: a DEPLOY read from Esplora is checked by its txid, which does not
   const forgedHex = toHex(serializeTx(forged));
   assert.notEqual(forgedHex, reveal.hex);
   assert.equal(txidOf(forged), reveal.txid);
-  // an indexer and an Esplora that say the same thing are believed
-  assert.deepEqual(deployMismatches({ ...token, payScript: toHex(OTHER_PAY) }, forgedHex, 2), []); // today
+  // deployMismatches alone, given what an indexer and an Esplora say alike, still sees nothing: the txid is the same
+  assert.deepEqual(deployMismatches({ ...token, payScript: toHex(OTHER_PAY) }, forgedHex, 2), []);
+  // fixed: the envelope is checked against the output it spends (witness.js), before any term is read (deploy.js
+  // verifyDeploy, and the listings of ui/market-panel.js). On the real commit transaction:
+  const commitHex = toHex(serializeTx(cp.commit.tx));
+  const real = revealFor(cp, txidOf(cp.commit.tx));
+  const realForged = parseTx(fromHex(real.hex));
+  realForged.vin[0].witness[1] = envelopeScript(cp.c.e, serializeEnvelope(deployEnvelope({ ...d, payScript: OTHER_PAY }, null)));
+  assert.equal(witnessProblem(real.hex, commitHex), null);
+  assert.match(witnessProblem(toHex(serializeTx(realForged)), commitHex), /the envelope in the witness is not the script the output it spends commits to/);
+  const esplora = (served) => ({ txHex: async (id) => (id === real.txid ? served : commitHex), txStatus: async () => ({ confirmed: true, block_height: 2 }), tipHeight: async () => 2 + 5 });
+  const liar = { ...token, deployTxid: real.txid, payScript: toHex(OTHER_PAY) };
+  await assert.rejects(verifyDeploy(esplora(toHex(serializeTx(realForged))), liar), /refusing to mint PAID: the DEPLOY that Esplora serves is not bound to the chain/);
   // BIP341 binds the script to the output spent: the leaf of the witness, under its control block, gives that output's key
   const outputKey = (w) => toHex(tweakKey(w[2].subarray(1, 33), leafHash(w[1])).key);
   const committed = toHex(cp.c.scriptPubKey.subarray(2)); // the commit's output, which the commit's txid covers

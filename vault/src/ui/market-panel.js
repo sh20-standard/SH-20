@@ -11,6 +11,7 @@ import { renderAll } from './render.js';
 import { sendForm } from './send-panel.js';
 import { signFunded, txLink, walletUtxos } from './spends.js';
 import { PAY_DEPTH, listingCheck, payDepthProblem, TAKE_QUORUM } from '../consensus.js';
+import { committedHex } from '../witness.js';
 import { getSyncer } from './notes-panel.js';
 
 // ---- market: the vault's listings, and buying from an offer --------------------------------------
@@ -39,7 +40,7 @@ export async function syncListings() {
   const union = new Map(all.filter((l) => l.listTxid).map((l) => [l.listTxid, l]));
   for (const r of others) if (r.status === 'fulfilled' && Array.isArray(r.value)) for (const l of r.value) if (l?.listTxid && !union.has(l.listTxid)) union.set(l.listTxid, l);
   // found again by its lock key: its terms come from the LIST on chain, not from the indexer's word
-  await matchListings(v, [...union.values()], async (l) => listingFromChain(l.listTxid, await esplora.txHex(l.listTxid), { ...l, amount: String(l.amount), price: String(l.price) }));
+  await matchListings(v, [...union.values()], async (l) => listingFromChain(l.listTxid, await committedHex(esplora, l.listTxid), { ...l, amount: String(l.amount), price: String(l.price) }));
   // every list read: a restored vault may reserve lock keys again
   if (others.every((r) => r.status === 'fulfilled')) await v.chainChecked('locks');
 }
@@ -53,7 +54,8 @@ export async function syncListings() {
  */
 async function checkedListing(listTxid) {
   const { listing: indexed, agreed, verifying, down, enough, depth, depthProblem } = await listingCheck(indexers, listTxid);
-  const [hex, tx, tip] = await Promise.all([esplora.txHex(listTxid), esplora.txStatus(listTxid), esplora.tipHeight()]);
+  // the LIST's envelope as the chain committed to it (vault-6): the output it spends binds its witness
+  const [hex, tx, tip] = await Promise.all([committedHex(esplora, listTxid), esplora.txStatus(listTxid), esplora.tipHeight()]);
   const l = listingFromChain(listTxid, hex, { ...indexed, amount: String(indexed.amount), price: String(indexed.price) });
   const shallow = depthProblem ?? payDepthProblem('the LIST transaction, at Esplora,', tx?.confirmed ? tx.block_height : null, tip);
   return { l, state: indexed.state, agreed, verifying, down, enough, depth, deep: !shallow, shallow };
@@ -67,7 +69,7 @@ async function ownListing(rec) {
   const indexed = (await indexer.listings()).find((l) => l.listTxid === rec.listTxid);
   if (!indexed) throw new Error('the indexer does not list it (yet): sync after the next block');
   const sent = (st.vault.state.pending ?? []).find((p) => p.revealTxid === rec.listTxid)?.revealHex;
-  const l = listingFromChain(rec.listTxid, sent ?? (await esplora.txHex(rec.listTxid)), { ...indexed, amount: String(indexed.amount), price: String(indexed.price) });
+  const l = listingFromChain(rec.listTxid, sent ?? (await committedHex(esplora, rec.listTxid)), { ...indexed, amount: String(indexed.amount), price: String(indexed.price) });
   return { l, state: indexed.state };
 }
 
