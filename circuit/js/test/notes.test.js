@@ -50,15 +50,24 @@ for (const [backend, api] of [['node:crypto', node], ['WebCrypto', web]]) {
     await refuses(() => x25519(a, b.subarray(1)), RangeError);
   });
 
-  test('wallet keys from the master secret', async () => {
+  test('wallet keys from the master secret, which the network is in', async () => {
     for (const { vector: w, keys } of Object.values(wallets)) {
-      assert.equal(toHex(await masterSecret(hex(w.bip39Seed))), w.m);
-      assert.equal(keys.ask.toString(), w.ask);
-      assert.equal(keys.nsk.toString(), w.nsk);
-      assert.equal(toHex(keys.ivk), w.ivk);
-      assert.equal(toHex(keys.address.ivkPub), w.IVK);
-      assert.deepEqual(str(keys.address.a), w.A);
-      assert.deepEqual(str(keys.address.n), w.N);
+      // the test networks, whose keys the rest of the vectors use, and mainnet: the same seed, other keys
+      const main = await walletKeys(hex(w.mainnet.m));
+      for (const [hrp, want, k] of [['tsh20', w, keys], ['sh20', w.mainnet, main]]) {
+        assert.equal(toHex(await masterSecret(hex(w.bip39Seed), hrp)), want.m, hrp);
+        assert.equal(k.ask.toString(), want.ask);
+        assert.equal(k.nsk.toString(), want.nsk);
+        assert.equal(toHex(k.ivk), want.ivk);
+        assert.equal(toHex(k.address.ivkPub), want.IVK);
+        assert.deepEqual(str(k.address.a), want.A);
+        assert.deepEqual(str(k.address.n), want.N);
+      }
+      for (const field of ['m', 'ask', 'nsk', 'ivk', 'IVK', 'packA', 'packN']) assert.notEqual(w[field], w.mainnet[field], `${field} is the same on both networks`);
+      // no network, another prefix, or a seed of another length: no master secret
+      for (const hrp of [undefined, '', 'bc', 'SH20', 'signet']) await refuses(() => masterSecret(hex(w.bip39Seed), hrp), /prefix of the network/);
+      await refuses(() => masterSecret(hex(w.bip39Seed).subarray(1), 'sh20'), /64 bytes/);
+      await refuses(() => masterSecret(Buffer.concat([hex(w.bip39Seed), Buffer.from('t')]), 'sh20'), /64 bytes/);
     }
   });
 
@@ -80,16 +89,20 @@ for (const [backend, api] of [['node:crypto', node], ['WebCrypto', web]]) {
 
   test('addresses: encoding, decoding, and what a payer refuses', async () => {
     for (const { vector: w, keys } of Object.values(wallets)) {
-      assert.equal(encodeAddress('sh20', keys.address), w.address);
+      const main = (await walletKeys(hex(w.mainnet.m))).address;
+      assert.equal(encodeAddress('sh20', main), w.mainnet.address);
       assert.equal(encodeAddress('tsh20', keys.address), w.addressTest);
-      assert.equal(w.address.length, 167);
-      assert.deepEqual(await decodeAddress('sh20', w.address), keys.address);
-      assert.deepEqual(await decodeAddress('sh20', w.address.toUpperCase()), keys.address);
+      assert.equal(w.mainnet.address.length, 167);
+      assert.deepEqual(await decodeAddress('sh20', w.mainnet.address), main);
+      assert.deepEqual(await decodeAddress('sh20', w.mainnet.address.toUpperCase()), main);
       assert.deepEqual(await decodeAddress('tsh20', w.addressTest), keys.address);
       await refuses(() => decodeAddress('sh20', w.addressTest), /another network/);
+      await refuses(() => decodeAddress('tsh20', w.mainnet.address), /another network/);
     }
-    assert.ok(v.invalidAddresses.length >= 13);
+    assert.equal(v.invalidAddresses.length, 15);
     for (const { address, why } of v.invalidAddresses) await refuses(() => decodeAddress('sh20', address), /address:/, why);
+    // a second encoding of IVK is refused as such, before any key agreement
+    for (const { address } of v.invalidAddresses.filter((x) => /second encoding/.test(x.why) && /IVK/.test(x.why))) await refuses(() => decodeAddress('sh20', address), /one encoding/);
     // an IVK of low order is refused by the key agreement itself, the last check
     const lowOrder = encodeAddress('sh20', { ...wallets.payer.keys.address, ivkPub: Buffer.alloc(32) });
     await refuses(() => decodeAddress('sh20', lowOrder), /low-order/);

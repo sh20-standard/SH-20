@@ -101,11 +101,26 @@ pub fn is_key_point(p: &Pt) -> bool {
 
 // ── keys ──
 
-/// m = the first 32 bytes of HMAC-SHA512(key = "sh20/v0/seed", data = the 64-byte BIP39 seed).
-pub fn master_secret(bip39_seed: &[u8]) -> [u8; 32] {
+/// The address prefix of mainnet, and the one the test networks share (signet, testnet, regtest):
+/// what names the network in an address (§2) and in the derivation of a wallet's keys (§1).
+pub const HRP_MAINNET: &str = "sh20";
+pub const HRP_TEST: &str = "tsh20";
+
+/// m = the first 32 bytes of HMAC-SHA512(key = "sh20/v0/seed", data = seed ‖ hrp): `seed` the
+/// 64-byte BIP39 seed, `hrp` the address prefix of the network in ASCII. Every key follows from m,
+/// so one set of words gives unrelated keys, public openings and addresses on mainnet and on the
+/// test networks: whoever used its words on a test network is not recognised on mainnet.
+pub fn master_secret(bip39_seed: &[u8], hrp: &str) -> Result<[u8; 32], String> {
+    if bip39_seed.len() != 64 {
+        return Err("the BIP39 seed is 64 bytes".into());
+    }
+    if hrp != HRP_MAINNET && hrp != HRP_TEST {
+        return Err("not the address prefix of a network".into());
+    }
     let mut mac = <Hmac<Sha512> as Mac>::new_from_slice(TAG_SEED).expect("any key length");
     mac.update(bip39_seed);
-    mac.finalize().into_bytes()[..32].try_into().expect("32 bytes")
+    mac.update(hrp.as_bytes());
+    Ok(mac.finalize().into_bytes()[..32].try_into().expect("32 bytes"))
 }
 
 /// Everything a wallet derives from its master secret.
@@ -223,8 +238,17 @@ pub fn encode_address(hrp: &str, a: &Address) -> String {
     bech32m_encode(hrp, &data)
 }
 
+/// True when `u` is the one encoding of an X25519 public key that an address may carry: below
+/// p = 2^255 − 19, so with bit 255 clear. X25519 reads the other encodings as the same key (it
+/// masks bit 255 and reduces), but the 32 bytes are also hashed into each note's secret as they are
+/// written: a second writing of IVK would be a second address whose notes its owner never finds.
+pub fn is_canonical_u(u: &[u8; 32]) -> bool {
+    // p is ed ff … ff 7f, least significant byte first
+    u[31] & 0x80 == 0 && !(u[31] == 0x7f && u[0] >= 0xed && u[1..31].iter().all(|b| *b == 0xff))
+}
+
 /// Decodes and validates an address: the expected network, version 0, A and N key points, and an
-/// IVK that is not a low-order point (one for which every shared secret is zero).
+/// IVK in its one encoding that is not a low-order point (one for which every shared secret is zero).
 pub fn decode_address(expected_hrp: &str, s: &str) -> Result<Address, String> {
     let (hrp, data) = bech32m_decode(s)?;
     if hrp != expected_hrp {
@@ -236,6 +260,9 @@ pub fn decode_address(expected_hrp: &str, s: &str) -> Result<Address, String> {
     let ivk_pub: [u8; 32] = data[1..33].try_into().unwrap();
     let a = unpack_point(data[33..65].try_into().unwrap()).filter(is_key_point).ok_or("address: A is not a key")?;
     let n = unpack_point(data[65..97].try_into().unwrap()).filter(is_key_point).ok_or("address: N is not a key")?;
+    if !is_canonical_u(&ivk_pub) {
+        return Err("address: IVK is not in its one encoding".into());
+    }
     // a low-order point gives the all-zero secret with any private key
     if x25519([0x42; 32], ivk_pub) == [0u8; 32] {
         return Err("address: IVK is a low-order point".into());
@@ -288,6 +315,10 @@ fn aead(s: &[u8; 32], leaf: &[u8; 32]) -> (Aes256Gcm, [u8; 12]) {
 /// the note's secrets, which the sender needs to put the note in its proof.
 pub fn seal(address: &Address, ticker: &[u8; 4], v: u64, e: &[u8; 32]) -> Result<(Sealed, NoteSecrets, Fr), String> {
     let t = model::ticker_t(ticker).ok_or("not a ticker")?;
+    // an address that was decoded has passed this; one built by hand has not
+    if !is_canonical_u(&address.ivk_pub) {
+        return Err("address: IVK is not in its one encoding".into());
+    }
     let pk_eph = x25519(*e, X25519_BASEPOINT_BYTES);
     let z = x25519(*e, address.ivk_pub);
     if z == [0u8; 32] {

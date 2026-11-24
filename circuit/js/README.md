@@ -14,7 +14,7 @@ this folder is the reference to compare against.
 | `bodyHash(body)` | `SHA256("sh20/v0/body" ‖ body) mod r` |
 | `sign(sk, m)` | EdDSA-Poseidon over BabyJubJub: `{ r8, s }` with `S·B8 = R8 + h·8·Ak`, `h = Poseidon(R8, Ak, m)` |
 | `verify(ak, m, sig)` | true exactly when the circuit accepts the signature |
-| `masterSecret(bip39Seed)`, `walletKeys(m)` | `{ ask, nsk, ivk, address: { ivkPub, a, n } }` (SPEC-NOTES §1) |
+| `masterSecret(bip39Seed, hrp)`, `walletKeys(m)` | `{ ask, nsk, ivk, address: { ivkPub, a, n } }` (SPEC-NOTES §1); `hrp` is the network's address prefix, `sh20` or `tsh20`, and the same words give other keys on each |
 | `encodeAddress(hrp, address)`, `decodeAddress(hrp, string)` | bech32m; decoding makes every check a payer owes (§2) and throws otherwise |
 | `seal(address, ticker, v, e)` | an output `{ leaf, pkEph, ct }` for an address, with the note's `{ secrets, npk }` for the proof (§3) |
 | `scan(ivk, address, output)` | the note `{ ticker, v, secrets, npk }`, or `null` unless it is ours **and** hashes to its leaf (§4) |
@@ -50,7 +50,7 @@ vectors. Asynchronous in `webcrypto.js`: `masterSecret`, `walletKeys`, `decodeAd
 import { available, masterSecret, walletKeys, decodeAddress, seal, scan } from './webcrypto.js';
 
 if (!(await available())) throw new Error('this browser has no X25519');
-const keys = await walletKeys(await masterSecret(bip39Seed));
+const keys = await walletKeys(await masterSecret(bip39Seed, 'sh20'));
 const out = await seal(await decodeAddress('sh20', string), 'GENE', 700n, e);
 const note = await scan(keys.ivk, keys.address, out);
 ```
@@ -88,8 +88,9 @@ constrains, and `circuit/src/notes.rs`, through `circuit/src/vectors.rs`), from 
 
 - Poseidon for 2 to 5 inputs, ticker ids, note keys at both ends of the scalar range, leaves,
   nullifiers at the first and the last position of the tree, body hashes, signatures;
-- three wallets from their BIP39 seeds with every key and both addresses, thirteen addresses a
-  payer must refuse, sealed outputs with their ephemeral keys, public notes;
+- three wallets from their BIP39 seeds, on the test networks and on mainnet, with every key and the
+  address of each, fifteen addresses a payer must refuse, sealed outputs with their ephemeral keys,
+  public notes;
 - one whole transfer between the three wallets: public notes spent, three sealed outputs, the tree,
   the envelope body (wire v0.3) and the nine public inputs. It satisfies the circuit's gates; the
   generator checks it, and that each wallet finds exactly its own output.

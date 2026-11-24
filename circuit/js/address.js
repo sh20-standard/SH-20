@@ -5,7 +5,7 @@
 import { createPrivateKey, createPublicKey, diffieHellman } from 'node:crypto';
 import { P } from '../../indexer/src/poseidon.js';
 import { A, D, IDENTITY, L, equal, mul, onCurve } from './babyjub.js';
-import { canonicalU, isLowOrder } from './subtle.js';
+import { canonicalU, isCanonicalU, isLowOrder } from './subtle.js';
 
 export const ADDRESS_VERSION = 0;
 export const ADDRESS_BYTES = 97;
@@ -184,7 +184,10 @@ export function encodeAddress(hrp, { ivkPub, a, n }) {
 
 /**
  * Decodes an address for the network `hrp` and makes every check that needs no key agreement:
- * version 0, 97 bytes, A and N key points. Not for payers: `decodeAddress` adds the check on IVK.
+ * version 0, 97 bytes, A and N key points, IVK in its one encoding (below p, bit 255 clear: X25519
+ * reads a second writing as the same key, but the bytes of IVK are hashed into each note's secret
+ * as the address writes them, and what is sealed to a second writing is never found by its owner).
+ * Not for payers: `decodeAddress` adds the check that IVK is not of low order.
  * (Apart so that the WebCrypto version, webcrypto.js, runs the same code up to that check.)
  */
 export function parseAddress(hrp, s) {
@@ -197,12 +200,14 @@ export function parseAddress(hrp, s) {
   const n = unpackPoint(d.subarray(65, 97));
   if (!a || !isKeyPoint(a)) throw new Error('address: A is not a key');
   if (!n || !isKeyPoint(n)) throw new Error('address: N is not a key');
+  if (!isCanonicalU(ivkPub)) throw new Error('address: IVK is not in its one encoding');
   return { ivkPub, a, n };
 }
 
 /**
  * Decodes and validates an address for the network `hrp`. Throws unless: version 0, 97 bytes, A and
- * N key points, and an IVK that is not a low-order point (for which every shared secret is zero).
+ * N key points, and an IVK in its one encoding that is not a low-order point (for which every
+ * shared secret is zero).
  */
 export function decodeAddress(hrp, s) {
   const address = parseAddress(hrp, s);

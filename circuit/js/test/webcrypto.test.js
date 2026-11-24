@@ -79,6 +79,12 @@ test('X25519: both back ends agree, on ordinary points and on every odd encoding
 const topBit = (u) => Uint8Array.from(u, (b, i) => (i === 31 ? b | 0x80 : b));
 /** The seven encodings of subtle-kat.js, and the same seven with bit 255 set (which RFC 7748 ignores). */
 const LOW = [...KAT.lowOrder, ...KAT.lowOrder.map(topBit)];
+/**
+ * Why an address with this low-order IVK is refused. Five of the fourteen are the one encoding of their point (0, 1,
+ * the two of order 8, p − 1): refused for their order. The nine others (p, p + 1, and every one with bit 255 set) are
+ * a second encoding, refused as such before their order is looked at (SPEC-NOTES §2).
+ */
+const refusal = (u) => (subtle.isCanonicalU(Uint8Array.from(u)) ? /low-order/ : /one encoding/);
 
 // OpenSSL asked directly, through neither entry point
 const rawNode = (k, u) =>
@@ -170,13 +176,13 @@ test('X25519: a point of low order is decided without the platform', async () =>
     await withX25519(name, null, async (asked) => {
       for (const u of LOW) assert.ok((await web.x25519(k, u)).every((b) => b === 0), toHex(u));
       for (const u of LOW) assert.equal(await web.scan(keys.ivk, keys.address, { ...out, pkEph: u }), null, toHex(u));
-      for (const u of LOW) await assert.rejects(() => web.decodeAddress('sh20', web.encodeAddress('sh20', { ...keys.address, ivkPub: u })), /low-order/, toHex(u));
+      for (const u of LOW) await assert.rejects(() => web.decodeAddress('sh20', web.encodeAddress('sh20', { ...keys.address, ivkPub: u })), refusal(u), toHex(u));
       assert.equal(asked(), 0, `${name} was called for a point of low order`);
       // the count does see an ordinary point
       assert.equal((await web.scan(keys.ivk, keys.address, out)).v, 1n);
       assert.ok(asked() > 0);
       // seal asks the platform for pk_eph = X25519(e, 9), then refuses the address
-      for (const u of LOW) await assert.rejects(() => web.seal({ ...keys.address, ivkPub: u }, 'GENE', 1n, bytes('low/e')), /low-order/, toHex(u));
+      for (const u of LOW) await assert.rejects(() => web.seal({ ...keys.address, ivkPub: u }, 'GENE', 1n, bytes('low/e')), refusal(u), toHex(u));
     });
   }
 });
@@ -225,7 +231,7 @@ test('X25519 on node:crypto: the same rule, a failure of OpenSSL is thrown', () 
     replace((...args) => (asked++, original(...args)));
     for (const u of LOW) assert.ok(node.x25519(k, u).every((b) => b === 0), toHex(u));
     for (const u of LOW) assert.equal(node.scan(keys.ivk, keys.address, { ...out, pkEph: Buffer.from(u) }), null, toHex(u));
-    for (const u of LOW) assert.throws(() => node.decodeAddress('sh20', node.encodeAddress('sh20', { ...keys.address, ivkPub: Buffer.from(u) })), /low-order/, toHex(u));
+    for (const u of LOW) assert.throws(() => node.decodeAddress('sh20', node.encodeAddress('sh20', { ...keys.address, ivkPub: Buffer.from(u) })), refusal(u), toHex(u));
     assert.equal(asked, 0, 'OpenSSL was asked about a point of low order');
     assert.equal(node.scan(keys.ivk, keys.address, out).v, 1n);
     assert.equal(asked, 1);
@@ -268,8 +274,10 @@ test('wallets, notes and public notes: both back ends agree on inputs the vector
   const amounts = [0n, 1n, 1000n, 2n ** 32n, 2n ** 64n - 1n];
   for (let i = 0; i < 12; i++) {
     const seed = bytes(`seed/${i}`, 64);
-    const m = node.masterSecret(seed);
-    assert.equal(toHex(await web.masterSecret(seed)), toHex(m));
+    const hrp = i % 2 ? 'sh20' : 'tsh20';
+    const m = node.masterSecret(seed, hrp);
+    assert.equal(toHex(await web.masterSecret(seed, hrp)), toHex(m));
+    assert.notEqual(toHex(node.masterSecret(seed, i % 2 ? 'tsh20' : 'sh20')), toHex(m), 'the same master secret on both networks');
     const [a, b] = [node.walletKeys(m), await web.walletKeys(m)];
     assert.deepEqual([b.ask, b.nsk, toHex(b.ivk), toHex(b.address.ivkPub), b.address.a, b.address.n], [a.ask, a.nsk, toHex(a.ivk), toHex(a.address.ivkPub), a.address.a, a.address.n]);
 
@@ -307,7 +315,7 @@ test('wallets, notes and public notes: both back ends agree on inputs the vector
 test('the asynchronous functions take plain Uint8Array and return it', async () => {
   const plain = (b) => Uint8Array.from(b);
   const isPlain = (b) => Object.getPrototypeOf(b) === Uint8Array.prototype;
-  const m = await web.masterSecret(plain(bytes('plain/seed', 64)));
+  const m = await web.masterSecret(plain(bytes('plain/seed', 64)), 'tsh20');
   const keys = await web.walletKeys(m);
   const out = await web.seal(keys.address, 'GENE', 7n, plain(bytes('plain/e')));
   const decoded = await web.decodeAddress('sh20', web.encodeAddress('sh20', keys.address));

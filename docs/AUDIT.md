@@ -38,7 +38,7 @@ contract and no operator.
 | [`circuit/src/spend.rs`](../circuit/src/spend.rs) | 116 | the spend relation: which gadget is applied to which variable, and the nine public inputs | the statement itself |
 | [`circuit/src/plonk/verifier.rs`](../circuit/src/plonk/verifier.rs) | 71 | the PLONK verifier | consensus: every indexer runs it |
 | [`indexer/src/adapters/plonk.js`](../indexer/src/adapters/plonk.js) | 49 | loads the verifier (WebAssembly), checks the verifying-key digest, orders the public inputs | the only bridge between the rules and the proof |
-| [`docs/SPEC-NOTES.md`](SPEC-NOTES.md) | 198 | wallet keys, the address, sealing an output, scanning, public notes | theft and privacy on the wallet side |
+| [`docs/SPEC-NOTES.md`](SPEC-NOTES.md) | 230 | wallet keys, the address, sealing an output, scanning, public notes | theft and privacy on the wallet side |
 | [`circuit/js/`](../circuit/js/) | 908 | the wallet reference: `seal.js`, `address.js`, `notes.js`, `eddsa.js`, `babyjub.js`, and the browser entry point `webcrypto.js` on `subtle.js` | what the vault computes; the Rust model of the same is `circuit/src/notes.rs` |
 
 ### What those files stand on
@@ -708,7 +708,7 @@ note whose scan throws does not stop the others…". One case was left below the
 `circuit/js/subtle.js` answered every `OperationError` or `DataError` of WebCrypto as a low-order
 point, so a failure of that kind inside `deriveBits` was still read as "not ours". Fixed in #40: a
 low-order point is recognised from its bytes before the platform is asked (`isLowOrder`, l. 80),
-and `x25519` (l. 109) throws whatever the platform throws; test "X25519: a failure of the platform
+and `x25519` (l. 115) throws whatever the platform throws; test "X25519: a failure of the platform
 is thrown, never read as a point of low order" (`circuit/js/test/webcrypto.test.js`). Left: a
 `pk_eph` with bit 255 set, or at or above p, is not of low order and goes to the platform. RFC 7748
 has it accept both; a browser that refused one would throw on a `pk_eph` anyone can publish, and
@@ -870,7 +870,7 @@ flight are still missing from an older backup, so their commit outputs cannot be
 
 | What | Where |
 | --- | --- |
-| 12 words from 128 random bits; checksum checked before any key is derived; BIP39 seed by WebCrypto PBKDF2; `m` = first 32 bytes of HMAC-SHA512("sh20/v0/seed", seed), as `SPEC-NOTES.md` §1 | `bip39.js` l. 38, l. 41; `keys.js` l. 145 |
+| 12 words from 128 random bits; checksum checked before any key is derived; BIP39 seed by WebCrypto PBKDF2; `m` = first 32 bytes of HMAC-SHA512("sh20/v0/seed", seed ‖ the network's address prefix), as `SPEC-NOTES.md` §1 | `bip39.js` l. 38, l. 41; `keys.js` l. 145 |
 | note keys, address, sealing, scanning and the EdDSA nonce go through `circuit/js/webcrypto.js`; the `node:crypto` stand-in implements SHA-256 only and throws for the rest | `sh20.js`; `shim/node-crypto.js` |
 | lock keys are separated from note keys: HMAC-SHA512 under the tag "sh20/vault/lock" over `m ‖ index`, reduced into `[1, n − 1]`, then the BIP86 tweak | `keys.js` l. 390; `taproot.js` l. 128 |
 | a sealed output is recorded only if it opens, has a value and hashes to its leaf; a note is identified by its position; before spending, each input is checked again against its leaf | `keys.js` l. 370; `spend.js` l. 85 |

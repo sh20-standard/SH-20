@@ -52,8 +52,8 @@ test('a new vault has 12 words; the words alone restore its keys and address', a
   const restored = await Vault.fromWords(memStorage(), v.words.toUpperCase());
   assert.equal(restored.address, v.address);
   assert.equal((await restored.opening(0)).npk, (await v.opening(0)).npk);
-  // SPEC-NOTES §1: m = HMAC-SHA512("sh20/v0/seed", BIP39 seed)[0..32], no BIP39 passphrase
-  const m = await masterSecret(await mnemonicToSeed(v.words));
+  // SPEC-NOTES §1: m = HMAC-SHA512("sh20/v0/seed", BIP39 seed ‖ "tsh20")[0..32], no BIP39 passphrase
+  const m = await masterSecret(await mnemonicToSeed(v.words), 'tsh20');
   assert.equal(encodeAddress('tsh20', (await walletKeys(m)).address), v.address);
   await assert.rejects(Vault.fromWords(memStorage(), vectors[0][1].replace(/about$/, 'abandon')), /checksum/, 'a wrong checksum restores nothing');
 });

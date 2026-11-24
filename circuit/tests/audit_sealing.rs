@@ -194,17 +194,36 @@ fn audit_sealing_a_low_order_ivk_is_refused() {
     }
 }
 
-/// Finding sealing-1, in the model: the keys of a wallet take nothing from the network. The same
-/// master secret gives one address payload under both prefixes, and one sequence of public openings.
+/// Finding sealing-4, fixed, in the model: the network is in the derivation of a wallet's keys.
+/// One seed gives one master secret on mainnet and another on the test networks, and with them
+/// other keys, another address payload and another sequence of public openings: nothing written on
+/// a test chain is found again on mainnet.
 #[test]
-fn audit_sealing_the_network_is_in_no_key() {
-    let me = wallet(4);
-    let (main, test) = (notes::encode_address("sh20", &me.address), notes::encode_address("tsh20", &me.address));
-    assert_ne!(main, test);
-    assert_eq!(notes::decode_address("sh20", &main).unwrap(), notes::decode_address("tsh20", &test).unwrap());
-    let opening = |i| notes::public_opening(&me.ivk, &me.address, i).unwrap().0;
-    assert_eq!(opening(0), notes::public_opening(&me.ivk, &notes::decode_address("sh20", &main).unwrap(), 0).unwrap().0);
-    assert_ne!(opening(0), opening(1));
+fn audit_sealing_the_network_is_in_every_key() {
+    let seed = [7u8; 64];
+    let (main, test) = (notes::master_secret(&seed, notes::HRP_MAINNET).unwrap(), notes::master_secret(&seed, notes::HRP_TEST).unwrap());
+    assert_ne!(main, test, "the same master secret on both networks");
+    let (w_main, w_test) = (notes::wallet_keys(&main).unwrap(), notes::wallet_keys(&test).unwrap());
+    assert_ne!(w_main.ivk, w_test.ivk);
+    assert_ne!(w_main.address.ivk_pub, w_test.address.ivk_pub);
+    assert_ne!(w_main.address.a, w_test.address.a);
+    assert_ne!(w_main.address.n, w_test.address.n);
+    assert_ne!((&w_main.ask, &w_main.nsk), (&w_test.ask, &w_test.nsk));
+    for i in 0..4 {
+        let opening = |w: &notes::WalletKeys| notes::public_opening(&w.ivk, &w.address, i).unwrap().0;
+        assert_ne!(opening(&w_main), opening(&w_test), "public opening {i}");
+    }
+    // an address is read on its own network only
+    let address = notes::encode_address(notes::HRP_MAINNET, &w_main.address);
+    assert_eq!(notes::decode_address(notes::HRP_MAINNET, &address).unwrap(), w_main.address);
+    assert!(notes::decode_address(notes::HRP_TEST, &address).is_err());
+    // the derivation is HMAC-SHA512("sh20/v0/seed", seed ‖ prefix), and takes nothing else for a network or a seed
+    assert_eq!((notes::HRP_MAINNET, notes::HRP_TEST), ("sh20", "tsh20"));
+    for other in ["", "bc", "SH20", "sh20 ", "signet"] {
+        assert!(notes::master_secret(&seed, other).is_err(), "{other:?} taken for a network");
+    }
+    assert!(notes::master_secret(&seed[..63], notes::HRP_TEST).is_err());
+    assert!(notes::master_secret(&[seed.as_slice(), b"t"].concat(), notes::HRP_MAINNET).is_err(), "a seed that runs into the prefix");
 }
 
 /// Finding sealing-2, in the model: the five values that Firefox refuses as an ephemeral key are
@@ -229,15 +248,28 @@ fn audit_sealing_the_five_values_firefox_refuses_are_ordinary_points() {
     }
 }
 
-/// Finding sealing-6, in the model: an address whose IVK has bit 255 set is accepted, X25519 reads
-/// it as the same key, and what is sealed to it is not found by the wallet whose key it is.
+/// Finding sealing-6, fixed, in the model: an address has one encoding of IVK. Written with bit
+/// 255 set, or with p added, the same key is refused where an address is read, and a note is not
+/// sealed to an address built by hand with such bytes.
 #[test]
-fn audit_sealing_a_second_encoding_of_ivk_is_accepted_and_its_notes_are_not_found() {
+fn audit_sealing_a_second_encoding_of_ivk_is_refused() {
     let me = wallet(6);
+    assert!(notes::is_canonical_u(&me.address.ivk_pub));
+    assert_eq!(notes::decode_address("tsh20", &notes::encode_address("tsh20", &me.address)).unwrap(), me.address);
     let twin = notes::Address { ivk_pub: top_bit(me.address.ivk_pub), ..me.address };
-    let decoded = notes::decode_address("tsh20", &notes::encode_address("tsh20", &twin)).expect("the model now refuses it: update the report");
-    assert_eq!(x25519_dalek::x25519([7; 32], twin.ivk_pub), x25519_dalek::x25519([7; 32], me.address.ivk_pub));
-    let (sealed, _, _) = notes::seal(&decoded, b"GENE", 700, &[9u8; 32]).unwrap();
-    assert_eq!(notes::scan(&me.ivk, &me.address, &sealed), None, "the owner does not find it");
-    assert_eq!(notes::scan(&me.ivk, &twin, &sealed).unwrap().v, 700);
+    assert_eq!(x25519_dalek::x25519([7; 32], twin.ivk_pub), x25519_dalek::x25519([7; 32], me.address.ivk_pub), "one key for X25519");
+    assert!(!notes::is_canonical_u(&twin.ivk_pub));
+    assert!(notes::decode_address("tsh20", &notes::encode_address("tsh20", &twin)).is_err(), "the second encoding is read as an address");
+    assert!(notes::seal(&twin, b"GENE", 700, &[9u8; 32]).is_err());
+    // every writing of a key that is not its first: p + k for k < 19, each of them again with bit 255
+    for k in 0u32..19 {
+        let second = le32(&(p() + BigUint::from(k)));
+        for u in [second, top_bit(second)] {
+            assert!(!notes::is_canonical_u(&u), "p + {k}");
+            assert!(notes::decode_address("tsh20", &notes::encode_address("tsh20", &notes::Address { ivk_pub: u, ..me.address })).is_err(), "p + {k}");
+        }
+    }
+    // and the largest value that is one: p − 1 is read as a key's bytes (it is of low order, and refused for that)
+    assert!(notes::is_canonical_u(&le32(&(p() - BigUint::from(1u8)))));
+    assert!(notes::is_canonical_u(&le32(&(p() - BigUint::from(20u8)))));
 }

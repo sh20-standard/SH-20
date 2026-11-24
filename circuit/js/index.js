@@ -9,7 +9,7 @@
 //   const { r8, s } = sign(sk, bodyHash(body));
 //
 // and, for docs/SPEC-NOTES.md:
-//   const keys = walletKeys(masterSecret(bip39Seed));       // { ask, nsk, ivk, address }
+//   const keys = walletKeys(masterSecret(bip39Seed, 'sh20'));  // { ask, nsk, ivk, address }; 'tsh20' on a test network
 //   const to = decodeAddress('sh20', string);               // throws on anything a payer must refuse
 //   const out = seal(to, 'GENE', 700n, e);                  // { leaf, pkEph, ct } and { secrets, npk }
 //   const note = scan(keys.ivk, keys.address, out);         // null unless it is ours and hashes to its leaf

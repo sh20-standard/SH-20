@@ -22,7 +22,14 @@ Encodings: a field element is 32 bytes little-endian (`SPEC-WIRE.md` §1); `v` i
 ## 1. Keys
 
 A wallet holds one 32-byte master secret `m`. From a BIP39 mnemonic (and optional passphrase), with `seed` its
-64-byte BIP39 seed: `m = first 32 bytes of HMAC-SHA512(key = "sh20/v0/seed", data = seed)`.
+64-byte BIP39 seed and `hrp` the address prefix of the network (§2) in ASCII:
+`m = first 32 bytes of HMAC-SHA512(key = "sh20/v0/seed", data = seed ‖ hrp)`.
+
+`hrp` is `sh20` on mainnet and `tsh20` on every test network: 4 or 5 bytes after a seed that is always 64, so the two
+inputs are never the same string. **The network is in every key.** One set of words gives unrelated keys on mainnet and
+on the test networks: the address, the public openings (§5) and anything else derived from `m` on a test network do
+not appear on mainnet, and seeing a wallet on one does not recognise it on the other. A wallet names its network when
+it derives `m` and refuses any other prefix, or none; a seed of another length is refused too.
 
 | Key | Value | Role |
 | --- | --- | --- |
@@ -54,9 +61,14 @@ the user's Bitcoin wallet.
    root with the stated sign; the encoding of `x = 0` with the sign bit set is refused.
 4. `A` and `N` are in the subgroup of order `l` (`l·P` is the identity) and are not the identity.
 5. `IVK` is not a low-order point: `X25519(k, IVK)` is not 32 zero bytes (for any `k`; it does not depend on it).
+6. `IVK` is in its one encoding: read as a little-endian integer it is below `p = 2^255 − 19` (so bit 255 is clear).
 
 Without 3 and 4 the payer would compute note keys with an addition law that does not hold, and the note could never be
-spent. Without 5 the "shared secret" is known to everyone.
+spent. Without 5 the "shared secret" is known to everyone. Without 6 an address has other writings that X25519 reads as
+the same key (RFC 7748 ignores bit 255 and reduces modulo `p`: `IVK` with that bit set, and `IVK + p` for the nineteen
+smallest values), while §3 hashes the 32 bytes of `IVK` into `s` as the address writes them: the owner, who scans with
+its own writing, never finds what was sealed to another one. A sender refuses such an `IVK` in an address it did not
+decode itself as well.
 
 One address can be published and reused forever: nothing on chain links two notes sent to it. Payers who compare
 notes do see that they pay the same address.
@@ -67,7 +79,8 @@ For an output of `v` units of the token `ticker` to the address `(IVK, A, N)`:
 
 1. Draw a fresh X25519 private key `e` for **this output only** (never reuse it). `pk_eph = X25519(e, 9)`, 32 bytes.
 2. `z = X25519(e, IVK)`. If `z` is 32 zero bytes the address is invalid (§2, check 5): stop. A new `e` would not help.
-3. `s = HKDF-SHA256(salt = "sh20/v0/note", ikm = z, info = pk_eph ‖ IVK (64 bytes), L = 32)`.
+3. `s = HKDF-SHA256(salt = "sh20/v0/note", ikm = z, info = pk_eph ‖ IVK (64 bytes), L = 32)`, with `IVK` the 32 bytes
+   of the address (its one encoding: §2, check 6).
 4. Note values: `τa = hs("sh20/v0/note/tweak-a", s)`, `τn = hs("sh20/v0/note/tweak-n", s)`,
    `rho = hr("sh20/v0/note/rho", s)`.
 5. Note keys: `Ak = A + τa·B8`, `NK = N + τn·B8`, `npk = Poseidon(Ak.x, Ak.y, NK.x, NK.y)`;
@@ -169,9 +182,9 @@ spent. Change sent to oneself in a spend uses §3 with the wallet's own address,
 ## 7. Test vectors
 
 `circuit/js/vectors.json`, written from fixed seeds by the Rust model (`circuit/src/notes.rs`, through
-`circuit/src/vectors.rs`): three wallets from their BIP39 seeds (every key, both addresses), thirteen addresses a payer
-must refuse, sealed outputs with their ephemeral keys, public notes, and a whole transfer between the three wallets with
-its envelope body. `circuit/js` (`address.js`, `seal.js`) restates this document with Node's own X25519, HKDF and
+`circuit/src/vectors.rs`): three wallets from their BIP39 seeds, each on the test networks and on mainnet (every key
+and the address; the rest of the file uses the keys of the test networks), fifteen addresses a payer must refuse, sealed
+outputs with their ephemeral keys, public notes, and a whole transfer between the three wallets with its envelope body. `circuit/js` (`address.js`, `seal.js`) restates this document with Node's own X25519, HKDF and
 AES-GCM and reproduces every byte; `cargo test` fails if the file is not the one the model writes. The indexer's
 end-to-end test replays a chain made the same way (`indexer/test/fixtures/plonk-scenario.json`).
 
@@ -200,5 +213,18 @@ changed here. Three things are left to this document's owner. §4, "never asks a
 true of what a wallet asks, not of how long it takes to answer (sealing-1 of that report). §1: whether the network
 should enter `m` (sealing-4: the same words give the same keys on signet and on mainnet). §2 and §4: whether an `IVK`
 or a `pk_eph` that is not a canonical encoding should be refused, as one of low order is (sealing-6, sealing-2).
+
+2026-11-24, circuit session, two decisions of the maintainer on that report. Changed:
+
+8. §1: the network is in `m`, through its address prefix (sealing-4). Before, the same words gave the same `IVK`, `A`,
+   `N`, public openings and everything a wallet derives from `m` on signet and on mainnet, and whoever had used a set of
+   words on a test network was recognised on mainnet at the first thing it published. The prefix is in the derivation
+   on every network, the test ones included: **words written before this change give other keys now, on signet too.**
+   No network with value ran before it. A wallet that kept `m` itself keeps its keys.
+9. §2, check 6: an address has one encoding of `IVK` (sealing-6). The decoders accepted the others, and what was sealed
+   to them was lost to its owner. §3.3 says which bytes of `IVK` are hashed.
+
+`pk_eph` is not touched: a scan reads every encoding of it as RFC 7748 does (the reference hands its library the
+canonical one, sealing-2), and whether a wallet should refuse the others is still open. So is sealing-1.
 
 Still to do: an outside review.

@@ -109,7 +109,7 @@ test('the built mainnet page: its profile, Bitcoin and SH-20 addresses, servers,
     const signetStore = memStorage();
     const sv = await SignetVault.fromWords(signetStore, WORDS, 'pass');
     assert.match(sv.address, /^tsh201/);
-    assert.equal(sv.address.slice(5, -6), v.address.slice(4, -6), 'the same keys under another prefix (the bech32m checksum covers the prefix)');
+    assert.notEqual(sv.address.slice(5, -6), v.address.slice(4, -6), 'SPEC-NOTES §1: the network is in the derivation, the same words give other keys on mainnet (sealing-4)');
     await assert.rejects(Vault.open(signetStore, 'pass'), /made on signet, and this page follows mainnet: restore it from its 12 words/);
     await assert.rejects(Vault.restore(memStorage(), sv.exportBackup(), 'pass'), /made on signet/, 'nor its backup');
     await assert.rejects(SignetVault.open(store, 'pass'), /made on mainnet, and this page follows signet/);

@@ -126,34 +126,50 @@ pub fn reference_vectors() -> String {
     // three wallets, each from a 64-byte BIP39 seed
     let names = ["payer", "recipient", "relayer"];
     let seeds: Vec<Vec<u8>> = names.iter().map(|n| bytes(&format!("wallet/{n}/bip39-seed"), 64)).collect();
-    let masters: Vec<[u8; 32]> = seeds.iter().map(|seed| notes::master_secret(seed)).collect();
-    let wallets: Vec<WalletKeys> = masters.iter().map(|m| notes::wallet_keys(m).expect("keys")).collect();
+    // The network is in the derivation (SPEC-NOTES §1): each seed gives one wallet on the test
+    // networks, whose keys are the fields m to addressTest and the wallet the rest of these vectors
+    // uses, and another on mainnet, under "mainnet".
+    let on = |hrp: &str| -> (Vec<[u8; 32]>, Vec<WalletKeys>) {
+        let masters: Vec<[u8; 32]> = seeds.iter().map(|seed| notes::master_secret(seed, hrp).expect("master secret")).collect();
+        let wallets = masters.iter().map(|m| notes::wallet_keys(m).expect("keys")).collect();
+        (masters, wallets)
+    };
+    let (masters, wallets) = on(notes::HRP_TEST);
+    let (mainnet_masters, mainnet_wallets) = on(notes::HRP_MAINNET);
+    let keys_json = |m: &[u8; 32], w: &WalletKeys| {
+        let a = &w.address;
+        format!(
+            r#""m":"{}","ask":"{}","nsk":"{}","ivk":"{}","IVK":"{}","A":{},"N":{},"packA":"{}","packN":"{}""#,
+            hex::encode(m),
+            w.ask,
+            w.nsk,
+            hex::encode(w.ivk),
+            hex::encode(a.ivk_pub),
+            pt(&a.a),
+            pt(&a.n),
+            hex::encode(notes::pack_point(&a.a)),
+            hex::encode(notes::pack_point(&a.n)),
+        )
+    };
     let wallets_json = list(
         (0..3)
             .map(|i| {
-                let (w, a) = (&wallets[i], &wallets[i].address);
+                assert_ne!(masters[i], mainnet_masters[i]);
                 format!(
-                    r#"{{"name":"{}","bip39Seed":"{}","m":"{}","ask":"{}","nsk":"{}","ivk":"{}","IVK":"{}","A":{},"N":{},"packA":"{}","packN":"{}","address":"{}","addressTest":"{}"}}"#,
+                    r#"{{"name":"{}","bip39Seed":"{}",{},"addressTest":"{}","mainnet":{{{},"address":"{}"}}}}"#,
                     names[i],
                     hex::encode(&seeds[i]),
-                    hex::encode(masters[i]),
-                    w.ask,
-                    w.nsk,
-                    hex::encode(w.ivk),
-                    hex::encode(a.ivk_pub),
-                    pt(&a.a),
-                    pt(&a.n),
-                    hex::encode(notes::pack_point(&a.a)),
-                    hex::encode(notes::pack_point(&a.n)),
-                    notes::encode_address("sh20", a),
-                    notes::encode_address("tsh20", a),
+                    keys_json(&masters[i], &wallets[i]),
+                    notes::encode_address(notes::HRP_TEST, &wallets[i].address),
+                    keys_json(&mainnet_masters[i], &mainnet_wallets[i]),
+                    notes::encode_address(notes::HRP_MAINNET, &mainnet_wallets[i].address),
                 )
             })
             .collect(),
     );
 
     // addresses a wallet must refuse, each with one defect
-    let good = wallets[1].address;
+    let good = mainnet_wallets[1].address;
     let raw = |version: u8, ivk: [u8; 32], a: [u8; 32], n: [u8; 32]| [&[version][..], &ivk, &a, &n].concat();
     let (pa, pn) = (notes::pack_point(&good.a), notes::pack_point(&good.n));
     let valid = notes::encode_address("sh20", &good);
@@ -171,6 +187,11 @@ pub fn reference_vectors() -> String {
     let no_x = (2u64..).map(|y| notes::fr_le(&Fr::from(y))).find(|b| notes::unpack_point(b).is_none()).unwrap();
     let mut negative_zero = identity;
     negative_zero[31] |= 0x80;
+    // the two ways to write an X25519 key a second time: bit 255, which X25519 ignores, and p added
+    let mut with_bit_255 = good.ivk_pub;
+    with_bit_255[31] |= 0x80;
+    let mut p_plus_2 = [0xffu8; 32];
+    (p_plus_2[0], p_plus_2[31]) = (0xef, 0x7f);
     let invalid: Vec<(String, &str)> = vec![
         (String::from_utf8(wrong_checksum).unwrap(), "wrong checksum"),
         (String::from_utf8(mixed_case).unwrap(), "mixed case"),
@@ -194,6 +215,8 @@ pub fn reference_vectors() -> String {
             ),
             "IVK is a low-order point (one)",
         ),
+        (notes::bech32m_encode("sh20", &raw(0, with_bit_255, pa, pn)), "IVK: a second encoding, with bit 255 set"),
+        (notes::bech32m_encode("sh20", &raw(0, p_plus_2, pa, pn)), "IVK: a second encoding, not below p (p + 2 for 2)"),
         (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, identity, pn)), "A is the identity"),
         (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, order2, pn)), "A has order 2"),
         (notes::bech32m_encode("sh20", &raw(0, good.ivk_pub, torsion, pn)), "A is outside the prime-order subgroup"),
@@ -340,7 +363,7 @@ pub fn reference_vectors() -> String {
 
     format!(
         r#"{{
-  "about": "SH-20 wallet reference vectors (docs/SPEC-WIRE.md §4, docs/SPEC-NOTES.md), written by circuit/src/vectors.rs (cargo run --release --example vectors -- js/vectors.json). Field elements and scalars are decimal strings, bytes are hex.",
+  "about": "SH-20 wallet reference vectors (docs/SPEC-WIRE.md §4, docs/SPEC-NOTES.md), written by circuit/src/vectors.rs (cargo run --release --example vectors -- js/vectors.json). Field elements and scalars are decimal strings, bytes are hex. A wallet's fields m to addressTest are the keys its seed gives on the test networks (prefix tsh20), which the vectors that follow use; under mainnet are the keys the same seed gives on mainnet (prefix sh20).",
   "constants": {{"l":"{l}","base8":{},"tagLeaf":"{}","nonceTag":"{}"}},
   "poseidon": {poseidon_json},
   "tickers": {tickers_json},

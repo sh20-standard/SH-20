@@ -4,7 +4,7 @@
 //
 //   import { available, walletKeys, masterSecret, decodeAddress, seal, scan, spendKeys, sign } from 'circuit/js/webcrypto.js';
 //   if (!(await available())) throw new Error('this browser has no X25519');
-//   const keys = await walletKeys(await masterSecret(bip39Seed));   // { ask, nsk, ivk, address }
+//   const keys = await walletKeys(await masterSecret(bip39Seed, 'sh20'));   // { ask, nsk, ivk, address }; 'tsh20' on a test network
 //   const to = await decodeAddress('sh20', string);
 //   const out = await seal(to, 'GENE', 700n, e);                     // { leaf, pkEph, ct } and { secrets, npk }
 //   const note = await scan(keys.ivk, keys.address, out);            // null unless it is ours
@@ -29,8 +29,8 @@ import { noteLeaf, tickerT } from '../../indexer/src/notes.js';
 import { parseAddress } from './address.js';
 import { L, mulBase8 } from './babyjub.js';
 import { NONCE_TAG, signInputs, signWithNonce } from './eddsa.js';
-import { TAG, TICKER, noteNpk } from './seal.js';
-import { aes256GcmOpen, aes256GcmSeal, concat, hkdfSha256, hmacSha512, sha256, x25519 as dh, x25519Public as dhPublic } from './subtle.js';
+import { TAG, TICKER, masterSecretInput, noteNpk } from './seal.js';
+import { aes256GcmOpen, aes256GcmSeal, concat, hkdfSha256, hmacSha512, isCanonicalU, sha256, x25519 as dh, x25519Public as dhPublic } from './subtle.js';
 
 export { P, poseidon } from '../../indexer/src/poseidon.js';
 export { noteLeaf, tickerT } from '../../indexer/src/notes.js';
@@ -73,9 +73,14 @@ export async function hashToScalar(tag, ...parts) {
 
 // ── keys (§1) ──
 
-/** m = the first 32 bytes of HMAC-SHA512(key = "sh20/v0/seed", data = the 64-byte BIP39 seed). */
-export async function masterSecret(bip39Seed) {
-  return (await hmacSha512(utf8(TAG.seed), bip39Seed)).slice(0, 32);
+/** m = the first 32 bytes of HMAC-SHA512(key = "sh20/v0/seed", data = the 64-byte BIP39 seed ‖ hrp), hrp "sh20" or "tsh20". */
+export async function masterSecret(bip39Seed, hrp) {
+  const data = masterSecretInput(bip39Seed, hrp);
+  try {
+    return (await hmacSha512(utf8(TAG.seed), data)).slice(0, 32);
+  } finally {
+    data.fill(0);
+  }
 }
 
 /** { ask, nsk, ivk, address: { ivkPub, a, n } } from the master secret. */
@@ -120,6 +125,8 @@ export async function seal(address, ticker, v, e) {
   if (!TICKER.test(ticker)) throw new RangeError('not a ticker');
   if (typeof v !== 'bigint' || v < 0n || v >= 1n << 64n) throw new RangeError('v must be a BigInt below 2^64');
   const ivkPub = bytes32('IVK', address.ivkPub);
+  // an address that was decoded has passed this; one built by hand has not
+  if (!isCanonicalU(ivkPub)) throw new Error('address: IVK is not in its one encoding');
   const pkEph = await x25519Public(e);
   const z = await x25519(e, ivkPub);
   if (isZero(z)) throw new Error('address: IVK is a low-order point');

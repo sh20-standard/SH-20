@@ -62,5 +62,5 @@ test('indexer codec and circuit/js/webcrypto.js run unchanged in a browser-like 
     assert.ok(out[k].length > 0, k);
     out[k].forEach((ok, i) => assert.equal(ok, true, `${k}[${i}]`));
   }
-  assert.equal(out.invalidAddresses.length, 13);
+  assert.equal(out.invalidAddresses.length, 15);
 });
