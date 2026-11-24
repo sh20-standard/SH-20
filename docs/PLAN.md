@@ -13,15 +13,16 @@ Done: the protocol (wire v0.3), two indexers that agree on every vector, on rand
 route through reorgs, a hardened circuit that proves in 6 seconds on a recent iPhone, a vault that mints,
 proves, sells and claims on regtest with every transaction checked by Bitcoin Core.
 
-What stops a launch today: the CI has no runner minutes left on the private repository;
-`indexer-rs` cannot verify a proof, so it refuses every spend; no real wallet has signed yet; the
-project has no account of its own.
+What stops a launch today: the CI has no runner minutes left on the private repository; no real
+wallet has signed yet; the project has no account of its own. Since this plan was written, `indexer-rs`
+verifies the real proofs (#66), a relayer exists (#65), and the relation refuses one note as both
+inputs, with new keys (#73): the keys of the signet are those of #73.
 
 ## 1. Before the move: now, in parallel
 
 | Owner | Work | Done when |
 | --- | --- | --- |
-| indexer-rs | The PLONK verifier, from the `circuit/` crate only, under the name `plonk-bn254-hermez` | `indexer-rs` replays `indexer/test/fixtures/plonk-scenario.json` as the reference does |
+| indexer-rs | The PLONK verifier, from the `circuit/` crate only, under the name `plonk-bn254-hermez` | done (#66): `indexer-rs` replays `indexer/vectors/plonk-v0.3.json` as the reference does |
 | coordination | `follow.js --data <folder>`: a restart goes on from the blocks it kept instead of replaying from `A` (the "Scale" item of `CLAUDE.md`) | done (2026-11-23): `test/blockfile.test.js`, `test/follow-data.test.js` |
 | coordination | The mirror (decision 3): its static profile in `docs/API.md`, then the step of `pages.yml` that builds it | the explorer reads a mirror built from a random chain |
 | vault | Reading a mirror: no query string, the mirror of the page's own origin first in the signet defaults | the regtest flow passes against a mirror |

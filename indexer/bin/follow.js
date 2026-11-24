@@ -14,16 +14,19 @@ import { BitcoindSource, EsploraSource, Follower } from '../src/follower.js';
 import { listen } from '../src/api.js';
 import { BlockFile } from '../src/blockfile.js';
 import { plonkVerifier } from '../src/adapters/plonk.js';
+import { options, profileFrom } from './options.js';
 
 const args = process.argv.slice(2);
-const opt = (name, def) => {
-  const i = args.indexOf(`--${name}`);
-  return i >= 0 ? args[i + 1] : def;
-};
+const USAGE = 'usage: node bin/follow.js (--rpc URL [--rpcuser U --rpcpass P] | --esplora URL) --activation HEIGHT [--deploy-burn D] [--window W] [--min-depth K] [--maturity N] [--port 8020] [--host 127.0.0.1] [--network signet] [--confirmations 0] [--interval 15] [--data <folder>] [--verifier sh20_circuit.wasm [--vk spend.vk] | --verifier test]';
+const opt = options(
+  args,
+  ['rpc', 'rpcuser', 'rpcpass', 'esplora', 'activation', 'deploy-burn', 'window', 'min-depth', 'maturity', 'port', 'host', 'network', 'confirmations', 'interval', 'data', 'verifier', 'vk'],
+  USAGE,
+);
 
 const activationHeight = Number(opt('activation', NaN));
 if (!Number.isInteger(activationHeight)) {
-  console.error('usage: node bin/follow.js (--rpc URL [--rpcuser U --rpcpass P] | --esplora URL) --activation HEIGHT [--deploy-burn D] [--window W] [--min-depth K] [--maturity N] [--port 8020] [--host 127.0.0.1] [--network signet] [--confirmations 0] [--interval 15] [--data <folder>] [--verifier sh20_circuit.wasm [--vk spend.vk] | --verifier test]');
+  console.error(USAGE);
   process.exit(1);
 }
 
@@ -43,10 +46,7 @@ const verifier = opt('verifier') === 'test'
   ? { name: 'test', verifySpend: (a) => Buffer.from(a.proof).equals(TEST_PROOF) }
   : opt('verifier') ? plonkVerifier({ wasm: opt('verifier'), vk: opt('vk') }) : undefined;
 // The rest of the profile, by the names indexer-rs takes: every indexer of a network must be given the same.
-const profile = { activationHeight, network };
-for (const [flag, key, big] of [['deploy-burn', 'deployBurn', true], ['window', 'anchorWindow'], ['min-depth', 'anchorMinDepth'], ['maturity', 'deployMaturity']]) {
-  if (opt(flag) !== undefined) profile[key] = big ? BigInt(opt(flag)) : Number(opt(flag));
-}
+const profile = profileFrom(opt, { activationHeight, network });
 const indexer = new Indexer({ profile, verifier });
 // --data <folder>: the blocks read are kept in <folder>/blocks.jsonl (src/blockfile.js), and a restart applies them
 // again from there instead of asking the source for every block since the activation height.
