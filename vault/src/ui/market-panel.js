@@ -6,7 +6,7 @@ import { frHex } from '../fr.js';
 import { loadProver } from '../prover.js';
 import { matchListings } from '../match.js';
 import { buildCancel, buildClaim, buildTake, claimProblem, decodeOffer, encodeOffer, listingFromChain, offerTerms, offerValid, payeeProblem, signOffer } from '../market.js';
-import { busy, esplora, fill, h, indexer, indexers, requireProfile, result, resultBox, sats, short, st, units } from './context.js';
+import { busy, esplora, feeRateOf, fill, h, indexer, indexers, requireProfile, result, resultBox, sats, short, st, units } from './context.js';
 import { renderAll } from './render.js';
 import { sendForm } from './send-panel.js';
 import { signFunded, txLink, walletUtxos } from './spends.js';
@@ -186,7 +186,7 @@ async function sendTake(c) {
   if (!fresh.deep) throw new Error(`not bought yet: ${fresh.shallow}`);
   const tip = await esplora.tipHeight();
   const o = await st.vault.reserveNote(); // the tokens come as this public note
-  const m = buildTake({ l: fresh.l, sig: c.sig, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: tip });
+  const m = buildTake({ l: fresh.l, sig: c.sig, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: feeRateOf(sendForm.fee), tipHeight: tip });
   if (!confirm(`Pay ${sats(fresh.l.price)} plus ${sats(m.fee)} of fees for ${units(fresh.l.amount)} ${fresh.l.ticker}?`)) return;
   await sendFunded(m, 'buy-out', `TAKE of ${units(fresh.l.amount)} ${fresh.l.ticker}`, { index: o.index, ticker: fresh.l.ticker, v: fresh.l.amount });
   marketForm.checked = null;
@@ -197,7 +197,7 @@ async function sendCancel(rec) {
   if (state !== 'ACTIVE') throw new Error(`the listing is ${state}`);
   if (!confirm(`Take ${units(l.amount)} ${l.ticker} back? The listing ends.`)) return;
   const o = await st.vault.reserveNote();
-  const m = buildCancel({ l, lockSecret: (await st.vault.lockOutput(rec.lockIndex)).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: await esplora.tipHeight() });
+  const m = buildCancel({ l, lockSecret: (await st.vault.lockOutput(rec.lockIndex)).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: feeRateOf(sendForm.fee), tipHeight: await esplora.tipHeight() });
   await sendFunded(m, 'listing-out', `Cancel of ${units(l.amount)} ${l.ticker}`, { index: o.index, ticker: l.ticker, v: l.amount });
 }
 
@@ -212,6 +212,6 @@ async function sendClaim(rec) {
   const problem = claimProblem(l, out.spent && out.txid ? await esplora.txHex(out.txid) : null);
   if (problem) throw new Error(`not claimed: ${problem}`);
   const o = await st.vault.reserveNote();
-  const m = buildClaim({ listTxid: rec.listTxid, lockSecret: (await st.vault.lockOutput(rec.lockIndex)).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: await esplora.tipHeight() });
+  const m = buildClaim({ listTxid: rec.listTxid, lockSecret: (await st.vault.lockOutput(rec.lockIndex)).secret, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: feeRateOf(sendForm.fee), tipHeight: await esplora.tipHeight() });
   await sendFunded(m, 'listing-out', `CLAIM of ${units(rec.amount)} ${rec.ticker}`, { index: o.index, ticker: rec.ticker, v: BigInt(rec.amount) });
 }

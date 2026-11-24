@@ -212,5 +212,5 @@ export function renderWallet() {
       renderAll();
     }));
     return b;
-  })), h('p', { class: 'muted' }, WALLETS.some((w) => w.detect()) ? 'Pick a wallet set to Signet.' : 'No wallet extension detected (Xverse, UniSat or Leather).'));
+  })), h('p', { class: 'muted' }, WALLETS.some((w) => w.detect()) ? `Pick a wallet set to ${NET_TITLE}.` : 'No wallet extension detected (Xverse, UniSat or Leather).'));
 }

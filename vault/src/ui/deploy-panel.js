@@ -8,7 +8,7 @@ import { frFromHex, frHex } from '../fr.js';
 import { deploySchedule, planDeployBurn, planPlainDeploy, tickerState } from '../send.js';
 import { PROFILE } from '../profile.js';
 import { actProblems, profileCheck } from '../consensus.js';
-import { NET, busy, esplora, fill, h, indexer, indexers, report, requireProfile, result, resultBox, st, units } from './context.js';
+import { NET, busy, esplora, feeRateOf, fill, h, indexer, indexers, proposedFee, report, requireProfile, result, resultBox, st, units } from './context.js';
 import { getSyncer, syncNotes } from './notes-panel.js';
 import { checkPool, renderPending } from './send-panel.js';
 import { carry, txLink } from './spends.js';
@@ -117,9 +117,9 @@ function deployButton(d, plan, D) {
   if (!st.vault) need.push('unlock the vault');
   if (!st.wallet) need.push('connect a wallet');
   if (D > 0n && !plan.inputs?.pick) need.push('hold enough unspent SH20');
-  const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: '2', class: 'narrow', name: 'deploy-fee' });
+  const fee = h('input', { type: 'number', min: '0.1', step: '0.1', value: String(proposedFee() ?? ''), placeholder: 'sat/vB', class: 'narrow', name: 'deploy-fee' });
   const b = h('button', { type: 'button', disabled: need.length > 0, name: 'deploy' }, D > 0n ? `Prove the burn of ${units(D)} SH20, sign and broadcast` : 'Sign and broadcast');
-  b.addEventListener('click', busy(b, () => sendDeploy(d, D, Number(fee.value))));
+  b.addEventListener('click', busy(b, () => sendDeploy(d, D, feeRateOf(fee.value))));
   return [h('div', { class: 'row' }, h('label', {}, 'Fee rate (sat/vB) ', fee), b),
     need.length ? h('p', { class: 'muted' }, `First ${need.join(', ')}.`) : null,
     h('p', { class: 'muted' }, `${D > 0n

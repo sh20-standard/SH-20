@@ -64,6 +64,8 @@ if (!PROFILES[PROFILE_NAME]) throw new Error(`no ${PROFILE_NAME} profile: its ac
 export { PROFILE_NAME };
 export const PROFILE = PROFILES[PROFILE_NAME];
 export const CHAIN = CHAINS[PROFILE_NAME];
+/** Whether the page follows Bitcoin mainnet: what the rules that only mainnet needs test, never a network name. */
+export const IS_MAINNET = CHAIN === CHAINS.mainnet;
 
 export const GENESIS = Object.freeze({
   ticker: DEFAULT_PROFILE.genesis.ticker,

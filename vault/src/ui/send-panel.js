@@ -4,7 +4,7 @@ import { addressToScript } from '../btc.js';
 import { toHex } from '../bytes.js';
 import { listOutputs, planBurn, planList, poolProblem } from '../market.js';
 import { planFromPending, planTransfer, revealFor } from '../send.js';
-import { NET, busy, esplora, fill, h, indexers, isolation, resultBox, sats, short, st, units } from './context.js';
+import { NET, busy, esplora, feeRateOf, fill, h, indexers, isolation, proposedFee, resultBox, sats, short, st, units } from './context.js';
 import { NETWORK_HRP } from '../notekeys.js';
 import { broadcastDeployReveal, processDeploys, reproveDeploy } from './deploy-panel.js';
 import { renderMarket } from './market-panel.js';
@@ -15,7 +15,8 @@ import { agreementText } from '../consensus.js';
 
 // ---- send ------------------------------------------------------------------------
 
-export const sendForm = { action: 'transfer', ticker: '', amount: '', to: '', fee: '2', price: '', payTo: '' };
+// fee: what the user typed; empty, the page proposes Esplora's estimate (context.js proposedFee, vault-17)
+export const sendForm = { action: 'transfer', ticker: '', amount: '', to: '', fee: '', price: '', payTo: '' };
 
 export function balances() {
   const out = new Map();
@@ -74,7 +75,7 @@ export function renderSend() {
       h('label', {}, 'Ticker ', ticker),
       h('label', {}, 'Amount ', input('amount', { inputmode: 'numeric', name: 'amount' })),
       f.action === 'list' ? h('label', {}, 'Price (sats) ', input('price', { inputmode: 'numeric', name: 'price' })) : null,
-      h('label', {}, 'Fee rate (sat/vB) ', input('fee', { type: 'number', min: '0.1', step: '0.1', name: 'fee' }))),
+      h('label', {}, 'Fee rate (sat/vB) ', input('fee', { type: 'number', min: '0.1', step: '0.1', name: 'fee', value: sendForm.fee || String(proposedFee() ?? ''), placeholder: 'type a rate' }))),
     f.action === 'transfer' ? h('label', {}, `To (an sh20 address, ${NETWORK_HRP}1…) `, input('to', { name: 'to', class: 'wide' })) : null,
     f.action === 'list' ? h('label', {}, `Paid to (a ${NET} address) `, input('payTo', { name: 'payTo', class: 'wide' })) : null,
     h('div', { class: 'row' }, b),
@@ -108,7 +109,7 @@ async function sendBurn(out) {
   const tip = await esplora.tipHeight();
   if (!confirm(`Burn ${units(amount)} ${f.ticker}? They leave the supply for good.`)) return;
   await carry({
-    kind: 'BURN', out, feeRate: Number(f.fee), tip,
+    kind: 'BURN', out, feeRate: feeRateOf(f.fee), tip,
     plan: () => planBurn({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount }),
     label: `BURN of ${units(amount)} ${f.ticker}`,
   });
@@ -125,7 +126,7 @@ async function sendList(out) {
   const lockIndex = await st.vault.reserveLock();
   const lock = await st.vault.lockOutput(lockIndex);
   await carry({
-    kind: 'LIST', out, feeRate: Number(f.fee), tip,
+    kind: 'LIST', out, feeRate: feeRateOf(f.fee), tip,
     plan: () => planList({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount, price, payScript, lockKey: lock.key }),
     outputs: listOutputs(lock.script),
     label: `LIST of ${units(amount)} ${f.ticker} for ${sats(price)}`,
@@ -139,7 +140,7 @@ async function sendTransfer(out) {
   const s = await getSyncer();
   const tip = await esplora.tipHeight();
   await carry({
-    kind: 'TRANSFER', out, feeRate: Number(f.fee), tip,
+    kind: 'TRANSFER', out, feeRate: feeRateOf(f.fee), tip,
     plan: () => planTransfer({ vault: st.vault, sync: s, tip, ticker: f.ticker, amount, to: f.to }),
     label: `TRANSFER of ${units(amount)} ${f.ticker}`,
   });
