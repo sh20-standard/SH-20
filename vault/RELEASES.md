@@ -14,7 +14,7 @@ for others, signed or published from a contributor's own machine, and no step ne
    mined when the release is announced, so that nobody holds an early mint. Set
    `SIGNET_ACTIVATION_HEIGHT = A` in `vault/src/profile.js`, the one value a release adds to the
    profile. Every indexer of the signet runs with the same height:
-   `node indexer/bin/follow.js --rpc <your signet node> --activation A --verifier vault/prover/sh20_circuit.wasm`.
+   `node indexer/bin/follow.js --rpc <your signet node> --activation A --deploy-burn 1000 --verifier vault/prover/sh20_circuit.wasm`.
    The vault refuses any indexer that reports another one, and names it.
 2. **Default servers.** `vault/src/servers.js`: on signet, indexers on the user's own machine
    (`follow.js`, port 8020) and a public Esplora. An indexer run by someone else goes in only with

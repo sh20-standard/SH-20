@@ -75,7 +75,7 @@ test('bin/replay.js replays a folder of blocks', () => {
   const mint = (h) => JSON.stringify(rpcBlock(h, [{ value: 0, scriptPubKey: { hex: opReturn(serializeEnvelope({ type: 'MINT', ticker: 'SH20', ...opening() })).toString('hex') } }]));
   writeFileSync(join(dir, '1.json'), mint(1));
   writeFileSync(join(dir, '2.json'), mint(2));
-  const out = execFileSync(process.execPath, [new URL('../bin/replay.js', import.meta.url).pathname, dir, '--activation', '1'], { encoding: 'utf8' });
+  const out = execFileSync(process.execPath, [new URL('../bin/replay.js', import.meta.url).pathname, dir, '--activation', '1', '--deploy-burn', '1000'], { encoding: 'utf8' });
   const lines = out.trim().split('\n');
   assert.match(lines[0], /^1 root=[0-9a-f]{64} digest=[0-9a-f]{64} accepted=2 rejected=0$/);
   assert.match(lines[1], /^2 .* accepted=1 rejected=0$/);

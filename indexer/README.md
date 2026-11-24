@@ -18,11 +18,11 @@ Node 20 or newer, no dependencies.
 
 ```sh
 (cd ../circuit && ./build-wasm.sh)   # optional: the 4 tests of real proofs use this build, else the copy in ../vault/prover/
-npm test                  # 74 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, block file, API, real proofs
+npm test                  # 79 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, block file, API, real proofs
 npm run vectors           # regenerates vectors/v0.3.json and vectors/plonk-v0.3.json (deterministic)
-node bin/replay.js <dir>  # replays a folder of `bitcoin-cli getblock <hash> 3` JSON files
-node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser U --rpcpass P --activation H   # live, own node
-node bin/follow.js --esplora https://mempool.space/signet/api --activation H             # live, Esplora
+node bin/replay.js <dir> --deploy-burn D   # replays a folder of `bitcoin-cli getblock <hash> 3` JSON files
+node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser U --rpcpass P --activation A --deploy-burn D   # live, own node
+node bin/follow.js --esplora https://mempool.space/signet/api --activation A --deploy-burn D    # live, Esplora
 node bin/follow.js … --data ~/sh20-js        # keeps the blocks read: a restart applies them again from disk
 ```
 

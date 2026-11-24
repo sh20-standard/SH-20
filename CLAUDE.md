@@ -55,11 +55,11 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 74 tests (4 check real proofs, with circuit/'s WebAssembly verifier or the copy in vault/prover/)
+npm test            # 79 tests (4 check real proofs, with circuit/'s WebAssembly verifier or the copy in vault/prover/)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 npm run fuzz        # random chains through both indexers (build indexer-rs first: cargo build --release)
 npm run bench       # timings of the hot paths: Poseidon, the tree, a replay, the codec, the API
-node bin/replay.js <folder of `bitcoin-cli getblock <hash> 3` JSON files>
+node bin/replay.js <folder of `bitcoin-cli getblock <hash> 3` JSON files> --deploy-burn D
 
 cd circuit
 cargo test --release    # 41 tests, with the shipped proving key (artifacts/spend.pk)

@@ -22,7 +22,7 @@ pass them in the link: `index.html?indexer=https://…` (used for that tab only,
 
 ```sh
 cd indexer
-node bin/follow.js --esplora https://mempool.space/signet/api --activation H --host 0.0.0.0
+node bin/follow.js --esplora https://mempool.space/signet/api --activation A --deploy-burn 1000 --host 0.0.0.0
 ```
 
 ## Demo data
