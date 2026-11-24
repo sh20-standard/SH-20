@@ -31,7 +31,7 @@ contributors: the standard needs none (hard requirement 2), and a default of our
 
    ```sh
    node indexer/bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser U --rpcpass P \
-     --activation A --verifier vault/prover/sh20_circuit.wasm --data ~/sh20-js   # API on 127.0.0.1:8020
+     --activation A --deploy-burn 1000 --verifier vault/prover/sh20_circuit.wasm --data ~/sh20-js   # API on 127.0.0.1:8020
    indexer-rs/target/release/sh20-indexer-rs follow --rpc http://127.0.0.1:38332 \
      --rpccookie ~/.bitcoin/signet/.cookie --activation A --deploy-burn 1000 \
      --verifier plonk-bn254-hermez --data ~/sh20-rs                      # API on 127.0.0.1:8621
@@ -59,7 +59,7 @@ contributors: the standard needs none (hard requirement 2), and a default of our
   `http://127.0.0.1:8020` (`vault/src/servers.js`): Chrome and Firefox let an https page read this
   machine's own address over plain http (Safari is to be tried). Without
   a node: `node indexer/bin/follow.js --esplora https://mempool.space/signet/api --activation A
-  --verifier vault/prover/sh20_circuit.wasm` (the Esplora server is then trusted to name the best
+  --deploy-burn 1000 --verifier vault/prover/sh20_circuit.wasm` (the Esplora server is then trusted to name the best
   chain; every envelope is still checked here). The browser may ask before a public page reads this
   machine's own address: allow it for the site.
 - **Coins.** Signet coins come from a signet faucet; a MINT of SH20 costs network fees only.
@@ -88,7 +88,7 @@ its operator's agreement and its host in `vault/test/signet.test.js` (`vault/REL
 The two indexers give different digests at the same height; the explorer's supply check fails; an
 indexer accepts a spend it should refuse, or refuses one it should accept. Keep both indexers'
 logs and the height, dump the blocks from `A` (`bitcoin-cli -signet getblock <hash> 3`), and replay
-them in both with the profile of step 1 (`node indexer/bin/replay.js <folder> --activation A --verifier
+them in both with the profile of step 1 (`node indexer/bin/replay.js <folder> --activation A --deploy-burn 1000 --verifier
 vault/prover/sh20_circuit.wasm`, `sh20-indexer-rs replay <folder> --activation A --deploy-burn 1000
 --verifier plonk-bn254-hermez --json`): the first block whose events differ says which rule. On signet the
 simplest restart is a new release with a new `A`; the old chain's tokens do not carry over.

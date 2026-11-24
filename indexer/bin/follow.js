@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Follows a chain live and serves the read-only API.
 //
-//   node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS --activation H [--port 8020]
-//   node bin/follow.js --esplora https://mempool.space/signet/api --activation H [--port 8020] [--data <folder>]
+//   node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS --activation A --deploy-burn D [--port 8020]
+//   node bin/follow.js --esplora https://mempool.space/signet/api --activation A --deploy-burn D [--port 8020] [--data <folder>]
 //
+// A and D are the network's profile and have no default (SPEC-WIRE §7): an indexer with another A or D is on another chain.
 // Your own node (--rpc) is the trust-minimised choice: an Esplora server is
 // trusted to name the best chain, even though every envelope is re-checked here.
 // Spends (TRANSFER, BURN, LIST, later DEPLOYs) are rejected unless --verifier names the
@@ -17,26 +18,22 @@ import { plonkVerifier } from '../src/adapters/plonk.js';
 import { options, profileFrom } from './options.js';
 
 const args = process.argv.slice(2);
-const USAGE = 'usage: node bin/follow.js (--rpc URL [--rpcuser U --rpcpass P] | --esplora URL) --activation HEIGHT [--deploy-burn D] [--window W] [--min-depth K] [--maturity N] [--port 8020] [--host 127.0.0.1] [--network signet] [--confirmations 0] [--interval 15] [--data <folder>] [--verifier sh20_circuit.wasm [--vk spend.vk] | --verifier test]';
+const USAGE = 'usage: node bin/follow.js (--rpc URL [--rpcuser U --rpcpass P] | --esplora URL) --activation A --deploy-burn D [--window W] [--min-depth K] [--maturity N] [--port 8020] [--host 127.0.0.1] [--network signet] [--confirmations 0] [--interval 15] [--data <folder>] [--verifier sh20_circuit.wasm [--vk spend.vk] | --verifier test]';
 const opt = options(
   args,
   ['rpc', 'rpcuser', 'rpcpass', 'esplora', 'activation', 'deploy-burn', 'window', 'min-depth', 'maturity', 'port', 'host', 'network', 'confirmations', 'interval', 'data', 'verifier', 'vk'],
   USAGE,
 );
 
-const activationHeight = Number(opt('activation', NaN));
-if (!Number.isInteger(activationHeight)) {
-  console.error(USAGE);
-  process.exit(1);
-}
+opt.require('activation', 'deploy-burn');
+const activationHeight = opt.int('activation');
 
-let source;
-if (opt('rpc')) source = new BitcoindSource(opt('rpc'), { user: opt('rpcuser', ''), pass: opt('rpcpass', '') });
-else if (opt('esplora')) source = new EsploraSource(opt('esplora'));
-else {
-  console.error('give --rpc or --esplora');
-  process.exit(1);
-}
+if ((opt('rpc') === undefined) === (opt('esplora') === undefined)) opt.fail('give one source: --rpc URL or --esplora URL');
+if ((opt('rpcuser') === undefined) !== (opt('rpcpass') === undefined)) opt.fail('--rpcuser and --rpcpass go together');
+if (opt('esplora') !== undefined && opt('rpcuser') !== undefined) opt.fail('--rpcuser and --rpcpass go with --rpc');
+const source = opt('rpc') !== undefined
+  ? new BitcoindSource(opt('rpc'), { user: opt('rpcuser', ''), pass: opt('rpcpass', '') })
+  : new EsploraSource(opt('esplora'));
 
 // What /status reports: --network, else the node's own chain name (Bitcoin Core), else "unknown" (Esplora does not say).
 const network = opt('network') ?? (opt('rpc') ? (await source.rpc('getblockchaininfo').catch(() => null))?.chain : undefined) ?? 'unknown';
@@ -56,7 +53,7 @@ const follower = new Follower({
   source,
   file: held?.file ?? null,
   startHeight: activationHeight,
-  confirmations: Number(opt('confirmations', 0)),
+  confirmations: opt.int('confirmations', 0),
   log: (r) => {
     if (r.error) console.error(`error: ${r.error}`);
     else if (r.reorg) console.log(`reorg: back from ${r.from} to ${r.to}`);
@@ -71,11 +68,11 @@ if (held) {
   console.log(`block file: ${held.blocks.length} blocks${last === undefined ? '' : `, up to block ${last}`}, applied in ${Date.now() - t0} ms${held.dropped ? ` (${held.dropped} lines left out)` : ''}`);
 }
 
-const server = await listen(indexer, { port: Number(opt('port', 8020)), host: opt('host', '127.0.0.1'), network });
+const server = await listen(indexer, { port: opt.int('port', 8020, 65535), host: opt('host', '127.0.0.1'), network });
 console.log(`SH-20 API on http://${server.address().address}:${server.address().port} (verifier: ${indexer.verifier.name})`);
 const stop = new AbortController();
 process.on('SIGINT', () => {
   stop.abort();
   server.close();
 });
-await follower.run({ intervalMs: Number(opt('interval', 15)) * 1000, signal: stop.signal });
+await follower.run({ intervalMs: Math.max(1, opt.int('interval', 15)) * 1000, signal: stop.signal });

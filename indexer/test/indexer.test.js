@@ -336,3 +336,17 @@ test('a block that does not follow the last one is refused before anything is ap
   assert.equal(ix.height, 1);
   assert.equal(ix.digest.toString('hex'), digest);
 });
+
+test('an indexer starts at the activation block or below it, never above', () => {
+  const profile = { deployMaturity: 0, activationHeight: 5, deployBurn: 0n };
+  const late = new Indexer({ profile });
+  assert.throws(() => late.applyBlock({ height: 6, hash: 'h6', txs: [] }), /expected block 5 \(the activation block\), got 6/);
+  assert.equal(late.height, null);
+  assert.equal(late.meta.has('genesis'), false);
+  // from below A, or from A itself, the chain of digests is the same
+  const early = new Indexer({ profile });
+  for (let h = 3; h <= 6; h++) early.applyBlock({ height: h, hash: `h${h}`, txs: [] });
+  const exact = new Indexer({ profile });
+  for (let h = 5; h <= 6; h++) exact.applyBlock({ height: h, hash: `h${h}`, txs: [] });
+  assert.equal(early.digest.toString('hex'), exact.digest.toString('hex'));
+});

@@ -89,6 +89,11 @@ export class Indexer {
     if (this.height !== null && block.height !== this.height + 1) {
       throw new Error(`expected block ${this.height + 1}, got ${block.height}`);
     }
+    // The first block is at most A: the chain of digests starts at block A (SPEC-WIRE §6), and an indexer that began
+    // above it would put the genesis token at another height and agree with no other.
+    if (this.height === null && block.height > this.profile.activationHeight) {
+      throw new Error(`expected block ${this.profile.activationHeight} (the activation block), got ${block.height}`);
+    }
     this._ops = [];
     const frame = { height: block.height, ops: this._ops, tree: this.tree.snapshot(), digest: this.digest };
     try {
