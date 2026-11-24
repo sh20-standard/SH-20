@@ -426,7 +426,7 @@ alone. The one ephemeral key for several recipients waits for the audit of the p
 
 ## How the result is checked
 
-- `cargo test --release`: 41 tests (three of them, `tests/audit.rs`, from the audit of 2026-11-23; three, `tests/wire.rs`, hold the bodies `src/wire.rs` writes to the envelopes of `indexer/vectors/v0.3.json`). Model against the indexer's constants; 35 adversarial witnesses
+- `cargo test --release`: 57 tests (three of them, `tests/audit.rs`, from the audit of 2026-11-23; sixteen, `tests/audit_verifier.rs`, from the audit of the verifier, 2026-11-24; three, `tests/wire.rs`, hold the bodies `src/wire.rs` writes to the envelopes of `indexer/vectors/v0.3.json`). Model against the indexer's constants; 35 adversarial witnesses
   (inflation, wrong ticker, double-spend attempts, bad ranges, wrong or swapped signatures, aliased
   keys, points off the curve) rejected by the gates; proofs end to end with every public input and
   proof byte bound; the shipped proving key reproduced by key generation.
