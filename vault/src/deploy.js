@@ -18,6 +18,7 @@ import { GENESIS, ACTIVATION_HEIGHT } from './profile.js';
 import { parseTx, txid as txidOf } from './btc.js';
 import { fromHex, toHex } from './bytes.js';
 import { payDepthProblem } from './consensus.js';
+import { committedHex } from './witness.js';
 
 /** Indexer transaction format, as carrier.js expects it. */
 const toCarrierTx = (tx) => ({
@@ -102,7 +103,14 @@ export async function verifyMintTerms(esplora, token) {
  * mint that pays or burns, while Esplora holds the DEPLOY less than PAY_DEPTH blocks deep (vault-1).
  */
 export async function verifyDeploy(esplora, token) {
-  const [hex, status, tip] = await Promise.all([esplora.txHex(token.deployTxid), esplora.txStatus(token.deployTxid), esplora.tipHeight()]);
+  // the DEPLOY's envelope as the chain committed to it, not only as Esplora serves its txid (vault-6)
+  let hex;
+  try {
+    hex = await committedHex(esplora, token.deployTxid);
+  } catch (e) {
+    throw new Error(`refusing to mint ${token.ticker}: the DEPLOY that Esplora serves is not bound to the chain (${e.message})`);
+  }
+  const [status, tip] = await Promise.all([esplora.txStatus(token.deployTxid), esplora.tipHeight()]);
   if (!status?.confirmed) throw new Error('the DEPLOY transaction is not confirmed');
   const shallow = token.payMode === PAY_MODE.NONE ? null : payDepthProblem(`the DEPLOY of ${token.ticker}`, status.block_height, tip);
   if (shallow) throw new Error(`not minted yet: ${shallow}`);
