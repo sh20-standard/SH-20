@@ -12,6 +12,7 @@ import { balances } from './send-panel.js';
 import { processDeploys } from './deploy-panel.js';
 import { syncListings } from './market-panel.js';
 import { renderAll } from './render.js';
+import { PROFILE } from '../profile.js';
 
 // ---- notes -----------------------------------------------------------------------
 
@@ -22,7 +23,9 @@ function spentText(n) {
 
 export function renderNotes() {
   const ss = st.sync;
-  fill('sync-status', ss
+  fill('sync-status', ss?.height === null
+    ? `SH-20 starts at block ${PROFILE.activationHeight.toLocaleString('en-US')}: the indexers have counted no block yet, so there is nothing to sync.`
+    : ss
     ? [`Synced to block ${ss.height}: ${ss.leaves} leaves, rebuilt here; the root matches the indexer. `,
       ss.nullifiersKnown ? 'Spends from the full nullifier list.' : h('span', { class: 'err' }, 'This indexer has no /nullifiers yet: spends unknown.')]
     : 'Not synced yet.');
@@ -121,6 +124,13 @@ async function syncOnce({ full = false } = {}) {
   const s = await getSyncer();
   // a restored vault reads every leaf until it has checked its public-note keys (AUDIT §8.9)
   const r = await s.sync(indexer, { full: full || !!st.vault?.state.unchecked?.notes });
+  if (r.height === null) {
+    // before block A: no note, no spend and no listing exists yet (a restored vault's counters stay unchecked)
+    st.sync = { height: null };
+    renderAll();
+    staticWarnings();
+    return;
+  }
   // the other indexers' root and digest after the same block (AUDIT §8.5): shown next to the balance
   st.sync = { height: r.height, leaves: r.leaves, nullifiersKnown: r.nullifiersKnown, agreement: await digestAgreement(indexers, r.height, r.digest, r.root) };
   let found = 0;

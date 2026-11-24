@@ -25,7 +25,7 @@ export async function refresh() {
     const wrongNet = status.network && status.network !== PROFILE.network;
     fill('indexer-status',
       wrongNet ? h('span', { class: 'err' }, `Indexer follows ${status.network}, not ${PROFILE.network}. `) : null,
-      `Indexer at block ${status.height ?? '?'}`,
+      status.height === null ? `Indexer before block ${PROFILE.activationHeight.toLocaleString('en-US')}, where SH-20 starts` : `Indexer at block ${status.height ?? '?'}`,
       mirror ? h('span', { id: 'mirror-age' }, ` (a mirror of it, ${mirrorAge(mirror.built)})`) : '',
       status.digest ? ` · digest ${short(String(status.digest))}` : '',
       status.verifier === 'reject-all' ? ' · spends not verified yet' : '',
@@ -63,7 +63,7 @@ export function chainHeight() {
 
 export function renderTokens() {
   if (!st.tokens.length) {
-    fill('tokens-body', h('p', { class: 'muted' }, 'No ticker to show.'));
+    fill('tokens-body', h('p', { class: 'muted' }, st.status?.height === null ? `No ticker yet: SH20 exists from block ${PROFILE.activationHeight.toLocaleString('en-US')} on.` : 'No ticker to show.'));
     return;
   }
   const H = chainHeight();

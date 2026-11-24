@@ -4,7 +4,7 @@
 // mirror as it reads an indexer, again when the mirror changes under it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Indexer } from '../../indexer/src/indexer.js';
@@ -120,4 +120,62 @@ test('a sync whose mirror is rebuilt at another tip while it reads starts again,
   } finally {
     s.close();
   }
+});
+
+test('before block A: the mirrors have no height and the digest before A, and the vault reads them as such', async () => {
+  // two indexers that have counted no block (follow.js applies none below A), and a mirror of each
+  const made = [];
+  const root = mkdtempSync(join(tmpdir(), 'sh20-mirror-before-'));
+  const files = staticServer({ root });
+  try {
+    for (const name of ['js', 'rs']) {
+      const idx = new Indexer({ profile: { activationHeight: 60 }, verifier: mockVerifier() });
+      const live = await listen(idx, { port: 0 });
+      made.push(live);
+      await buildMirror({ api: `http://127.0.0.1:${live.address().port}`, out: join(root, 'api', name) });
+    }
+    const base = await up(files);
+    const [js, rs] = ['js', 'rs'].map((n) => new IndexerApi(`${base}/api/${n}/`));
+    const k = await js.mirrorInfo();
+    assert.equal(k.height, null);
+    assert.equal(k.activationHeight, 60);
+    const [a, b] = [await js.status(), await rs.status()];
+    assert.equal(a.height, null);
+    assert.equal(a.digest, b.digest, 'digest_{A−1}, the same for both');
+    assert.deepEqual(await js.tokens(), [], 'SH20 exists from block A on');
+    assert.deepEqual(await js.notes(0), []);
+    assert.deepEqual(await js.nullifiers(0), []);
+    assert.deepEqual(await js.listings(), []);
+    assert.equal(await js.rootAt(59), null);
+    assert.equal(await js.digest(59), null);
+    const sync = new Sync(memoryCache(), `${base}/api/js/`);
+    const r = await sync.sync(js);
+    assert.deepEqual({ height: r.height, leaves: r.leaves, notes: r.notes }, { height: null, leaves: 0, notes: [] }, 'nothing to sync, and no error');
+    assert.equal(sync.height, null, 'the local state is left as it was');
+  } finally {
+    made.forEach((s) => s.close());
+    files.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('before block A, the page: the sync stops at no height, and the indexer line and the tickers name block A', () => {
+  const src = (f) => readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8');
+  const notes = src('ui/notes-panel.js');
+  assert.ok(notes.indexOf('if (r.height === null) {') < notes.indexOf('digestAgreement(indexers, r.height'), 'no agreement asked at a height of null');
+  assert.match(notes, /SH-20 starts at block \$\{PROFILE\.activationHeight\.toLocaleString\('en-US'\)\}/, 'A from the vault\'s own profile, never from /status');
+  const tokens = src('ui/tokens-panel.js');
+  assert.match(tokens, /status\.height === null \? `Indexer before block \$\{PROFILE\.activationHeight/);
+  assert.match(tokens, /No ticker yet: SH20 exists from block/);
+});
+
+test('before block A, the profile check: no genesis yet is not another profile, another genesis is', async () => {
+  const { profileDiff } = await import('../src/consensus.js');
+  const { PROFILE } = await import('../src/profile.js');
+  const on = { network: PROFILE.network, activationHeight: PROFILE.activationHeight, deployBurn: String(PROFILE.deployBurn), deployMaturity: PROFILE.deployMaturity, anchorWindow: PROFILE.anchorWindow };
+  assert.deepEqual(profileDiff({ ...on, height: null, genesis: null }), [], 'the reference indexer before A');
+  assert.deepEqual(profileDiff({ ...on, height: null, genesis: 'SH20' }), [], 'indexer-rs before A, as docs/API.md says');
+  assert.match(profileDiff({ ...on, height: null, genesis: 'XXXX' }).join(), /genesis XXXX/);
+  assert.match(profileDiff({ ...on, height: null }).join(), /genesis not reported/, 'a /status without the field at all');
+  assert.match(profileDiff({ ...on, height: PROFILE.activationHeight, genesis: null }).join(), /genesis not reported/, 'from block A on it must be there');
 });

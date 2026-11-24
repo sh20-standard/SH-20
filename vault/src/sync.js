@@ -83,7 +83,8 @@ export class Sync {
   /**
    * Brings the local tree and nullifier set to the indexer's current height.
    * Returns the notes read in this sync (for matching the vault's own notes),
-   * the height and whether the spent-nullifier list is available.
+   * the height and whether the spent-nullifier list is available. Before block A
+   * the height is null, and nothing is read or changed here.
    */
   async sync(api, { full = false, tries = 3 } = {}) {
     if (full) this.reset();
@@ -99,6 +100,10 @@ export class Sync {
       return this.sync(api, { full, tries: tries - 1 });
     };
     const H = status.height;
+    if (H === null) {
+      // before block A (docs/API.md /status: no block counted yet): no leaf and no nullifier to read
+      return { height: null, digest: status.digest ?? null, root: null, notes: [], from: 0, leaves: 0, nullifiersKnown: false };
+    }
     if (!Number.isInteger(H)) throw new Error('the indexer reports no height');
     if (this.height !== null && H < this.height - REORG_MARGIN) this.reset(); // indexer far behind us: start again
 
