@@ -161,7 +161,7 @@ The plan, with an owner and a test of done for each step: `docs/PLAN.md` (2026-1
 The protocol, two indexers that agree on every vector, a hardened circuit and a vault that mints, proves, sells and
 claims exist. What is left before people can try it, in order (review of 2026-11-19):
 
-1. **Clean redeploy.** Move the repository to the project's own anonymous account (`SH-20`, public: `docs/PLAN.md` §2), with the history rewritten: author and
+1. **Clean redeploy.** Move the repository to the project's own anonymous account (`sh20-standard`, created 2026-11-24; the repository stays `SH-20`, public: `docs/PLAN.md` §2), with the history rewritten: author and
    committer `SH-20 contributors <contributors@sh20.invalid>` everywhere (the web merges of PRs carry a personal account's
    email), and every date in UTC (a timezone is personal data).
    Nothing public before this, and nothing pinned on IPFS from a personal machine (a pinning node announces its IP).
@@ -290,7 +290,7 @@ private part that already proves and verifies, in open code.
 
 Still to fix before the signet: the activation height `A` (the tip + 6 at the soft launch, `docs/PLAN.md` §3).
 
-Decided (2026-11-23, `docs/PLAN.md`, the maintainer having left the choice to the plan): the account `SH-20`, public from the
+Decided (2026-11-23, `docs/PLAN.md`, the maintainer having left the choice to the plan): the account `sh20-standard` (`SH-20` was taken), public from the
 first push; the batch target is about 223 vB per relayed transfer on signet and about 200 vB in the next wire version, a
 transfer paying several people after the signet and the first audit, and 150 vB is dropped (it needs a relayer that sees its
 users' transfers); phones and the public explorer read a mirror the Pages site serves itself; no IPFS before mainnet; no

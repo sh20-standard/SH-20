@@ -32,16 +32,17 @@ inputs, with new keys (#73): the keys of the signet are those of #73.
 ## 2. The move: one sitting
 
 1. **maintainer**: an email address made for the project, opened over a VPN, linked to nothing of yours.
-   With it and over the same VPN, the GitHub account `SH-20`: free plan, no payment method, two-factor
-   by an authenticator app. Then an empty public repository named `SH-20` (no README, no licence: the
+   With it and over the same VPN, the GitHub account `sh20-standard` (done 2026-11-24: `SH-20` and `sh20` were
+   taken, and GitHub no longer takes Outlook or Hotmail addresses for new accounts): free plan, no payment method,
+   two-factor by an authenticator app. Then an empty public repository named `SH-20` (no README, no licence: the
    history brings them).
-2. **maintainer**: connect Claude to that account, with access to `SH-20/SH-20`. Anthropic then knows that
+2. **maintainer**: connect Claude to that account, with access to `sh20-standard/SH-20`. Anthropic then knows that
    both accounts are one person; GitHub and everyone else do not.
 3. **coordination**: no pull request left open on the old repository; `rewrite.sh` on its last `main`
    (ready and checked on 2026-11-23: 213 commits, one author, every date in UTC, no session link, the
    new address in `vault/RELEASES.md` and `vault/release.js`); pushed from the session, so that no
    machine of ours touches the new repository; the CI green there.
-4. **every tab**: clones `SH-20/SH-20` and works there only.
+4. **every tab**: clones `sh20-standard/SH-20` and works there only.
 5. **maintainer**: archives the old repository, and deletes it once the new one is checked.
 
 ## 3. Soft launch: one or two days, not announced
@@ -79,7 +80,7 @@ from a workflow (`vault/RELEASES.md`, step 7).
 
 ## Decisions taken here (2026-11-23)
 
-1. **The account is `SH-20`, public from the first push.** A public repository gets GitHub's runners and
+1. **The account is `sh20-standard` (`SH-20` was taken), public from the first push.** A public repository gets GitHub's runners and
    Pages for nothing, so no payment method ties the account to a person; the signet is public anyway,
    and SH-20's answer to its competitors is code that anyone can run.
 2. **The batch target.** About 223 vB for each relayed transfer on signet (wire v0.3, unchanged); about
