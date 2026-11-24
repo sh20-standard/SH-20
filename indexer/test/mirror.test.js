@@ -142,3 +142,14 @@ test('waiting for the tip: an indexer with no block is at the tip until the chai
     api.close();
   }
 });
+
+test('before block A, /status names the genesis ticker, as docs/API.md says and indexer-rs does', async () => {
+  const { server, live } = await setup([]);
+  try {
+    const s = (await live('/status')).body;
+    assert.equal(s.height, null);
+    assert.equal(s.genesis, 'SH20');
+  } finally {
+    server.close();
+  }
+});
