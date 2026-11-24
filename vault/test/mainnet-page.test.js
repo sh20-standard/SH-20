@@ -36,7 +36,7 @@ test('vault-17: every fee field proposes that estimate; without one, 2 sat/vB of
   assert.match(src('ui/tokens-panel.js'), /st\.feeRate = await esplora\.feeEstimate\(\);/, 'read with the tip');
   const ui = ['ui/send-panel.js', 'ui/market-panel.js', 'ui/deploy-panel.js', 'ui/tokens-panel.js'].map(src).join('\n');
   assert.doesNotMatch(ui, /fee: '2'|value: '2'|\|\| 2[,)]/, 'no fixed 2 sat/vB left');
-  assert.equal((ui.match(/feeRate: feeRateOf\(/g) ?? []).length, 6, 'a BURN, a LIST, a TRANSFER, a TAKE, a cancel, a CLAIM');
+  assert.equal((ui.match(/feeRate: feeRateOf\(/g) ?? []).length, 7, 'a BURN, a LIST, a TRANSFER, a TAKE, a cancel, a CLAIM, the sweep of a DEPLOY held back');
   assert.match(src('ui/deploy-panel.js'), /sendDeploy\(d, D, feeRateOf\(fee\.value\)\)/);
   assert.match(src('ui/vault-panel.js'), /`Pick a wallet set to \$\{NET_TITLE\}\.`/);
   assert.doesNotMatch(src('ui/vault-panel.js'), /set to Signet/);

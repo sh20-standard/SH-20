@@ -6,9 +6,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { Indexer } from '../../indexer/src/indexer.js';
 import { chain, deployEnv, tx as helperTx } from '../../indexer/test/helpers.js';
-import { revealSchedule, planPlainDeploy, planCarrier, revealFor, pendingRecord, tickerState } from '../src/send.js';
+import { buildSweep, revealSchedule, planPlainDeploy, planCarrier, revealFor, pendingRecord, tickerState } from '../src/send.js';
 import { keyPathOutput, sigMsg, sigHash } from '../src/taproot.js';
-import { txid as txidOf } from '../src/btc.js';
+import { addressToScript, txid as txidOf } from '../src/btc.js';
 import { schnorrVerify } from '../src/sh20.js';
 import { Vault, STORAGE_KEY } from '../src/keys.js';
 import { NOTE_SCHEME } from '../src/notekeys.js';
@@ -123,4 +123,29 @@ test('before a reveal the ticker must be known free: no indexer answering holds 
   assert.equal(tickerState([{ status: 'fulfilled', value: null }], 'SNIP'), 'unknown', 'a malformed answer is no answer');
   const app = readFileSync(new URL('../src/ui/deploy-panel.js', import.meta.url), 'utf8');
   assert.match(app, /if \(ticker === 'unknown'\) \{[\s\S]{0,200}continue;/, 'processDeploys waits on unknown');
+});
+
+test('vault-4: a reveal whose mint would start before it can land is held, and its commit taken back alone', () => {
+  // the commit confirmed at 11 (N = 6): the reveal lands at 17 at the earliest, so a start of 17 or less passes no chain
+  assert.deepEqual(revealSchedule({ commitHeight: 11, tip: 12, N: 6, start: 17 }), { state: 'late', blocks: null });
+  assert.deepEqual(revealSchedule({ commitHeight: 11, tip: 12, N: 6, start: 18 }), { state: 'waiting', blocks: 4 });
+  assert.deepEqual(revealSchedule({ commitHeight: 11, tip: 40, N: 6, start: 30 }), { state: 'late', blocks: null }, 'a commit that waited, or a page closed long');
+  // the sweep: the commit output, by the one-time key's key path, to the wallet's address, at the rate given
+  const d = { ...deployEnv({ ticker: 'LATE', start: 30, unlock: 30 }), payScript: new Uint8Array(0) };
+  const env = planPlainDeploy({ d, team: null }).envelope;
+  const plan = planCarrier({ envelope: env, payer: PAYER, utxos: [{ txid: '22'.repeat(32), vout: 0, value: 50000n }], feeRate: 1, tipHeight: 10 });
+  const rec = { ...pendingRecord('DEPLOY', plan, env, []), commitTxid: txidOf(plan.commit.tx) };
+  const to = addressToScript(PAYER.address);
+  const sw = buildSweep(rec, { toScript: to, feeRate: 1 }); // a plain DEPLOY's commit holds what its reveal costs, a few hundred sats
+  assert.deepEqual([sw.tx.vin.length, sw.tx.vin[0].txid, sw.tx.vout.length], [1, rec.commitTxid, 1]);
+  assert.equal(sw.tx.vout[0].value + sw.fee, plan.value, 'all of the commit, less the fee');
+  assert.deepEqual(Buffer.from(sw.tx.vout[0].script), Buffer.from(to));
+  const key = keyPathOutput(plan.secret, plan.c.leaf);
+  const msg = sigHash(sigMsg(sw.tx, 0, [{ value: plan.value, script: plan.c.scriptPubKey }]));
+  assert.ok(schnorrVerify(Buffer.from(key.key), Buffer.from(msg), Buffer.from(sw.tx.vin[0].witness[0])), 'signed by the key path');
+  assert.throws(() => buildSweep(rec, { toScript: to, feeRate: 1000 }), /too little to take back/);
+  // the page: held, its notes back, and the sweep offered from the list of spends
+  const deploys = readFileSync(new URL('../src/ui/deploy-panel.js', import.meta.url), 'utf8');
+  assert.match(deploys, /if \(sched\.state === 'late'\) \{[\s\S]*?await v\.releaseInputs\(p\.inputs \?\? \[\]\);\s*await v\.updatePending\(p\.id, \{ status: 'start passed' \}\);\s*continue;/);
+  assert.match(readFileSync(new URL('../src/ui/send-panel.js', import.meta.url), 'utf8'), /if \(p\.status === 'start passed'\) \{[\s\S]*?buildSweep\(p, \{ toScript: addressToScript\(st\.wallet\.address\), feeRate: feeRateOf\(sendForm\.fee\) \}\)/);
 });

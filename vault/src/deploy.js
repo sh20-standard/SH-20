@@ -25,7 +25,8 @@ const toCarrierTx = (tx) => ({
   vout: tx.vout.map((o) => ({ value: o.value, script: Buffer.from(o.script) })),
 });
 
-const FIELDS = ['ticker', 'max', 'lim', 'pre', 'start', 'end', 'price', 'payMode', 'payScript'];
+// every term of a DEPLOY, `unlock` included (vault-5): the block a team allocation unlocks is what hard requirement 3 is about
+const FIELDS = ['ticker', 'max', 'lim', 'pre', 'start', 'end', 'unlock', 'price', 'payMode', 'payScript'];
 
 /**
  * Compares the DEPLOY in `rawHex` with the indexer's `token`. Returns the list
