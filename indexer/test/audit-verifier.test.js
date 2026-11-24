@@ -101,15 +101,19 @@ test('the adapter: each of the nine inputs is checked by the module, in the orde
 // Finding verifier-2. The adapter writes each input as the bytes `frToBytes` gives, whatever their number, and leaves
 // the range to the module. A negative value is written on 31 bytes (its hex has a sign), all zero: the module reads 0,
 // or 0 with the top byte the call before left there. 2^256 is written as 2^252, and a longer value past its 32 bytes.
-// The indexer never passes such a value (its nine inputs are field elements, a u64 and a u32 by construction);
-// nothing in the adapter refuses one.
-test('verifier-2: the adapter reads an input that is no field element as another value', { skip }, () => {
+// The indexer never passes such a value (its nine inputs are field elements, a u64 and a u32 by construction).
+// Fixed: the adapter answers false unless each input is a field element, below r (indexer/src/adapters/plonk.js).
+test('verifier-2: the adapter refuses an input that is no field element, instead of reading it as another value', { skip }, () => {
   const v = plonkVerifier({ wasm });
   assert.equal(v.verifySpend(args()), true);
   assert.equal(inputs[7], 0n);
-  // vPub = −1, and tPub = −5, are read as 0: the TRANSFER's proof "verifies" for them
-  assert.equal(v.verifySpend(args({ vPub: -1n })), true, 'the adapter now refuses a negative input: update the report');
-  assert.equal(v.verifySpend(args({ tPub: -5n })), true);
+  // vPub = −1, and tPub = −5, were read as 0, and the TRANSFER's proof "verified" for them: now refused
+  assert.equal(v.verifySpend(args({ vPub: -1n })), false);
+  assert.equal(v.verifySpend(args({ tPub: -5n })), false);
+  assert.equal(v.verifySpend(args({ vPub: FR })), false, 'r itself');
+  assert.equal(v.verifySpend(args({ root: -1n })), false);
+  assert.equal(v.verifySpend(args({ vPub: 0 })), true, 'a number is read as the same bigint');
+  assert.equal(v.verifySpend(args()), true, 'and nothing left behind changes the next answer');
   // not a way to move value: the BURN's vPub, 900, has no negative that reads as 900
   assert.equal(v.verifySpend(burnArgs), true);
   assert.equal(b[7], 900n);
