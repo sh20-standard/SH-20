@@ -34,20 +34,33 @@ export class EsploraSource {
     return this._get(`/block-height/${height}`, false);
   }
 
-  /** The block's transactions from its raw bytes, in one request; null if the server does not serve them. */
-  async _raw(hash, count) {
-    const res = await this.fetch(`${this.base}/block/${hash}/raw`).catch(() => null);
+  /**
+   * The block's transactions from its raw bytes, in one request; null if the server does not serve them. Bytes that
+   * are not the block asked for are refused, never replaced by the pages: the follower tries again at its next step.
+   */
+  async _raw(hash, head) {
+    const path = `/block/${hash}/raw`;
+    const res = await this.fetch(this.base + path).catch(() => null);
     if (!res?.ok) return null;
-    const txs = parseRawBlock(Buffer.from(await res.arrayBuffer()));
-    if (txs.length !== count) throw new Error(`esplora /block/${hash}/raw: ${txs.length} transactions, the header says ${count}`);
-    return txs;
+    let block;
+    try {
+      block = parseRawBlock(Buffer.from(await res.arrayBuffer()));
+    } catch (e) {
+      throw new Error(`esplora ${path}: ${e.message}`);
+    }
+    if (block.hash !== hash) throw new Error(`esplora ${path}: the bytes are those of block ${block.hash}`);
+    // the block's own header against what /block/:hash said of it
+    const prev = head.previousblockhash ?? '0'.repeat(64);
+    if (block.prev !== prev) throw new Error(`esplora ${path}: the block before is ${block.prev}, not ${prev}`);
+    if (block.txs.length !== head.tx_count) throw new Error(`esplora ${path}: ${block.txs.length} transactions for a tx_count of ${head.tx_count}`);
+    return block.txs;
   }
 
   async block(hash) {
     const head = await this._get(`/block/${hash}`);
     // More than one page: the raw block, one request where pages of 25 take one per page (a mainnet block holds
     // thousands of transactions, and a public server limits its callers). Pages if the server has no /raw.
-    const raw = head.tx_count > this.pageSize ? await this._raw(hash, head.tx_count) : null;
+    const raw = head.tx_count > this.pageSize ? await this._raw(hash, head) : null;
     const txs = raw ?? [];
     for (let start = 0; !raw && start < head.tx_count; start += this.pageSize) {
       const page = await this._get(`/block/${hash}/txs/${start}`);
