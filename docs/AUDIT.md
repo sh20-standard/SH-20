@@ -249,8 +249,8 @@ would tell the indexer which notes are its own. None of this is cryptographicall
 | sealing and scanning | `T/notes.rs` (7 tests) and `J/notes.test.js`, on vectors written by the Rust model; each JavaScript test runs on `node:crypto` and on WebCrypto; `scanning refuses anything altered`, `a note whose plaintext lies about its leaf is ignored` | X25519, HKDF and AES-GCM are the platform's; Safari and Firefox not run |
 | the wallet's spend values | `J/vectors.test.js`, `J/reference.test.js`; `the_wallet_vectors_are_the_ones_the_model_writes` | — |
 
-Counts: `cargo test --release` 35, `indexer` 61 (those of `plonk.test.js` are skipped without the
-verifier module), `circuit/js` 48.
+Counts: `cargo test --release` 63, `indexer` 92 (those that run the verifier module are skipped
+without it), `circuit/js` 59.
 
 ## 5. Reproducing everything from zero
 
@@ -277,10 +277,10 @@ The three digests are constants of `circuit/src/lib.rs` (`SRS_SHA256`, `VK_DIGES
 **Tests.**
 
 ```sh
-cd circuit && cargo test --release           # 57 tests
+cd circuit && cargo test --release           # 63 tests
 ./build-wasm.sh                              # needs the targets wasm32-unknown-unknown and wasm32-wasip1-threads
-cd ../indexer && npm test                    # 88 tests; those of plonk.test.js need the module just built
-cd ../circuit/js && npm test                 # 48 tests
+cd ../indexer && npm test                    # 92 tests; those of plonk.test.js need the module just built
+cd ../circuit/js && npm test                 # 59 tests
 npm run test:browser                         # the WebCrypto primitives in headless Chrome
 ```
 
