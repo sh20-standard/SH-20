@@ -708,7 +708,7 @@ note whose scan throws does not stop the others…". One case was left below the
 `circuit/js/subtle.js` answered every `OperationError` or `DataError` of WebCrypto as a low-order
 point, so a failure of that kind inside `deriveBits` was still read as "not ours". Fixed in #40: a
 low-order point is recognised from its bytes before the platform is asked (`isLowOrder`, l. 80),
-and `x25519` (l. 93) throws whatever the platform throws; test "X25519: a failure of the platform
+and `x25519` (l. 109) throws whatever the platform throws; test "X25519: a failure of the platform
 is thrown, never read as a point of low order" (`circuit/js/test/webcrypto.test.js`). Left: a
 `pk_eph` with bit 255 set, or at or above p, is not of low order and goes to the platform. RFC 7748
 has it accept both; a browser that refused one would throw on a `pk_eph` anyone can publish, and
@@ -878,7 +878,7 @@ flight are still missing from an older backup, so their commit outputs cannot be
 | nullifier = `Poseidon(nsk + τn mod l, leaf, position)`; spent notes are found in the full list of nullifiers, never by asking about one | `notekeys.js` l. 49; `sync.js` |
 | an unused input is a note of 0 with fresh random keys and randomness, so its nullifier is new and unlinkable (§6.8) | `spend.js` l. 40 |
 | the body signed is every envelope byte before the proof; each signature is verified, and the proof is verified against its public inputs, before anything is sent | `spend.js` l. 113–117; `send.js` l. 85 |
-| the prover's seed is 32 bytes from `crypto.getRandomValues` for each proof, drawn in the worker, never stored or derived, with a test (§6.6) | `prover-worker.js` l. 19; `test/prover-seed.test.js` |
+| the prover's seed is 32 bytes from `crypto.getRandomValues` for each proof, drawn in the worker, never stored or derived, with a test (§6.6) | `prover-worker.js` l. 20; `test/prover-seed.test.js` |
 | the proving key is checked by the module against its pinned hash, and the verifying key it yields against the pinned digest | `prover.js` l. 106 |
 | the BIP341 signature message, read against the specification for the two modes used (default, and `SINGLE \| ANYONECANPAY`), key path and script path | `taproot.js` l. 94 |
 | an offer's signature commits to the lock's outpoint, amount, script and sequence, to the version and locktime, and to the output paying the price; a buyer checks it under the key of the lock output, which the txid does cover | `market.js` l. 86–116, l. 136 |
