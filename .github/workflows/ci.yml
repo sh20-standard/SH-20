@@ -87,6 +87,12 @@ jobs:
         run: |
           node bin/api-diff.js --rs ../indexer-rs/target/release/sh20-indexer-rs --seed ci --blocks 40 --reorg 3,2
           node bin/api-diff.js --rs ../indexer-rs/target/release/sh20-indexer-rs --seed run-${{ github.run_id }} --blocks 40 --reorg 2,0
+      # The site's mirror as pages.yml builds it (indexer/bin/mirror-site.js): both followers to the tip, every route of
+      # each mirror against a reference, a second run from the block files, and the explorer reading both mirrors in
+      # headless Chrome (installed on GitHub's Ubuntu runners).
+      - name: the site's mirror of both indexers, and the explorer on it
+        working-directory: indexer
+        run: node bin/mirror-check.js --rs ../indexer-rs/target/release/sh20-indexer-rs --seed run-${{ github.run_id }} --chrome google-chrome
       - if: failure()
         uses: actions/upload-artifact@v4
         with:

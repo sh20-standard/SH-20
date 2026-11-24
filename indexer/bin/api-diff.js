@@ -111,7 +111,7 @@ const routes = [
   '/listings', '/listings?state=ACTIVE', '/listings?state=SOLD', '/listings?state=CLOSED', '/listings?state=CLAIMED', '/listings?state=NOPE',
   ...listings.map((l) => `/listing/${l.txid ?? l.listTxid}`), `/listing/${'00'.repeat(32)}`,
   ...blocks.map((b) => `/digest/${b.height}`), '/digest/0', `/digest/${tip + 1}`,
-  '/blocks', '/blocks?limit=200', `/blocks?before=${Math.floor(tip / 2)}&limit=5`,
+  '/blocks', '/blocks?limit=200', '/blocks?limit=0', '/blocks?limit=1', '/notes?from=0&limit=0', `/blocks?before=${Math.floor(tip / 2)}&limit=5`,
   ...blocks.map((b) => `/block/${b.height}`), '/block/0',
   ...txids.map((t) => `/tx/${t}`), '/tx/xyz', '/nope',
 ];

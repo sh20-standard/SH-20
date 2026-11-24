@@ -108,3 +108,39 @@ or `/nullifier/:hex` for your own notes: that tells the indexer which notes are 
 A deeper reorg stops the follower with an error instead of serving a wrong state. While it rolls back, the API serves
 each tip on the way: a client that pages through `/notes` reads `/status` before and after, and starts again if `hash` or
 `digest` moved.
+
+## The static mirror
+
+A mirror is the API of one indexer written as files, for a host that serves files and runs nothing: no query string,
+one file per answer. The site serves its own at `/api/js/` (the mirror of `follow.js`) and `/api/rs/` (of
+`indexer-rs follow`), rebuilt about every 10 minutes by `.github/workflows/pages.yml` (`docs/PLAN.md`, decision 3).
+`indexer/bin/mirror.js --api URL --out <folder>` writes the mirror of any running indexer; `indexer/bin/mirror-site.js`
+is what `pages.yml` runs for both. `indexer/src/mirror-read.js` answers every route of the API from a mirror's files
+as the indexer would, with no dependency (the explorer carries it inlined), and `indexer/bin/mirror-check.js` checks
+both mirrors route by route against a reference indexer, and the explorer reading them (CI, `indexer-rs` job).
+
+| File | Holds |
+| --- | --- |
+| `mirror.json` | `{ format: "sh20-api-mirror/1", built, implementation, network, activationHeight, height, hash, digest, notePage, blockPage }`: what the mirror is of, its tip, and when it was made (`built`, UTC). A client given a base URL reads `mirror.json` first: with this `format`, the base is a mirror; otherwise (a live indexer answers it 404) it is an indexer |
+| `status.json`, `tokens.json`, `listings.json` | `/status`, `/tokens`, `/listings` |
+| `token/<ticker>.json`, `listing/<txid>.json`, `tx/<txid>.json` | that route, for every token, every listing and every SH-20 transaction |
+| `block/<H>.json`, `digest/<H>.json` | `/block/:height` and `/digest/:height` for every height from `A` to the tip |
+| `roots.json` | `/roots` with its default `from`, the tip − `W`: the anchor window |
+| `nullifiers.json` | `/nullifiers`, from `A` |
+| `notes/<k>.json` | `/notes?from=k × notePage&limit=notePage`, for `k` from 0 (`notePage` is 1000); `notes/0.json` exists with no leaf |
+| `blocks.json` | `/blocks?limit=blockPage` (`blockPage` is 200), the newest blocks with activity |
+
+Each file holds the bytes the indexer sent. A route with a query is worked out from them: `/listings?state=S` filters
+`listings.json`; `/nullifiers?from=H` and `/nullifier/:hex` read `nullifiers.json`; `/roots?from=H` filters
+`roots.json` and takes the roots below the window from `block/<H>.json`; `/notes?from=F&limit=L` reads the pages that
+cover it; `/blocks?before=H&limit=L` filters `blocks.json` and reads older blocks one by one. `/path/:pos` is not in a
+mirror: a wallet rebuilds the tree from the notes, which is also the private way. A file that is not there is the
+route's `404`.
+
+**One tip.** A mirror is made from one tip: `/status` is read before the first file and after the last, and the mirror
+is kept only if both name the same block and digest. GitHub Pages replaces the whole site at once, but a browser can
+keep a file in its cache for some minutes: a client asks for every file with revalidation (`cache: 'no-cache'`), and a
+wallet that reads several files compares `status.json` before and after, as with a live indexer (above, "Reorgs").
+
+**Trust.** A mirror says what its indexer said when the run that built it ran, and nothing more: that run is public
+(the Actions log of `pages.yml`), and the two mirrors come from two implementations, to be compared by `digest`.

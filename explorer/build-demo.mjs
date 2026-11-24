@@ -160,6 +160,11 @@ let html = readFileSync(file, 'utf8');
 const demoRe = /(<script id="demo-data" type="application\/json">)[\s\S]*?(<\/script>)/;
 if (!demoRe.test(html)) throw new Error('index.html has no demo-data block');
 html = html.replace(demoRe, (_, a, b) => a + data.replace(/</g, '\\u003c') + b);
+// The mirror reader, the one the indexer's tests check (indexer/src/mirror-read.js), without its exports.
+const reader = readFileSync(new URL('../indexer/src/mirror-read.js', import.meta.url), 'utf8').split('// -- exports (not inlined) --')[0].trim();
+const readerRe = /(\/\* mirror-read\.js \*\/)[\s\S]*?(\/\* end mirror-read\.js \*\/)/;
+if (!readerRe.test(html)) throw new Error('index.html has no mirror-read.js block');
+html = html.replace(readerRe, (_, a, b) => `${a}\n${reader.replace(/^(?=.)/gm, '  ')}\n  ${b}`);
 const app = html.match(/<script id="app">([\s\S]*?)<\/script>/);
 if (!app) throw new Error('index.html has no app script');
 const sha = createHash('sha256').update(app[1], 'utf8').digest('base64');

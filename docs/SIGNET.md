@@ -12,7 +12,7 @@ contributors: the standard needs none (hard requirement 2), and a default of our
 | 1 | The clean redeploy: the repository on the project's own anonymous account `SH-20`, public, history rewritten (`docs/PLAN.md` §2) | waits on that account; the rewritten history is ready |
 | 2 | The CI runs. On a public repository GitHub's runners cost nothing; on a private one a run costs about 27 runner minutes | the account's minutes ran out on 2026-11-22 (no job starts since 11:41 UTC) |
 | 3 | `indexer-rs` verifies PLONK proofs. Without `--verifier plonk-bn254-hermez` it refuses every spend, and parts with the reference at the first TRANSFER | done (2026-11-23): the verifier of `circuit/` as a library; it replays `indexer/vectors/plonk-v0.3.json` |
-| 4 | An indexer that a phone can reach (below, "Phones") | decided: the site's own mirror (`docs/PLAN.md`, decision 3), to build |
+| 4 | An indexer that a phone can reach (below, "Phones") | the site's own mirror (`docs/PLAN.md`, decision 3): built by `pages.yml` and read by the explorer (2026-11-24); the vault to read it |
 | 5 | The activation height `A` | fixed at launch (step 1) |
 
 ## Launch, in order
@@ -43,8 +43,12 @@ contributors: the standard needs none (hard requirement 2), and a default of our
    it compares their digests at the height both have reached. A difference stops the run (below).
 4. **The site.** Settings → Pages → Source: GitHub Actions; Settings → Secrets and variables →
    Actions → Variables: `PAGES` = `on`. `.github/workflows/pages.yml` then publishes, from `main`,
-   the vault on the signet profile at `/vault/`, the explorer at `/explorer/` and the phone test page
-   at `/phone/`. It stops while `A` is unset, so nothing goes out before step 1.
+   the vault on the signet profile at `/vault/`, the explorer at `/explorer/`, the phone test page
+   at `/phone/`, and the mirror of both indexers at `/api/js/` and `/api/rs/`, rebuilt every 10
+   minutes from a public signet Esplora (the variable `SIGNET_ESPLORA`, else mempool.space). It
+   publishes nothing while `A` is unset, so nothing goes out before step 1. The first run after the
+   launch reads the chain from `A`; each later run starts from the block files the last one cached.
+   The explorer on the site reads both mirrors by itself and compares their digests.
 5. **The release.** `vault/RELEASES.md`, steps 3 to 6: version, CI green on the commit (the regtest
    job included), `npm run release`, and the `release` workflow's rebuild. Step 7, the CID pinned on
    IPFS, waits for mainnet (`docs/PLAN.md`, decision 5).
@@ -76,10 +80,10 @@ The phone test page needs nothing but the site: it proves on the phone and repor
 vault on a phone needs an indexer the phone can reach, which means https on a public address: an
 https page cannot read a plain http address other than the device's own.
 
-Decided (`docs/PLAN.md`, decision 3): the site serves a mirror of both indexers itself, at `/api/js/`
-and `/api/rs/`, rebuilt every 10 minutes by `pages.yml` from the public code; it lags the chain by
-about 10 to 30 minutes. Until it is built, phones measure the prover and the whole flow is tried on
-computers. Operators who run `follow.js` behind https can still offer it as a link
+Decided (`docs/PLAN.md`, decision 3) and built (2026-11-24): the site serves a mirror of both indexers
+itself, at `/api/js/` and `/api/rs/`, rebuilt every 10 minutes by `pages.yml` from the public code; it
+lags the chain by about 10 to 30 minutes (`docs/API.md`, "The static mirror"). The explorer reads it;
+until the vault does, phones measure the prover and the whole flow is tried on computers. Operators who run `follow.js` behind https can still offer it as a link
 (`/vault/?indexer=https://…`): the vault asks before it uses servers from a link, and a default needs
 its operator's agreement and its host in `vault/test/signet.test.js` (`vault/RELEASES.md`, step 2).
 
