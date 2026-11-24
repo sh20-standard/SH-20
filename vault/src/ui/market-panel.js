@@ -10,7 +10,7 @@ import { busy, esplora, fill, h, indexer, indexers, requireProfile, result, resu
 import { renderAll } from './render.js';
 import { sendForm } from './send-panel.js';
 import { signFunded, txLink, walletUtxos } from './spends.js';
-import { listingCheck, TAKE_QUORUM } from '../consensus.js';
+import { PAY_DEPTH, listingCheck, payDepthProblem, TAKE_QUORUM } from '../consensus.js';
 import { getSyncer } from './notes-panel.js';
 
 // ---- market: the vault's listings, and buying from an offer --------------------------------------
@@ -47,12 +47,16 @@ export async function syncListings() {
 /**
  * A listing read from the chain and reported the same way by every indexer that answers; one that
  * answers "unknown" refuses it (consensus.js listingCheck, docs/AUDIT.md §8.3). `enough` says
- * whether TAKE_QUORUM of them agree, which a TAKE needs.
+ * whether TAKE_QUORUM of them agree, which a TAKE needs; `deep` whether every one of them, and
+ * Esplora, holds the LIST PAY_DEPTH blocks deep, which a TAKE needs too (vault-1), with `shallow`
+ * saying why not.
  */
 async function checkedListing(listTxid) {
-  const { listing: indexed, agreed, down, enough } = await listingCheck(indexers, listTxid);
-  const l = listingFromChain(listTxid, await esplora.txHex(listTxid), { ...indexed, amount: String(indexed.amount), price: String(indexed.price) });
-  return { l, state: indexed.state, agreed, down, enough };
+  const { listing: indexed, agreed, down, enough, depth, depthProblem } = await listingCheck(indexers, listTxid);
+  const [hex, tx, tip] = await Promise.all([esplora.txHex(listTxid), esplora.txStatus(listTxid), esplora.tipHeight()]);
+  const l = listingFromChain(listTxid, hex, { ...indexed, amount: String(indexed.amount), price: String(indexed.price) });
+  const shallow = depthProblem ?? payDepthProblem('the LIST transaction, at Esplora,', tx?.confirmed ? tx.block_height : null, tip);
+  return { l, state: indexed.state, agreed, down, enough, depth, deep: !shallow, shallow };
 }
 
 /**
@@ -97,7 +101,7 @@ export function renderMarket() {
   let buy = null;
   const badPayee = c ? payeeProblem(c.l.payScript) : null; // a TAKE to it would not be relayed
   if (c) {
-    buy = h('button', { type: 'button', disabled: !st.wallet || c.state !== 'ACTIVE' || !c.enough || !!badPayee, name: 'buy', title: badPayee ?? (c.enough ? null : `a TAKE needs ${TAKE_QUORUM} indexers that report this listing`) }, `Buy ${units(c.l.amount)} ${c.l.ticker} for ${sats(c.l.price)}`);
+    buy = h('button', { type: 'button', disabled: !st.wallet || c.state !== 'ACTIVE' || !c.enough || !c.deep || !!badPayee, name: 'buy', title: badPayee ?? (!c.enough ? `a TAKE needs ${TAKE_QUORUM} indexers that report this listing` : c.shallow) }, `Buy ${units(c.l.amount)} ${c.l.ticker} for ${sats(c.l.price)}`);
     buy.addEventListener('click', busy(buy, () => sendTake(c)));
   }
   fill('market-body',
@@ -113,9 +117,11 @@ export function renderMarket() {
       h('dt', {}, 'Tokens'), h('dd', {}, `${units(c.l.amount)} ${c.l.ticker}, as a public note of this vault`),
       h('dt', {}, 'Price'), h('dd', {}, `${sats(c.l.price)} to ${payee(c.l.payScript)}`),
       h('dt', {}, 'State'), h('dd', {}, c.state),
+      h('dt', {}, 'Depth'), h('dd', { id: 'listing-depth' }, c.deep ? `the LIST is ${PAY_DEPTH} blocks deep or more everywhere` : `${c.depth > 0 ? `${c.depth} of ${PAY_DEPTH} blocks` : 'not confirmed'}: check the offer again after ${PAY_DEPTH - Math.max(c.depth, 0)} more block${PAY_DEPTH - Math.max(c.depth, 0) > 1 ? 's' : ''}`),
       h('dt', {}, 'Checked'), h('dd', {}, `the LIST on chain, the seller's signature for this price and payee, ${c.agreed} indexer${c.agreed > 1 ? 's' : ''} ${c.agreed > 1 ? 'agree' : 'knows it'}${c.down.length ? ` (${c.down.length} unreachable, not counted)` : ''}`)) : null,
     badPayee ? h('p', { class: 'warn err', id: 'payee-problem' }, `Cannot buy: ${badPayee}.`) : null,
     c && !c.enough ? h('p', { class: 'warn err' }, `Not enough to buy: ${c.agreed} indexer${c.agreed > 1 ? 's' : ''} ${c.agreed > 1 ? 'report' : 'reports'} this listing, and a TAKE needs ${TAKE_QUORUM} that agree. The chain alone cannot show whether the indexers accepted the LIST; one indexer could report a listing the others rejected, and the price would be paid for nothing. Add an independent indexer in Settings.`) : null,
+    c && c.enough && !c.deep ? h('p', { class: 'warn', id: 'listing-shallow' }, `Not yet: ${c.shallow}.`) : null,
     buy,
     resultBox('buy-out'));
 }
@@ -177,6 +183,7 @@ async function sendTake(c) {
   const bad = payeeProblem(fresh.l.payScript);
   if (bad) throw new Error(`not bought: ${bad}`);
   if (!fresh.enough) throw new Error(`not bought: ${fresh.agreed} indexer${fresh.agreed > 1 ? 's' : ''} ${fresh.agreed > 1 ? 'report' : 'reports'} this listing, and a TAKE needs ${TAKE_QUORUM} that agree (add one in Settings)`);
+  if (!fresh.deep) throw new Error(`not bought yet: ${fresh.shallow}`);
   const tip = await esplora.tipHeight();
   const o = await st.vault.reserveNote(); // the tokens come as this public note
   const m = buildTake({ l: fresh.l, sig: c.sig, npk: o.npk, payer: st.wallet, utxos: await walletUtxos(), feeRate: Number(sendForm.fee) || 2, tipHeight: tip });

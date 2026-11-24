@@ -609,7 +609,7 @@ anchor; with that note and that root, a proof that fails is refused too. It asks
 payee, only when it cannot check: no nullifier of its notes, a local tree that does not reach the
 anchor, or a verifier that cannot run.
 
-Checked: `offerTerms` (`market.js` l. 179), called by `copyOffer` (`ui/market-panel.js` l. 131)
+Checked: `offerTerms` (`market.js` l. 181), called by `copyOffer` (`ui/market-panel.js` l. 137)
 before `signOffer`. Test "8.2 an offer is signed only for terms the vault vouches for" replays the
 swap above with a real proof: the same txid with another envelope is refused. Left: when the vault
 cannot check, the seller reading the price and the payee is the only check.
@@ -634,8 +634,8 @@ CLOSED.
 Fixed in #33 (commit `ecfcbb4`): `listingCheck`: an indexer that answers "unknown" refuses the
 listing, and a TAKE needs two indexers that agree (`TAKE_QUORUM`).
 
-Checked: `listingCheck` (`consensus.js` l. 182) and `TAKE_QUORUM = 2` (l. 172), used by
-`checkedListing` (`ui/market-panel.js` l. 52) and again just before the TAKE is built (l. 179).
+Checked: `listingCheck` (`consensus.js` l. 203) and `TAKE_QUORUM = 2` (l. 172), used by
+`checkedListing` (`ui/market-panel.js` l. 54) and again just before the TAKE is built (l. 185).
 Test "8.3 an indexer that answers and does not know the listing refuses it". This closes the
 finding as proposed. Left: the quorum counts answers, so two indexers run by one party count as two.
 
@@ -680,7 +680,7 @@ Fixed in #33 (commits `f242de1`, `1d7766f`): after every sync the other indexers
 tree's root (against the root rebuilt from the leaves) and on the digest at the synced block, and
 the count is shown next to the balance.
 
-Checked: `digestAgreement` (`consensus.js` l. 217), called at every sync (`ui/notes-panel.js`
+Checked: `digestAgreement` (`consensus.js` l. 250), called at every sync (`ui/notes-panel.js`
 l. 163). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
 refuse. A balance is still shown when the indexers disagree, with the count marked as an error. What
 a disagreement stops is a mint (`crossCheck`), a TAKE (`listingCheck`) and, since #38, giving back
@@ -881,7 +881,7 @@ flight are still missing from an older backup, so their commit outputs cannot be
 | the prover's seed is 32 bytes from `crypto.getRandomValues` for each proof, drawn in the worker, never stored or derived, with a test (§6.6) | `prover-worker.js` l. 20; `test/prover-seed.test.js` |
 | the proving key is checked by the module against its pinned hash, and the verifying key it yields against the pinned digest | `prover.js` l. 106 |
 | the BIP341 signature message, read against the specification for the two modes used (default, and `SINGLE \| ANYONECANPAY`), key path and script path | `taproot.js` l. 94 |
-| an offer's signature commits to the lock's outpoint, amount, script and sequence, to the version and locktime, and to the output paying the price; a buyer checks it under the key of the lock output, which the txid does cover | `market.js` l. 86–116, l. 136 |
+| an offer's signature commits to the lock's outpoint, amount, script and sequence, to the version and locktime, and to the output paying the price; a buyer checks it under the key of the lock output, which the txid does cover | `market.js` l. 87–117, l. 137 |
 | the BIP340 nonce is derived as specified, with fresh auxiliary randomness at every signature | `secp256k1.js` l. 358; `taproot.js` l. 135, l. 193 |
 | the state is AES-256-GCM under the passphrase key with a fresh 12-byte nonce at every save; a wrong passphrase fails the tag | `keys.js` l. 36, l. 235 |
-| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 17, l. 49; `ui/context.js` l. 41; `ui/spends.js` l. 30 and `ui/tokens-panel.js` l. 197 |
+| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 17, l. 49; `ui/context.js` l. 41; `ui/spends.js` l. 30 and `ui/tokens-panel.js` l. 198 |

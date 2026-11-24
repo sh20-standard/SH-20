@@ -39,14 +39,18 @@ test('an indexer that lies about payScript is caught, and the mint refused', asy
   const { token, hex } = honest();
   const lying = { ...token, payScript: ATTACKER };
   assert.match(deployMismatches(lying, hex, 1).join(), /payScript: chain says 0014666/);
+  let tip = 6; // the DEPLOY, in block 1, six blocks deep: a mint that pays may go (vault-1)
   globalThis.fetch = async (url) => ({
     ok: true, status: 200,
-    text: async () => hex,
+    text: async () => (url.endsWith('/blocks/tip/height') ? String(tip) : hex),
     json: async () => ({ confirmed: true, block_height: 1 }),
     url,
   });
   await assert.rejects(verifyDeploy(new Esplora('http://esplora'), lying), /refusing to mint GENE.*payScript/);
   await verifyDeploy(new Esplora('http://esplora'), token); // the honest terms pass
+  tip = 5; // five deep at Esplora: a mint paid to the deployer waits (vault-1)
+  await assert.rejects(verifyDeploy(new Esplora('http://esplora'), token), /not minted yet: the DEPLOY of GENE is 5 blocks deep: the vault pays once it is 6 deep/);
+  await verifyDeploy(new Esplora('http://esplora'), { ...token, payMode: 0, price: 0n }).catch((e) => assert.doesNotMatch(e.message, /deep/, 'a free mint does not wait'));
 });
 
 test('every mint term is checked', () => {

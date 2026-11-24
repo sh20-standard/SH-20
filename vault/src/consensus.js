@@ -171,23 +171,53 @@ export async function crossCheck(apis, ticker, { retries = 2, delayMs = 1500, sl
  */
 export const TAKE_QUORUM = 2;
 
+// How deep what a payment buys must be before the vault pays (docs/audit/2026-11-24-vault.md, vault-1): a TAKE
+// pays the seller whatever the indexers later decide, and a MINT pays or burns its price whatever becomes of the
+// DEPLOY. A reorg of the LIST's block, or of the DEPLOY's, can leave the transaction in the chain with its envelope
+// refused: the price is then paid for nothing. Six blocks, as the vault waits elsewhere (sync.js REORG_MARGIN,
+// send.js REFUSAL_DEPTH).
+export const PAY_DEPTH = 6;
+
+/**
+ * Why the vault does not pay yet for `what`, confirmed at `height`, with the chain at `tip`; null once it is
+ * PAY_DEPTH blocks deep. A height or a tip that is not an integer is a reason too.
+ */
+export function payDepthProblem(what, height, tip) {
+  if (!Number.isInteger(height)) return `${what} has no block yet`;
+  if (!Number.isInteger(tip)) return 'the chain tip is unknown';
+  const deep = tip - height + 1;
+  if (deep >= PAY_DEPTH) return null;
+  return `${what} is ${deep < 1 ? 'not in the chain yet' : `${deep} block${deep > 1 ? 's' : ''} deep`}: the vault pays once it is ${PAY_DEPTH} deep, so that a reorg cannot leave the price paid for nothing`;
+}
+
 const listingKey = (l) => JSON.stringify(l, (_, x) => (typeof x === 'bigint' ? String(x) : x));
 
 /**
  * Asks every indexer about `listTxid`. One that answers and does not know the listing counts
  * against it, like one that reports other terms or another state: either refuses. An unreachable
- * one is not counted. Returns { listing, agreed, down, enough }: `enough` when at least
- * TAKE_QUORUM indexers agree.
+ * one is not counted; one whose /status does not answer is counted, at a depth unknown (not deep). Returns { listing, agreed, down, enough,
+ * depth, deep, depthProblem }: `enough` when at least TAKE_QUORUM indexers agree; `depth`, how many
+ * blocks deep the shallowest of them holds the LIST (its height against the listing's), and `deep`
+ * once that is PAY_DEPTH, with `depthProblem` saying why not.
  */
 export async function listingCheck(apis, listTxid) {
-  const settled = await Promise.allSettled(apis.map((a) => a.listing(listTxid)));
+  // with each listing, the indexer's own height: how deep it holds the LIST (vault-1). The two answers stay
+  // apart: the listing alone says known, unknown or down, so an indexer that refuses the listing still
+  // refuses it when its /status fails; a /status that fails only leaves that indexer's depth unknown
+  const settled = await Promise.allSettled(apis.map(async (a) => {
+    const [listing, status] = await Promise.all([a.listing(listTxid), a.status().catch(() => null)]);
+    return listing ? { ...listing, at: status?.height } : listing;
+  }));
   const known = [];
   const unknown = [];
   const down = [];
   settled.forEach((s, i) => {
     const base = apis[i].base;
     if (s.status === 'rejected') down.push(base);
-    else if (s.value) known.push({ base, listing: s.value });
+    else if (s.value) {
+      const { at, ...listing } = s.value;
+      known.push({ base, listing, at });
+    }
     else unknown.push(base);
   });
   if (!known.length) throw new Error(unknown.length ? `no indexer knows this listing (${unknown.join(', ')})` : `no indexer reachable (${down.join(', ')})`);
@@ -200,7 +230,10 @@ export async function listingCheck(apis, listTxid) {
     const diff = Object.keys({ ...ref.listing, ...k.listing }).filter((f) => listingKey(k.listing[f]) !== listingKey(ref.listing[f]));
     throw new Error(`${k.base} and ${ref.base} disagree on this listing: ${diff.map((f) => `${f} ${listingKey(k.listing[f])} ≠ ${listingKey(ref.listing[f])}`).join(', ')}`);
   }
-  return { listing: ref.listing, agreed: known.length, down, enough: known.length >= TAKE_QUORUM };
+  // the shallowest of them: a TAKE waits until every indexer that answers holds the LIST PAY_DEPTH deep
+  const problems = known.map((k) => payDepthProblem(`the listing, at ${k.base},`, ref.listing.height, k.at));
+  const depth = Math.min(...known.map((k) => (Number.isInteger(k.at) && Number.isInteger(ref.listing.height) ? k.at - ref.listing.height + 1 : 0)));
+  return { listing: ref.listing, agreed: known.length, down, enough: known.length >= TAKE_QUORUM, depth, deep: problems.every((p) => p === null), depthProblem: problems.find((p) => p) ?? null };
 }
 
 // ---- the synced state, at every sync -----------------------------------------------------------------

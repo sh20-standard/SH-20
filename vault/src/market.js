@@ -25,6 +25,7 @@ import { concat, fromHex, toHex, utf8 } from './bytes.js';
 import { spendFrom, shuffled } from './send.js';
 import { publicInputs } from './spend.js';
 import { frHex } from './fr.js';
+import { payDepthProblem } from './consensus.js';
 
 export const LOCK_SATS = 330n; // MIN_LOCK_SATS of the indexer
 const OFFER_SEQUENCE = 0xfffffffd;
@@ -150,6 +151,7 @@ export function listingFromChain(listTxid, rawHex, indexed) {
     if (indexed.lockKey !== toHex(l.lockKey)) bad.push('lockKey');
     if (bad.length) throw new Error(`the indexer's listing differs from the chain: ${bad.join(', ')}`);
   }
+  l.height = Number.isInteger(indexed?.height) ? indexed.height : null; // the LIST's block, as the indexers give it (vault-1)
   return l;
 }
 
@@ -224,6 +226,9 @@ export function buildTake({ l, sig, npk, payer, utxos, feeRate, tipHeight }) {
   const bad = payeeProblem(l.payScript);
   if (bad) throw new Error(`not bought: ${bad}`);
   if (!offerValid(l, sig)) throw new Error('the offer\'s signature is not the lock key\'s, for this price and payee');
+  // the TAKE pays the seller whatever the indexers later decide: the LIST must be PAY_DEPTH deep first (vault-1)
+  const shallow = payDepthProblem('the listing', l.height, tipHeight);
+  if (shallow) throw new Error(`not bought yet: ${shallow}`);
   return buildFunded({
     fixed: [{ value: l.price, script: l.payScript }, takeOutput(npk)],
     pre: [{ txid: l.listTxid, vout: l.lockVout, sequence: OFFER_SEQUENCE, value: l.lockValue, script: l.lockScript, witness: [sig] }],
