@@ -277,9 +277,9 @@ The three digests are constants of `circuit/src/lib.rs` (`SRS_SHA256`, `VK_DIGES
 **Tests.**
 
 ```sh
-cd circuit && cargo test --release           # 41 tests
+cd circuit && cargo test --release           # 57 tests
 ./build-wasm.sh                              # needs the targets wasm32-unknown-unknown and wasm32-wasip1-threads
-cd ../indexer && npm test                    # 74 tests; those of plonk.test.js need the module just built
+cd ../indexer && npm test                    # 88 tests; those of plonk.test.js need the module just built
 cd ../circuit/js && npm test                 # 48 tests
 npm run test:browser                         # the WebCrypto primitives in headless Chrome
 ```
@@ -468,6 +468,10 @@ protection of holders.
   taken from the paper, not re-derived.
 - The multi-scalar multiplications and field operations are arkworks', in variable time over
   witness values. An attacker on the same device is out of the model; a hosted prover is not safe.
+- Since 2026-11-24 our own audit has read it, part `verifier`
+  ([`audit/2026-11-24-verifier.md`](audit/2026-11-24-verifier.md), property 11): the count of
+  scalars is re-derived there, and the first point above is its finding verifier-3, with a test
+  that shows the unblinded difference and the fix.
 
 ### 6.7 Per-note keys are additive tweaks the sender knows
 

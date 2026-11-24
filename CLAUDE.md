@@ -55,14 +55,14 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 87 tests (4 check real proofs, with circuit/'s WebAssembly verifier or the copy in vault/prover/)
+npm test            # 91 tests (8 run the WebAssembly verifier, circuit/'s or the copy in vault/prover/: 4 check real proofs, 4 are the verifier audit's)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 npm run fuzz        # random chains through both indexers (build indexer-rs first: cargo build --release)
 npm run bench       # timings of the hot paths: Poseidon, the tree, a replay, the codec, the API
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 3` JSON files> --deploy-burn D
 
 cd circuit
-cargo test --release    # 41 tests, with the shipped proving key (artifacts/spend.pk)
+cargo test --release    # 57 tests, with the shipped proving key (artifacts/spend.pk)
 ./build-wasm.sh         # two WebAssembly builds: one thread with no imports, and a thread pool over Web Workers
 bench/cross-check.sh    # snarkjs against our verifier, both ways (hard requirement 4)
 web/build.sh            # the phone test page, in web/dist/ (see circuit/web/README.md)
@@ -150,7 +150,7 @@ through `vault/src/secp256k1.js` (no `BigInt`, no division, no branch or index o
 what an interpreter still showed removed), the vault locks itself, and a restored vault checks its counters before it
 reserves an index. 8.10 lists what is so by design.
 
-Not done: an external audit (our own, `docs/AUDIT-PROMPT.md`, has run its part `circuit`: no finding above a Note, `docs/audit/2026-11-23-circuit.md`, and the code audit of `indexer`, `docs/audit/2026-11-23-code-indexer.md`); a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the
+Not done: an external audit (our own, `docs/AUDIT-PROMPT.md`, has run its part `circuit`: no finding above a Note, `docs/audit/2026-11-23-circuit.md`; its part `verifier`: four Low at the edges, none reachable from the chain, `docs/audit/2026-11-24-verifier.md`; and the code audit of `indexer`, `docs/audit/2026-11-23-code-indexer.md`); a mid-range phone; an outside review of the note sealing (`docs/SPEC-NOTES.md`, reviewed once by the
 circuit session; its reference code and vectors are in `circuit/js`); a real wallet signing in the vault; the vault sending through a relayer (the relayer itself exists, #65); the
 profile constant `A`; a public signet run.
 
