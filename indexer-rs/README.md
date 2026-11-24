@@ -31,7 +31,7 @@ beside the reference indexer and be compared with it block by block (`follow`, b
 
 ```sh
 cd indexer-rs
-cargo test --release      # 111 tests
+cargo test --release      # 115 tests
 cargo run --release -- replay <folder of `bitcoin-cli getblock <hash> 3` JSON files> --deploy-burn D [options]
 cargo run --release -- follow --rpc http://127.0.0.1:38332 --rpcuser USER --rpcpass PASS --activation A --deploy-burn D
 ```
@@ -75,7 +75,7 @@ same height as the spent transaction's `status.block_height`; this command reads
 | --- | --- |
 | `plonk-bn254-hermez` | a valid PLONK proof under the pinned verifying key (SPEC-WIRE §4): the verifier of `circuit/`, with `circuit/artifacts/spend.vk` built into the binary and refused unless its digest is the spec's. The one for a real network |
 | `reject-all` (default; `reject` is the same) | nothing: every spend is refused |
-| `test` | the one proof `v0.3.json` uses (`"valid-proof"` padded with zeros to 480 bytes), whatever the inputs. For the vectors and the fuzzer only |
+| `test` | the one proof `v0.3.json` uses (`"valid-proof"` padded with zeros to 480 bytes), whatever the inputs. For the vectors and the fuzzer only: `follow` takes it with `--network regtest` and stops with any other network, or with none named (whoever sends those bytes spends notes that do not exist) |
 
 The default stays `reject-all`, as in the reference, whose default it is too: two indexers started without the option
 agree. Give both the real verifier on a network (`--verifier <wasm>` for the reference).
@@ -98,7 +98,12 @@ Follows the best chain from the activation block and serves the API of `docs/API
 - **Sources.** Bitcoin Core's RPC (`getblockhash`, `getblock <hash> 3`; the node must keep its blocks and their undo
   data, so not a pruned one), or an Esplora API (`https://mempool.space/signet/api`, or one's own). Esplora gives a
   block in pages of 25 transactions, and the height of the commit a DEPLOY reveals as the status of the transaction
-  it spends: one more request for each DEPLOY, none for anything else. A public Esplora limits requests: the first
+  it spends: one more request for each DEPLOY, none for anything else. A block of more than one page is read from
+  `GET /block/:hash/raw` instead, Bitcoin's serialized block in one request: a mainnet block holds thousands of
+  transactions, 160 pages for 4,000. The bytes are checked against themselves (the header hashes to the hash asked
+  for, the txids to its merkle root, the witnesses to the commitment in the coinbase, BIP 141), which no page of JSON
+  allows; bytes that fail are asked for again, never replaced by pages. A server without the route (404) still
+  serves the pages. A public Esplora limits requests: the first
   run is slow there, and `--data` keeps it from happening twice.
 - **Reorgs.** When the best chain no longer goes through the indexer's tip, it undoes its blocks one by one down to
   the last one the source still has (one hash asked for each), then applies the new ones. 288 blocks can be undone.
@@ -201,6 +206,7 @@ cd indexer-rs && cargo run --release -- follow --rpc http://127.0.0.1:38332 --rp
 | `src/state.rs` | acceptance rules, turnstile, listings, block processing, digest, undo log (§5, §6) |
 | `src/events.rs` | byte encoding of the events inside the digest (§6) |
 | `src/json.rs` | blocks from `getblock <hash> 3` (or 2) and from the vectors |
+| `src/raw.rs` | a block from Bitcoin's serialization (`/block/:hash/raw`): header, transactions in both forms (BIP 144), merkle root, witness commitment. Written from Bitcoin's formats, not from `indexer/` |
 | `src/follow.rs` | the follower: one block forward, one back in a reorg, over any `Source` |
 | `src/sources.rs` | the two sources: Bitcoin Core's JSON-RPC and Esplora (HTTP client: `ureq`, with `rustls`) |
 | `src/blocks.rs` | the block file of `--data` |
@@ -219,7 +225,7 @@ cd indexer-rs && cargo run --release -- follow --rpc http://127.0.0.1:38332 --rp
 | `tests/replay_cli.rs` | the `replay` command over the scenario written as `getblock` files, and over the chain of `plonk-v0.3.json` with the real verifier and without |
 | `tests/follow.rs` | the follower over a chain in memory: the scenario block after block, among transactions that carry nothing; the vectors' reorg and back; a shorter chain; the scenario undone block by block; a reorg of the activation block; one deeper than the undo history; a failure at every call to the source; a missing commit height; restarts from the block file, and a damaged file |
 | `tests/api.rs` | every route over the scenario: roots, digests, `eventsH`, refusals, nullifiers, listings and token counters against the vectors; public leaves recomputed from their openings; Merkle paths folded up to the root; batches in `/tx`; pages, bad parameters, 404s |
-| `tests/sources.rs` | over real sockets on local ports: the scenario served as Bitcoin Core's RPC (credentials, a busy node, no `prevout.height`) and as an Esplora API (pages, commit heights, 429), and the `follow` command from its first block through a reorg, a stop and a restart with the node down; `follow` with the real verifier over the chain of `plonk-v0.3.json` |
+| `tests/sources.rs` | over real sockets on local ports: the scenario served as Bitcoin Core's RPC (credentials, a busy node, no `prevout.height`) and as an Esplora API (pages, commit heights, 429; blocks of more than one page read raw, from a server that has the route and from one that has not, and eight kinds of bytes that are not the block), and the `follow` command from its first block through a reorg, a stop and a restart with the node down; `follow` with the real verifier over the chain of `plonk-v0.3.json` |
 
 `tests/rules.rs` states this implementation's reading of the spec. It is not evidence of agreement with the
 reference: only the vectors and a run of both indexers over the same chain are.

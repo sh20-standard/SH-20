@@ -11,6 +11,7 @@ pub mod events;
 pub mod field;
 pub mod follow;
 pub mod json;
+pub mod raw;
 pub mod server;
 pub mod sources;
 pub mod state;

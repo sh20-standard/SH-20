@@ -5,12 +5,18 @@
 mod common;
 
 use common::fake::*;
+use common::{deploy, input, mint, op_return_tx, out, p2tr, reveal_tx, transfer, witness_tx};
 use serde_json::{json, Value};
-use sh20_indexer::follow::{FollowError, Source, SourceError, Step};
+use sh20_indexer::api::Store;
+use sh20_indexer::chain::{Block, Tx};
+use sh20_indexer::envelope::Envelope;
+use sh20_indexer::follow::{FollowError, Follower, Source, SourceBlock, SourceError, Step};
 use sh20_indexer::sources::{basic_auth, CoreRpc, Esplora, Http};
 use sh20_indexer::state::needs_commit_height;
+use sh20_indexer::{Indexer, Profile, TestVerifier};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 fn last_digest(v: &Value, part: &str) -> String {
@@ -99,6 +105,8 @@ fn esplora_api() {
     let b9 = source.block(&block_hash(9, 0)).unwrap();
     assert!(b9.block.txs.len() > 60);
     assert_eq!(b9, chain.state().blocks[8]);
+    // more than one page: the block was asked for raw first, and this server has no such route
+    assert_eq!(chain.state().raw_calls, 1);
     assert_eq!(chain.state().fetched, [9, 9, 9]);
     assert!(matches!(source.block(&block_hash(9, 7)), Err(SourceError::Later(_))));
 
@@ -141,6 +149,165 @@ fn esplora_commit_not_confirmed() {
     }
     assert!(matches!(f.step(), Err(FollowError::Later(m)) if m.contains("not confirmed")));
     assert_eq!(get(&store, "/status")["height"], 3);
+}
+
+/// Payments that carry nothing: with a witness, without one, with several inputs and outputs.
+fn payments(height: u32, count: u64) -> Vec<Tx> {
+    let mut txs = Vec::new();
+    for n in 0..count {
+        let seed = u64::from(height) * 1_000 + n;
+        let mut vin = vec![input(seed)];
+        if n % 2 == 0 {
+            vin[0].witness = vec![vec![n as u8; 64], vec![2; 33]];
+        }
+        if n % 5 == 0 {
+            let mut second = input(seed + 500);
+            second.witness = vec![Vec::new(), vec![7; 300]];
+            vin.push(second);
+        }
+        let vout = (0..=n % 3).map(|k| out(1_000 * (n + 1) + k, &p2tr(&[k as u8; 32]))).collect();
+        txs.push(Tx { txid: [0; 32], vin, vout });
+    }
+    txs
+}
+
+/// Four blocks in Bitcoin's bytes. Block 1 is small. Block 2 holds 40 payments and, among them,
+/// envelopes in both carriers: mints, a TRANSFER and a DEPLOY whose commit height the source
+/// must ask for. Blocks 3 and 4 have 26 and 25 transactions: one page and one more, one page.
+fn blocks_in_bytes() -> Vec<SourceBlock> {
+    let free_mint = |n: u64| op_return_tx(n, &mint("SH20", n, None), 0);
+    let mut second = payments(2, 40);
+    second.insert(3, free_mint(21));
+    second.insert(17, witness_tx(22, &transfer(1, 5)));
+    second.insert(30, reveal_tx(23, &Envelope::Deploy(deploy("RAWB", 10)).encode(), 1));
+    second.push(free_mint(24));
+    let mut third = payments(3, 24);
+    third.push(free_mint(31));
+    let mut fourth = payments(4, 23);
+    fourth.push(free_mint(41));
+    mined(vec![
+        Block { height: 1, txs: vec![free_mint(11), free_mint(12)] },
+        Block { height: 2, txs: second },
+        Block { height: 3, txs: third },
+        Block { height: 4, txs: fourth },
+    ])
+}
+
+fn follower_from_block_1<S: Source>(source: S) -> (Follower<S>, Arc<RwLock<Store>>) {
+    let profile = Profile { deploy_maturity: 0, ..Profile::new(1, 0) };
+    let store = Arc::new(RwLock::new(Store::new(profile, "regtest", "test")));
+    let indexer = Indexer::new(profile, Box::new(TestVerifier));
+    (Follower::new(source, indexer, store.clone(), None).unwrap(), store)
+}
+
+/// Esplora: a block of more than one page is read from `/block/:hash/raw`, Bitcoin's serialized
+/// block, in one request. It gives what the pages give; a server without the route still
+/// serves the pages; and bytes that are not the block asked for are not taken.
+#[test]
+fn esplora_raw_blocks() {
+    let blocks = blocks_in_bytes();
+    assert_eq!(blocks.iter().map(|b| b.block.txs.len()).collect::<Vec<_>>(), [3, 45, 26, 25]);
+    let chain = Chain::new(blocks.clone());
+    chain.state().raw = true;
+    let url = http_server(esplora(chain.clone()));
+    let mut source = Esplora::new(&url);
+
+    // each block as the chain holds it: the txids, the outpoints in display order, the amounts,
+    // the scripts, every witness item, and the commit height of the DEPLOY from /tx/:txid/status
+    for b in &blocks {
+        assert_eq!(&source.block(&b.hash).unwrap(), b, "block {}", b.block.height);
+    }
+    // one request each for blocks 2 and 3, and pages for the two blocks of one page
+    {
+        let s = chain.state();
+        assert_eq!((s.raw_calls, s.fetched.as_slice()), (2, &[1, 4][..]));
+    }
+    assert_eq!(chain.state().status_calls, 1);
+
+    // the same chain from a server without the route: asked once for each large block, then 2
+    // and 2 pages
+    let paged = Chain::new(blocks.clone());
+    let paged_url = http_server(esplora(paged.clone()));
+    let mut pages = Esplora::new(&paged_url);
+    for b in &blocks {
+        assert_eq!(&pages.block(&b.hash).unwrap(), b, "block {} in pages", b.block.height);
+    }
+    {
+        let s = paged.state();
+        assert_eq!((s.raw_calls, s.fetched.as_slice()), (2, &[1, 2, 2, 3, 3, 4][..]));
+    }
+
+    // followed: what the raw blocks give, what the pages give and what the chain in memory gives
+    // are one state, and the envelopes of block 2 came through, the ones in a witness too
+    let (mut f, store) = follower_from_block_1(source);
+    f.catch_up().unwrap();
+    let (mut p, paged_store) = follower_from_block_1(pages);
+    p.catch_up().unwrap();
+    let (mut m, memory_store) = follower_from_block_1(Chain::new(blocks.clone()));
+    m.catch_up().unwrap();
+    assert_eq!(dump(&store), dump(&memory_store));
+    assert_eq!(dump(&paged_store), dump(&memory_store));
+    let second = get(&store, "/block/2");
+    let kinds: Vec<&str> = second["events"].as_array().unwrap().iter().map(|e| e["type"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["MINT", "TRANSFER", "DEPLOY", "MINT"]);
+    assert_eq!(second["rejected"], json!([]));
+    assert_eq!(get(&store, "/status")["height"], 4);
+
+    // bytes that are not the block: each is an answer to ask for again, and names what is wrong
+    let big = &blocks[1];
+    let good = serialized(big);
+    let other = serialized(&blocks[2]);
+    let witness_at = good.windows(64).position(|w| w == [2u8; 64]).expect("the witness of the third payment");
+    let flipped = |at: usize| {
+        let mut bytes = good.clone();
+        bytes[at] ^= 1;
+        bytes
+    };
+    let cases: Vec<(&str, Vec<u8>, &str)> = vec![
+        ("cut short", good[..good.len() - 1].to_vec(), "the bytes end"),
+        ("one byte more", [&good[..], &[0][..]].concat(), "after the last transaction"),
+        ("another block", other, "the bytes are those of block"),
+        ("a bit of the header", flipped(70), "the bytes are those of block"),
+        ("a bit of an output", flipped(good.len() - 20), "merkle root"),
+        ("a bit of a witness", flipped(witness_at), "the coinbase commits to"),
+        ("not a block", b"<html>no such page</html>".to_vec(), "not a block header"),
+        ("nothing", Vec::new(), "not a block header"),
+    ];
+    for (name, bytes, why) in cases {
+        let inner = esplora(chain.clone());
+        let bad_url = http_server(move |r: &Request| match r.path.ends_with("/raw") {
+            true => (200, bytes.clone()),
+            false => inner(r),
+        });
+        let before = chain.state().fetched.len();
+        let answer = Esplora::new(&bad_url).block(&big.hash);
+        assert!(matches!(&answer, Err(SourceError::Later(m)) if m.contains(why)), "{name}: {answer:?}");
+        assert_eq!(chain.state().fetched.len(), before, "{name}: no page is read in its place");
+    }
+    // the right bytes under a head that says otherwise: the count, the block before
+    for (key, value, why) in [
+        ("tx_count", json!(44), "for a tx_count of 44"),
+        ("previousblockhash", json!(blocks[2].hash), "the block before is"),
+    ] {
+        let inner = esplora(chain.clone());
+        let head_path = format!("/block/{}", big.hash);
+        let bad_url = http_server(move |r: &Request| {
+            let (status, body) = inner(r);
+            if r.path != head_path {
+                return (status, body);
+            }
+            let mut head: Value = serde_json::from_slice(&body).unwrap();
+            head[key] = value.clone();
+            (status, head.to_string().into_bytes())
+        });
+        let answer = Esplora::new(&bad_url).block(&big.hash);
+        assert!(matches!(&answer, Err(SourceError::Later(m)) if m.contains(why)), "{key}: {answer:?}");
+    }
+    // the server refuses for a while: asked again later, like any other route
+    chain.state().down = true;
+    assert!(matches!(Esplora::new(&url).block(&big.hash), Err(SourceError::Later(m)) if m.contains("429")));
+    chain.state().down = false;
+    assert_eq!(&Esplora::new(&url).block(&big.hash).unwrap(), big);
 }
 
 // ---------------------------------------------------------------- the command
@@ -226,15 +393,28 @@ fn follow_command() {
     let rpc = http_server(core_rpc(chain.clone(), Some(auth), true));
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("follow-command");
     let _ = std::fs::remove_dir_all(&dir);
-    let profile =
-        ["--activation", "1", "--deploy-burn", "1000", "--window", "12", "--maturity", "3", "--verifier", "test"];
+    // the test verifier goes with --network regtest and no other (below, `follow_command_errors`)
+    let profile = [
+        "--activation",
+        "1",
+        "--deploy-burn",
+        "1000",
+        "--window",
+        "12",
+        "--maturity",
+        "3",
+        "--verifier",
+        "test",
+        "--network",
+        "regtest",
+    ];
     let source = ["--rpc", rpc.as_str(), "--rpcuser", "user", "--rpcpass", "secret", "--data", dir.to_str().unwrap()];
 
     let running = start(&[&source[..], &profile[..]].concat());
     let digests = v["scenario"]["after"].as_array().unwrap();
     let s = wait_for(&running, "block 12", |s| s["height"] == 12);
     assert_eq!(s["digest"], digests[11]["digest"]);
-    assert_eq!((&s["network"], &s["verifier"], &s["activationHeight"]), (&json!("signet"), &json!("test"), &json!(1)));
+    assert_eq!((&s["network"], &s["verifier"], &s["activationHeight"]), (&json!("regtest"), &json!("test"), &json!(1)));
 
     // the chain grows: the follower follows
     chain.set(scenario(&v, true));
@@ -307,11 +487,11 @@ fn follow_command_over_esplora() {
         "--verifier",
         "test",
         "--network",
-        "signet-test",
+        "regtest",
     ]);
     let s = wait_for(&running, "block 17", |s| s["height"] == 17);
     assert_eq!(s["digest"], last_digest(&v, "scenario"));
-    assert_eq!(s["network"], "signet-test");
+    assert_eq!(s["network"], "regtest");
     assert_eq!(http_get(&format!("{}/listings?state=CLOSED", running.url)).1.as_array().unwrap().len(), 4);
 }
 
@@ -330,7 +510,14 @@ fn follow_command_names_its_verifier() {
         // every spend refused: no nullifier, and not the digest of the vectors
         assert_eq!(s["nullifiers"], 0);
         assert_ne!(s["digest"], last_digest(&v, "scenario"));
+        // an Esplora server does not name its network
+        assert_eq!(s["network"], "unknown");
     }
+    // a node does, and /status gives that name unless --network gave one
+    let rpc = http_server(core_rpc(Chain::new(scenario(&v, true)), None, true));
+    let running = start(&["--rpc", rpc.as_str(), "--activation", "1", "--deploy-burn", "1000"]);
+    let s = wait_for(&running, "block 17", |s| s["height"] == 17);
+    assert_eq!((&s["network"], &s["verifier"]), (&json!("signet"), &json!("reject-all")));
 }
 
 /// `follow --verifier plonk-bn254-hermez` over the chain of `indexer/vectors/plonk-v0.3.json`:
@@ -419,6 +606,60 @@ fn follow_command_errors() {
             "--listen nowhere",
         ),
         (&["--rpc", "http://x", "--activation", "1", "--deploy-burn", "0", "--json"][..], "unknown option --json"),
+        // the test verifier takes a fixed string as the proof of any spend: on regtest, said so, or not at all
+        (
+            &["--rpc", "http://x", "--activation", "1", "--deploy-burn", "0", "--verifier", "test"][..],
+            "with --network regtest",
+        ),
+        (
+            &["--esplora", "http://x", "--activation", "1", "--deploy-burn", "0", "--verifier", "test"][..],
+            "with --network regtest",
+        ),
+        (
+            &[
+                "--rpc",
+                "http://x",
+                "--activation",
+                "1",
+                "--deploy-burn",
+                "0",
+                "--verifier",
+                "test",
+                "--network",
+                "signet",
+            ][..],
+            "with --network regtest",
+        ),
+        (
+            &[
+                "--rpc",
+                "http://x",
+                "--activation",
+                "1",
+                "--deploy-burn",
+                "0",
+                "--network",
+                "mainnet",
+                "--verifier",
+                "test",
+            ][..],
+            "with --network regtest",
+        ),
+        (
+            &[
+                "--rpc",
+                "http://x",
+                "--activation",
+                "1",
+                "--deploy-burn",
+                "0",
+                "--verifier",
+                "test",
+                "--network",
+                "Regtest",
+            ][..],
+            "with --network regtest",
+        ),
         // each option once, and a number is decimal digits: the lines `follow.js` takes
         (
             &["--rpc", "http://x", "--activation", "1", "--deploy-burn", "0", "--activation", "1"][..],
@@ -452,6 +693,8 @@ fn follow_command_errors() {
         "3",
         "--verifier",
         "test",
+        "--network",
+        "regtest",
         "--listen",
         "127.0.0.1:0",
     ]);
