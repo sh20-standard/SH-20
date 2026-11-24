@@ -377,13 +377,23 @@ fn wire_polynomial(pk: &ProvingKey, values: &[Fr], j: usize) -> Vec<Fr> {
     plonk::keys::domain(pk.n).ifft(&column)
 }
 
-/// Property 11, and finding verifier-3. The proof is a function of the witness and of the 32-byte
-/// seed alone: a seed gives one proof, another seed another proof in every part. And the same seed
-/// with two witnesses gives the same eleven blinding scalars: the difference of the two wire
-/// commitments is then the commitment of the difference of the two unblinded polynomials, with no
-/// randomness left in it.
+/// What `sh20_prove` gives for a witness and a seed, as a proof.
+fn through_the_c_interface(handle: *const ProvingKey, w: &SpendWitness, seed: [u8; 32]) -> Proof {
+    let witness = w.to_bytes();
+    let mut out = [0u8; PROOF_BYTES];
+    assert_eq!(unsafe { ffi::sh20_prove(handle, witness.as_ptr(), seed.as_ptr(), out.as_mut_ptr()) }, 1);
+    assert!(verify(&keys().vk, &w.publics(), &out));
+    Proof::from_bytes(&out).unwrap()
+}
+
+/// Property 11, and finding verifier-3, fixed. The prover draws its eleven blinding scalars from
+/// the generator it is handed and from nothing else: one stream for two witnesses gives the same
+/// scalars, and the difference of the two wire commitments is then the commitment of the
+/// difference of the unblinded polynomials, with no randomness left in it. That is what
+/// `sh20_prove` did with a seed used twice. It now seeds the generator with
+/// SHA-256("sh20/v0/blinding" ‖ seed ‖ witness): one seed and two witnesses give unrelated scalars.
 #[test]
-fn audit_verifier_a_repeated_seed_unblinds_the_difference_of_two_proofs() {
+fn audit_verifier_a_repeated_seed_no_longer_unblinds_the_difference_of_two_proofs() {
     let pk = keys();
     let mut rng = StdRng::seed_from_u64(11);
     let w1 = fixture::spend(&mut rng, fixture::gene(), [600, 400], [700, 250, 50], 0, 0, 2);
@@ -391,48 +401,57 @@ fn audit_verifier_a_repeated_seed_unblinds_the_difference_of_two_proofs() {
     let (v1, v2) = (spend::synthesize(&w1), spend::synthesize(&w2));
     let (v1, v2) = (v1.values(), v2.values());
     let seed = [42u8; 32];
-    let with = |seed: [u8; 32], values: &[Fr]| plonk::prove(pk, values, &mut StdRng::from_seed(seed)).unwrap();
-
-    let (p1, p2) = (with(seed, v1), with(seed, v2));
-    assert_eq!(with(seed, v1), p1, "one seed and one witness: one proof");
-    let other = with([43u8; 32], v1);
-    let (b1, b3) = (p1.to_bytes().unwrap(), other.to_bytes().unwrap());
-    for part in 0..15 {
-        // s1 and s2 are evaluations of the key's polynomials at ξ, which moves with the proof
-        assert_ne!(b1[part * 32..(part + 1) * 32], b3[part * 32..(part + 1) * 32], "part {part} does not depend on the seed");
-    }
-
     let unblinded_difference = |j: usize| {
         let (a, b) = (wire_polynomial(pk, v1, j), wire_polynomial(pk, v2, j));
         let diff: Vec<Fr> = a.iter().zip(&b).map(|(x, y)| *x - *y).collect();
         plonk::keys::commit(&pk.srs_g1, &diff)
     };
     let sub = |x: &G1Affine, y: &G1Affine| (x.into_group() - y.into_group()).into_affine();
-    for (j, (c1, c2)) in [(&p1.a, &p2.a), (&p1.b, &p2.b), (&p1.c, &p2.c)].into_iter().enumerate() {
-        assert_eq!(sub(c1, c2), unblinded_difference(j), "wire {j}: the blinding did not cancel");
-    }
-    // with a seed of its own for each proof, it does not
-    assert_ne!(sub(&other.a, &p2.a), unblinded_difference(0));
-}
 
-/// Property 11, through the C interface the hosts call: `sh20_prove` draws nothing but the seed.
-#[test]
-fn audit_verifier_the_c_interface_draws_its_randomness_from_the_seed_alone() {
-    let (w, publics, _) = sample();
+    // the prover itself, given one stream twice: the blinding cancels. This is why no host and no
+    // interface may hand it one.
+    let with = |seed: [u8; 32], values: &[Fr]| plonk::prove(pk, values, &mut StdRng::from_seed(seed)).unwrap();
+    let (p1, p2) = (with(seed, v1), with(seed, v2));
+    for (j, (c1, c2)) in [(&p1.a, &p2.a), (&p1.b, &p2.b), (&p1.c, &p2.c)].into_iter().enumerate() {
+        assert_eq!(sub(c1, c2), unblinded_difference(j), "wire {j}");
+    }
+
+    // the interface the hosts call, given one seed twice: it does not
     let file = std::fs::read(repo("artifacts/spend.pk")).unwrap();
     let handle = unsafe { ffi::sh20_load_key(file.as_ptr(), file.len()) };
     assert!(!handle.is_null());
-    let witness = w.to_bytes();
-    let run = |seed: [u8; 32]| {
-        let mut out = [0u8; PROOF_BYTES];
-        assert_eq!(unsafe { ffi::sh20_prove(handle, witness.as_ptr(), seed.as_ptr(), out.as_mut_ptr()) }, 1);
-        assert!(verify(&keys().vk, publics, &out));
-        out
-    };
-    assert_eq!(run([9u8; 32]), run([9u8; 32]));
-    assert_ne!(run([9u8; 32]), run([10u8; 32]));
+    let (q1, q2) = (through_the_c_interface(handle, &w1, seed), through_the_c_interface(handle, &w2, seed));
+    for (j, (c1, c2)) in [(&q1.a, &q2.a), (&q1.b, &q2.b), (&q1.c, &q2.c)].into_iter().enumerate() {
+        assert_ne!(sub(c1, c2), unblinded_difference(j), "wire {j}: one seed gave two witnesses the same blinding");
+    }
+    // the generator is seeded with SHA-256("sh20/v0/blinding" ‖ seed ‖ witness), and with nothing else
+    for (w, values, q) in [(&w1, v1, &q1), (&w2, v2, &q2)] {
+        let hashed: [u8; 32] = <sha2::Sha256 as sha2::Digest>::digest([&b"sh20/v0/blinding"[..], &seed, &w.to_bytes()].concat()).into();
+        assert_eq!(ffi::blinding_seed(&seed, &w.to_bytes()), hashed);
+        assert_eq!(&with(hashed, values), q);
+    }
+    assert_ne!(ffi::blinding_seed(&seed, &w1.to_bytes()), seed, "the host's seed is not the generator's");
+    unsafe { ffi::sh20_key_free(handle) };
+}
+
+/// Property 11, through the C interface the hosts call: a proof is a function of the witness and
+/// of the host's 32-byte seed. One seed and one witness give one proof; another seed, another
+/// proof in every part. So a host still owes each proof a fresh seed.
+#[test]
+fn audit_verifier_the_c_interface_draws_its_randomness_from_the_seed_and_the_witness() {
+    let (w, _, _) = sample();
+    let file = std::fs::read(repo("artifacts/spend.pk")).unwrap();
+    let handle = unsafe { ffi::sh20_load_key(file.as_ptr(), file.len()) };
+    assert!(!handle.is_null());
+    let run = |seed: [u8; 32]| through_the_c_interface(handle, w, seed).to_bytes().unwrap();
+    let (first, again, other) = (run([9u8; 32]), run([9u8; 32]), run([10u8; 32]));
+    assert_eq!(first, again);
+    for part in 0..15 {
+        // s1 and s2 are evaluations of the key's polynomials at ξ, which moves with the proof
+        assert_ne!(first[part * 32..(part + 1) * 32], other[part * 32..(part + 1) * 32], "part {part} does not depend on the seed");
+    }
     // a witness that is not one: refused, nothing written
-    let mut bad = witness.clone();
+    let mut bad = w.to_bytes();
     bad[31] = 0xff; // the root, not below r
     let mut out = [0u8; PROOF_BYTES];
     assert_eq!(unsafe { ffi::sh20_prove(handle, bad.as_ptr(), [9u8; 32].as_ptr(), out.as_mut_ptr()) }, 0);

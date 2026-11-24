@@ -1,6 +1,8 @@
 // The prover's random seed (docs/AUDIT.md, doubt 6.6): 32 bytes from crypto.getRandomValues for each
-// proof, never reused, never derived from a key or from the witness. The same seed with two
-// witnesses would give the same blinding scalars and unblind the difference of their commitments.
+// proof, never reused, never derived from a key or from the witness. Before the module hashed the
+// witness into its generator (the audit's verifier-3), the same seed with two witnesses gave the
+// same blinding scalars and unblinded the difference of their commitments; the seed is still all
+// that an observer cannot recompute.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';

@@ -51,7 +51,7 @@ Not listed by the maintainer, but a finding in any of them is a finding in scope
 | [`circuit/src/plonk/keys.rs`](../circuit/src/plonk/keys.rs) | selectors and the permutation from the gates (`structure`, l. 99), the verifying key and its digest |
 | [`circuit/src/plonk/transcript.rs`](../circuit/src/plonk/transcript.rs), [`plonk/mod.rs`](../circuit/src/plonk/mod.rs) | Fiat-Shamir challenges; strict decoding of the 480 proof bytes |
 | [`circuit/src/plonk/srs.rs`](../circuit/src/plonk/srs.rs) | reads the Hermez file, pins its BLAKE2b, checks the powers are consistent |
-| [`circuit/src/ffi.rs`](../circuit/src/ffi.rs) `sh20_verify` (l. 129) and [`lib.rs`](../circuit/src/lib.rs) `verify`, `load_key` | what the indexer calls; the pinned digests |
+| [`circuit/src/ffi.rs`](../circuit/src/ffi.rs) `sh20_verify` (l. 131) and [`lib.rs`](../circuit/src/lib.rs) `verify`, `load_key` | what the indexer calls; the pinned digests |
 | [`circuit/src/model.rs`](../circuit/src/model.rs), [`poseidon.rs`](../circuit/src/poseidon.rs) | the reference the gadgets are compared with; Poseidon constants from the Grain LFSR |
 | [`indexer/src/indexer.js`](../indexer/src/indexer.js) `_checkSpend` (l. 274) and its callers, [`codec.js`](../indexer/src/codec.js) | the rules around a proof: anchors, nullifiers, public amounts, the turnstile; canonical parsing |
 | [`circuit/circom/spend.circom`](../circuit/circom/spend.circom) | the same relation with circomlib, used only as a cross-check |
@@ -148,7 +148,7 @@ A proof alone does not make a spend valid. [`indexer/src/indexer.js`](../indexer
 
 | # | Rule | Where |
 | --- | --- | --- |
-| R1 | field elements on the wire are below `r`, envelopes re-serialise to the same bytes, no trailing byte | `codec.js` `fr()` l. 57; `sh20_verify` refuses a public input that is not canonical (`ffi.rs` l. 133) |
+| R1 | field elements on the wire are below `r`, envelopes re-serialise to the same bytes, no trailing byte | `codec.js` `fr()` l. 57; `sh20_verify` refuses a public input that is not canonical (`ffi.rs` l. 135) |
 | R2 | `H − 100 ≤ anchorHeight ≤ H − 1`; `root` is the root after that block, or the empty root before activation | `_checkSpend` l. 275–279 |
 | R3 | nullifiers non-zero, different from each other (C11 holds it in the proof as well; the indexer checks it first), never seen; then recorded | l. 280–283, `_commitSpend` l. 296 |
 | R4 | output leaves non-zero; room for three leaves | l. 284–286 |
@@ -459,10 +459,12 @@ protection of holders.
 ### 6.6 Zero-knowledge has had no review
 
 - The blinding randomness comes from a 32-byte seed the host passes to `sh20_prove` (`ffi.rs`
-  l. 190). The same seed with two witnesses gives the same blinding scalars, and the differences of
-  the commitments are then unblinded. The page and the vault draw the seed from
-  `crypto.getRandomValues`; nothing makes a careless host safe. Mixing a hash of the witness into
-  the generator would.
+  l. 207). Until 2026-11-24 the seed alone seeded the generator: the same seed with two witnesses
+  gave the same blinding scalars, and the differences of the commitments were then unblinded.
+  `sh20_prove` now seeds it with SHA-256("sh20/v0/blinding" ‖ seed ‖ witness) (`ffi.rs`,
+  `blinding_seed`; verifier-3 of our audit), so a seed used twice gives two witnesses unrelated
+  scalars. The page and the vault still draw a fresh seed from `crypto.getRandomValues` for each
+  proof, and must: it is all an observer cannot recompute.
 - The prover (`plonk/prover.rs`) adds eleven blinding scalars as snarkjs does (two per wire, three
   for `Z`, two across the split quotient). Whether that is enough for the six openings has been
   taken from the paper, not re-derived.

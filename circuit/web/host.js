@@ -170,6 +170,14 @@ export function proverApi(exports, memory = exports.memory) {
   const VK = 712;
   let key = 0;
   const scratch = { witness: 0, proof: 0, vk: 0, seed: 0, publics: 0 };
+  // What goes into one of the module's buffers has that buffer's size, or is refused. The buffers follow one another
+  // in the module's memory: a longer witness, seed, proof or set of public inputs would write over the next ones, the
+  // verifying key among them, and a shorter one would leave part of the call before in place
+  // (docs/audit/2026-11-24-verifier.md, verifier-1).
+  const sized = (name, data, length) => {
+    if (!(data instanceof Uint8Array) || data.length !== length) throw new RangeError(`${name} must be ${length} bytes`);
+    return data;
+  };
   const ensure = () => {
     if (!scratch.witness) {
       scratch.witness = x.sh20_alloc(WITNESS);
@@ -212,21 +220,23 @@ export function proverApi(exports, memory = exports.memory) {
     /** A sample witness (3,232 bytes) from a 32-byte seed. */
     sampleWitness(seed) {
       ensure();
-      mem().set(seed, scratch.seed);
+      mem().set(sized('the seed', seed, 32), scratch.seed);
       x.sh20_sample_witness(scratch.seed, scratch.witness);
       return take(scratch.witness, WITNESS);
     },
     /** Proves a witness with 32 fresh random bytes; returns the 480-byte proof or null. */
     prove(witness, seed) {
       ensure();
-      mem().set(witness, scratch.witness);
+      sized('the seed', seed, 32);
+      mem().set(sized('the witness', witness, WITNESS), scratch.witness);
       mem().set(seed, scratch.seed);
       return x.sh20_prove(key, scratch.witness, scratch.seed, scratch.proof) === 1 ? take(scratch.proof, PROOF) : null;
     },
     /** Verifies a proof against 9 × 32 bytes of public inputs (the head of a witness). */
     verify(publics, proof) {
       ensure();
-      mem().set(publics, scratch.publics);
+      sized('the proof', proof, PROOF);
+      mem().set(sized('the public inputs', publics, 9 * 32), scratch.publics);
       mem().set(proof, scratch.proof);
       return x.sh20_verify(scratch.vk, VK, scratch.publics, scratch.proof, PROOF) === 1;
     },

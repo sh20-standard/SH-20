@@ -8,6 +8,8 @@
 //!   sh20_keygen(srs, srs_len) → key handle (0 on error)        sh20_key_free(handle)
 //!   sh20_vk(handle, out[712])        sh20_vk_digest(handle, out[32])
 //!   sh20_prove(handle, witness[3232], seed[32], out[480]) → 1 proved | 0 witness rejected
+//!                                                               the blinding scalars come from a generator seeded
+//!                                                               with SHA-256("sh20/v0/blinding" ‖ seed ‖ witness)
 //!   sh20_sample_witness(seed[32], out[3232])                    (benchmarks)
 //!   sh20_threads(n) → threads in use                            starts the thread pool (threaded build only)
 //!   sh20_reserve(bytes) → bytes reserved                        grows the heap once, up front (see below)
@@ -183,13 +185,29 @@ pub unsafe extern "C" fn sh20_vk_digest(pk: *const ProvingKey, out: *mut u8) {
     std::ptr::copy_nonoverlapping((*pk).vk.digest().as_ptr(), out, 32);
 }
 
+/// Domain tag of the hash that seeds the prover's generator.
+pub const TAG_BLINDING: &[u8] = b"sh20/v0/blinding";
+
+/// The seed of the generator the prover draws its blinding scalars from:
+/// SHA-256("sh20/v0/blinding" ‖ seed ‖ witness), `seed` the host's 32 bytes and `witness` the 3,232
+/// bytes it proves. The host's seed alone would give two witnesses the same eleven scalars if a
+/// host ever used one seed twice, and the difference of the two proofs' commitments would then be
+/// unblinded (docs/audit/2026-11-24-verifier.md, verifier-3). With the witness in the hash, one
+/// seed and another witness give unrelated scalars, and one seed and one witness the same proof.
+/// A host still owes a fresh seed to each proof: it is all that an observer cannot recompute.
+pub fn blinding_seed(seed: &[u8; 32], witness: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::new().chain_update(TAG_BLINDING).chain_update(seed).chain_update(witness).finalize().into()
+}
+
 /// # Safety
 /// `pk` comes from `sh20_keygen`; `witness` holds 3,232 bytes, `seed` 32 fresh random bytes, and
 /// `out` has room for 480 bytes.
 #[no_mangle]
 pub unsafe extern "C" fn sh20_prove(pk: *const ProvingKey, witness: *const u8, seed: *const u8, out: *mut u8) -> i32 {
-    let Some(w) = SpendWitness::from_bytes(bytes(witness, WITNESS_BYTES)) else { return 0 };
-    let mut rng = StdRng::from_seed(bytes(seed, 32).try_into().unwrap());
+    let witness = bytes(witness, WITNESS_BYTES);
+    let Some(w) = SpendWitness::from_bytes(witness) else { return 0 };
+    let mut rng = StdRng::from_seed(blinding_seed(bytes(seed, 32).try_into().unwrap(), witness));
     let key: &ProvingKey = &*pk;
     match on_pool(|| prove_timed(key, &w, &mut rng)) {
         Ok((proof, t)) => {
