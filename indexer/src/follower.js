@@ -7,6 +7,7 @@
 // Both return blocks as { height, hash, prev, txs } in the indexer's format.
 
 import { fromBitcoindBlock } from './adapters/bitcoind.js';
+import { parseRawBlock } from './adapters/rawblock.js';
 import { extractEnvelope } from './carrier.js';
 import { MAGIC, TYPE } from './constants.js';
 
@@ -33,10 +34,22 @@ export class EsploraSource {
     return this._get(`/block-height/${height}`, false);
   }
 
+  /** The block's transactions from its raw bytes, in one request; null if the server does not serve them. */
+  async _raw(hash, count) {
+    const res = await this.fetch(`${this.base}/block/${hash}/raw`).catch(() => null);
+    if (!res?.ok) return null;
+    const txs = parseRawBlock(Buffer.from(await res.arrayBuffer()));
+    if (txs.length !== count) throw new Error(`esplora /block/${hash}/raw: ${txs.length} transactions, the header says ${count}`);
+    return txs;
+  }
+
   async block(hash) {
     const head = await this._get(`/block/${hash}`);
-    const txs = [];
-    for (let start = 0; start < head.tx_count; start += this.pageSize) {
+    // More than one page: the raw block, one request where pages of 25 take one per page (a mainnet block holds
+    // thousands of transactions, and a public server limits its callers). Pages if the server has no /raw.
+    const raw = head.tx_count > this.pageSize ? await this._raw(hash, head.tx_count) : null;
+    const txs = raw ?? [];
+    for (let start = 0; !raw && start < head.tx_count; start += this.pageSize) {
       const page = await this._get(`/block/${hash}/txs/${start}`);
       for (const t of page) {
         txs.push({
