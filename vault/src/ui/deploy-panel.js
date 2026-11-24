@@ -7,8 +7,8 @@ import { planDeploy } from '../deploy-plan.js';
 import { frFromHex, frHex } from '../fr.js';
 import { deploySchedule, planDeployBurn, planPlainDeploy, tickerState } from '../send.js';
 import { PROFILE } from '../profile.js';
-import { profileCheck } from '../consensus.js';
-import { NET, busy, esplora, fill, h, indexers, report, requireProfile, result, resultBox, st, units } from './context.js';
+import { actProblems, profileCheck } from '../consensus.js';
+import { NET, busy, esplora, fill, h, indexer, indexers, report, requireProfile, result, resultBox, st, units } from './context.js';
 import { getSyncer, syncNotes } from './notes-panel.js';
 import { checkPool, renderPending } from './send-panel.js';
 import { carry, txLink } from './spends.js';
@@ -25,7 +25,8 @@ const heightField = (x) => (/^[0-9]{1,10}$/.test(x.trim()) ? Number(x.trim()) : 
 function deployBurn() {
   const pr = st.profile;
   if (!pr.answered) return { D: null, why: 'no indexer answered' };
-  if (pr.problems.length) return { D: null, why: pr.problems.join('. ') };
+  const act = actProblems(pr, indexer?.base); // another profile, or a primary that verifies no spend (vault-16)
+  if (act.length) return { D: null, why: act.join('. ') };
   return { D: PROFILE.deployBurn, agreed: pr.answered };
 }
 
@@ -202,8 +203,9 @@ export async function processDeploys() {
         continue;
       }
       const pc = await profileCheck(indexers);
-      if (pc.problems.length) {
-        await v.updatePending(p.id, { schedule: `due, but ${pc.problems.join('. ')}: the reveal waits` });
+      const act = actProblems(pc, indexer?.base);
+      if (act.length) {
+        await v.updatePending(p.id, { schedule: `due, but ${act.join('. ')}: the reveal waits` });
         continue;
       }
       await broadcastDeployReveal(p);

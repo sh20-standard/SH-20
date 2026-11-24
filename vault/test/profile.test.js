@@ -98,7 +98,7 @@ test('2. every value of /status is compared with that profile: an indexer that d
   for (const f of ['async function sendBurn(', 'async function sendList(', 'async function sendTransfer(']) assert.match(body(f), /await carry\(/, f);
   const deploys = body('export async function processDeploys(');
   assert.ok(deploys.indexOf('profileCheck(indexers)') < deploys.indexOf('await broadcastDeployReveal(p)'), 'a due reveal waits while an indexer differs');
-  assert.match(body('function deployBurn('), /if \(pr\.problems\.length\) return \{ D: null/, 'the deploy screen offers nothing');
+  assert.match(body('function deployBurn('), /const act = actProblems\(pr, indexer\?\.base\);[^\n]*\n\s+if \(act\.length\) return \{ D: null/, 'the deploy screen offers nothing');
 });
 
 test('3. a DEPLOY reveal waits N blocks of the embedded profile, whatever the record or the indexers say', () => {
@@ -127,7 +127,9 @@ function chainFrom(indexer, start) {
 
 /** A vault holding one SH20 note of D, and a DEPLOY that burns it, mined `age` blocks after its commit. */
 async function deployBurning(age) {
-  const idx = new Indexer({ profile: { activationHeight: PROFILE.activationHeight }, verifier: mockVerifier() }); // the reference profile: D = 1000, N = 6
+  // the reference profile: D = 1000, N = 6. The mock rule stands for the PLONK verifier here, under its name: a refusal is
+  // taken from indexers that verify spends only (vault-16, test/audit-vault.test.js and test/stuck-spend.test.js)
+  const idx = new Indexer({ profile: { activationHeight: PROFILE.activationHeight }, verifier: { ...mockVerifier(), name: 'plonk-bn254-hermez' } });
   const c = chainFrom(idx, PROFILE.activationHeight);
   c.block();
   const v = await Vault.create(memStorage());

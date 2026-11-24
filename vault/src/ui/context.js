@@ -3,7 +3,7 @@
 // has passed its checks (app.js) and by applySettings() from the settings panel.
 
 import { Esplora, IndexerApi } from '../api.js';
-import { profileCheck } from '../consensus.js';
+import { actProblems, profileCheck } from '../consensus.js';
 import { CHAIN, PROFILE, PROFILE_NAME } from '../profile.js';
 import { defaultSettings } from '../servers.js';
 
@@ -89,6 +89,9 @@ export const st = { vault: null, wallet: null, tokens: [], status: null, tip: nu
 export async function requireProfile() {
   st.profile = await profileCheck(indexers);
   if (st.profile.problems.length) throw new Error(`nothing was done: ${st.profile.problems.join('. ')}. Remove that indexer in Settings, or use one that follows this vault's profile.`);
+  // nor on the notes and the tree of a primary that verifies no spend (vault-16)
+  const act = actProblems(st.profile, indexer?.base);
+  if (act.length) throw new Error(`nothing was done: ${act.join('. ')}.`);
 }
 
 /** Shows `nodes` in the panel `id` and keeps them there across renders. */

@@ -634,7 +634,7 @@ CLOSED.
 Fixed in #33 (commit `ecfcbb4`): `listingCheck`: an indexer that answers "unknown" refuses the
 listing, and a TAKE needs two indexers that agree (`TAKE_QUORUM`).
 
-Checked: `listingCheck` (`consensus.js` l. 203) and `TAKE_QUORUM = 2` (l. 172), used by
+Checked: `listingCheck` (`consensus.js` l. 228) and `TAKE_QUORUM = 2` (l. 197), used by
 `checkedListing` (`ui/market-panel.js` l. 54) and again just before the TAKE is built (l. 185).
 Test "8.3 an indexer that answers and does not know the listing refuses it". This closes the
 finding as proposed. Left: the quorum counts answers, so two indexers run by one party count as two.
@@ -680,11 +680,11 @@ Fixed in #33 (commits `f242de1`, `1d7766f`): after every sync the other indexers
 tree's root (against the root rebuilt from the leaves) and on the digest at the synced block, and
 the count is shown next to the balance.
 
-Checked: `digestAgreement` (`consensus.js` l. 250), called at every sync (`ui/notes-panel.js`
+Checked: `digestAgreement` (`consensus.js` l. 278), called at every sync (`ui/notes-panel.js`
 l. 171). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
 refuse. A balance is still shown when the indexers disagree, with the count marked as an error. What
 a disagreement stops is a mint (`crossCheck`), a TAKE (`listingCheck`) and, since #38, giving back
-the notes of a spend that looks refused (`refusalAgreed`, `consensus.js` l. 88). #38 also has the
+the notes of a spend that looks refused (`refusalAgreed`, `consensus.js` l. 105). #38 also has the
 vault start no DEPLOY, spend, TAKE, cancel or CLAIM while an indexer reports another profile than
 its own (`requireProfile`, `ui/context.js` l. 89): that compares the profile's constants, not what
 the indexers say of the chain.

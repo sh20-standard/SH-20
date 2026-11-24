@@ -72,7 +72,8 @@ test('only SH20 skips the DEPLOY check: a token called genesis by a liar is refu
 
 test('an indexer on another profile than the vault (activation height, D, N) refuses the mint, and names it', async () => {
   const { token, status } = activated();
-  const ix = (base, s) => ({ base, status: async () => ({ height: 9, digest: 'd'.repeat(64), ...s }), token: async () => token });
+  // indexers with the PLONK verifier: a mint is made on the word of no other (vault-16)
+  const ix = (base, s) => ({ base, status: async () => ({ height: 9, digest: 'd'.repeat(64), ...s, verifier: 'plonk-bn254-hermez' }), token: async () => token });
   let r = await crossCheck([ix('a', status), ix('b', status)], 'SH20');
   assert.deepEqual(r.problems, []);
   assert.equal(r.profile, PROFILE);
