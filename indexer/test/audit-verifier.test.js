@@ -122,13 +122,13 @@ test('verifier-2: the adapter refuses an input that is no field element, instead
   assert.equal(v.verifySpend(burnArgs), true);
 });
 
-// Finding verifier-1. The browser host copies `publics` and `proof` into buffers of 288 and 480 bytes without looking
-// at their lengths, and the key the module verifies under sits in the buffer after the proof's. A "proof" that goes on
-// past 480 bytes replaces that key. With the key of a circuit that has no rule (circuit/tests/fixtures/audit/no-rule.json,
-// which circuit/tests/audit_verifier.rs checks), `verify` then answers true for a spend nobody proved, and false for
-// every real proof from then on. No caller of the vault passes anything but 480 bytes today (the codec cuts the proof
-// of an envelope to 480; the vault's own proofs are 480): the check is missing where it would cost one line.
-test('verifier-1: the browser host lets a long "proof" replace the key it verifies under', { skip }, () => {
+// Finding verifier-1, fixed. The browser host copied `publics` and `proof` into buffers of 288 and 480 bytes without
+// looking at their lengths, and the key the module verifies under sits in a buffer after the proof's. A "proof" that
+// went on past 480 bytes replaced that key: with the key of a circuit that has no rule
+// (circuit/tests/fixtures/audit/no-rule.json, which circuit/tests/audit_verifier.rs checks), `verify` answered true
+// for a spend nobody proved, and false for every real proof from then on. The host now refuses a witness, a seed, a
+// proof or public inputs of another size before it copies anything.
+test('verifier-1: the browser host refuses a "proof" that is not 480 bytes, and its key stays the pinned one', { skip }, () => {
   const forged = JSON.parse(readFileSync(path('../../circuit/tests/fixtures/audit/no-rule.json'), 'utf8'));
   const [otherKey, otherPublics, otherProof] = [forged.vk, forged.publics, forged.proof].map((h) => Buffer.from(h, 'hex'));
   const x = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(wasm)), {}).exports;
@@ -142,11 +142,23 @@ test('verifier-1: the browser host lets a long "proof" replace the key it verifi
   const proofBuffer = allocations.find(([n]) => n === PROOF_BYTES)[1];
   const keyBuffer = allocations.find(([n]) => n === otherKey.length)[1];
   assert.ok(keyBuffer > proofBuffer && keyBuffer - proofBuffer < 1 << 20, 'the key is in a buffer after the proof');
-  // 480 bytes of proof, the bytes between the two buffers as they are (18,080 of them in the module the vault ships), then the other key
+  // what replaced the key before the fix: 480 bytes of proof, the bytes between the two buffers as they are, then the other key
   const between = Buffer.from(new Uint8Array(x.memory.buffer).slice(proofBuffer + PROOF_BYTES, keyBuffer));
   const long = Buffer.concat([otherProof, between, otherKey]);
-  assert.equal(api.verify(otherPublics, long), true, 'the host now refuses a proof that is not 480 bytes: update the report');
-  // and the module is left verifying under the other key
-  assert.equal(api.verify(publics, proof), false);
-  assert.equal(api.verify(otherPublics, otherProof), true);
+  const keyBefore = Buffer.from(new Uint8Array(x.memory.buffer).slice(keyBuffer, keyBuffer + otherKey.length));
+  assert.throws(() => api.verify(otherPublics, long), RangeError, 'a proof of 19,272 bytes is copied again: the key it verifies under can be replaced');
+  // nothing was written: the key is the one that was loaded, and the answers are the ones before
+  assert.ok(Buffer.from(new Uint8Array(x.memory.buffer).slice(keyBuffer, keyBuffer + otherKey.length)).equals(keyBefore));
+  assert.equal(api.verify(publics, proof), true);
+  assert.equal(api.verify(otherPublics, otherProof), false);
+  // every buffer the host copies into: one byte more, one byte less, something that is not bytes
+  const witness = api.sampleWitness(new Uint8Array(32).fill(7));
+  assert.equal(witness.length, 3232);
+  for (const bad of [
+    () => api.verify(publics, proof.subarray(1)), () => api.verify(Buffer.concat([publics, Buffer.alloc(1)]), proof), () => api.verify(publics.subarray(32), proof),
+    () => api.verify(publics, proof.toString('hex')), () => api.prove(Buffer.concat([witness, Buffer.alloc(1)]), new Uint8Array(32)),
+    () => api.prove(witness.subarray(1), new Uint8Array(32)), () => api.prove(witness, new Uint8Array(33)), () => api.prove(witness, new Uint8Array(31)),
+    () => api.sampleWitness(new Uint8Array(33)), () => api.sampleWitness(new Uint8Array(0)),
+  ]) assert.throws(bad, RangeError);
+  assert.equal(api.verify(publics, proof), true);
 });
