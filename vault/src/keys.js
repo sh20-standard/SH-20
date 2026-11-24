@@ -84,10 +84,15 @@ export class Vault {
   #locks = new Map(); // index -> lock output (market.js), cached
   #state; // { v, network, scheme, next, notes, obsolete?, npks?, pending? }, null once locked
   #notes; // the note store (notestore.js): one record a note
+  #stored; // the vault's record as this copy last read or wrote it (null: none stored): it writes over nothing else (vault-7)
+  #queue = Promise.resolve(); // this copy's writes, one after another
   #written = new Map(); // id → the note as last stored (its persisted JSON), to write only what changed
 
-  constructor(storage, state, seed, key, salt, words = null, notes = defaultNoteStore(storage, STORAGE_KEY), written = new Map()) {
+  constructor(storage, state, seed, key, salt, words = null, notes = defaultNoteStore(storage, STORAGE_KEY), written = new Map(), stored = null) {
     this.storage = storage;
+    // what was stored when this copy was read, or null for a new or restored vault: never read again here, after
+    // the awaits that led here, where another tab's write would be taken for this copy's own
+    this.#stored = stored;
     this.#notes = notes;
     this.#written = written;
     /** Notes the vault record names and the note store does not hold (a store cleared apart): a full rescan finds them. */
@@ -188,7 +193,7 @@ export class Vault {
    * notes, read from the note store; one of format 0 (a backup, or a vault stored before vault-3) holds
    * them, and its next save moves them to the store.
    */
-  static async open(storage, passphrase = '', text = storage.getItem(STORAGE_KEY), notes = defaultNoteStore(storage, STORAGE_KEY)) {
+  static async open(storage, passphrase = '', text = storage.getItem(STORAGE_KEY), notes = defaultNoteStore(storage, STORAGE_KEY), seen = storage.getItem(STORAGE_KEY)) {
     refuseSharedOrigin();
     if (text === null) throw new Error('no vault on this device');
     const rec = JSON.parse(text);
@@ -236,7 +241,7 @@ export class Vault {
       const there = NETWORK_NAMES[made] ?? made;
       throw new Error(`this vault belongs to ${there}, and this page follows ${CHAIN.label}: it opens in the ${there} vault, or from its backup file there. A vault holds the notes of one network, and its 12 words give another, empty wallet on ${CHAIN.label}`);
     }
-    const v = new Vault(storage, state, fromHex(seed), key, salt ?? crypto.getRandomValues(new Uint8Array(16)), words, notes, written);
+    const v = new Vault(storage, state, fromHex(seed), key, salt ?? crypto.getRandomValues(new Uint8Array(16)), words, notes, written, seen);
     v.missingNotes = missing;
     return v.#init();
   }
@@ -278,7 +283,7 @@ export class Vault {
     refuseSharedOrigin();
     if (Vault.exists(storage)) throw new Error('a vault already exists on this device');
     await notes.clear(); // records of a vault no longer stored here are not this one's
-    const v = await Vault.open(storage, passphrase, text, notes);
+    const v = await Vault.open(storage, passphrase, text, notes, null); // nothing was stored: anything stored since locks it
     // a backup's counters are those of the day it was written: the indices used since are on chain
     v.state.unchecked = Vault.#unchecked();
     if (!v.encrypted && passphrase) await v.setPassphrase(passphrase);
@@ -344,32 +349,39 @@ export class Vault {
    * The notes that changed since they were last stored (`all`: every one), in one write of the note store,
    * then the vault's record, which names them: a note is stored before the record that lists it.
    */
-  async #write({ all = false } = {}) {
+  async #write(opts) {
+    // one write at a time in this copy, in the order asked; and where the browser has Web Locks, one at a time
+    // across its tabs, so that the check below and the write it allows are never split by another tab's (vault-7)
+    const run = this.#queue.then(() => (globalThis.navigator?.locks?.request ? navigator.locks.request(STORAGE_KEY, () => this.#writeNow(opts)) : this.#writeNow(opts)));
+    this.#queue = run.catch(() => {});
+    return run;
+  }
+
+  async #writeNow({ all = false } = {}) {
     const now = new Map(this.state.notes.map((n) => [n.id, persisted(n)]));
     const put = [];
     for (const [id, json] of now) if (all || this.#written.get(id) !== json) put.push([id, await this.#sealNote(id, json)]);
     const del = [...this.#written.keys()].filter((id) => !now.has(id));
     const record = JSON.stringify(await this.#record());
+    this.#checkUnchanged(); // after the encryption: another copy may have written meanwhile
     if (put.length || del.length) await this.#notes.write(put, del);
+    this.#checkUnchanged();
     this.storage.setItem(STORAGE_KEY, record);
+    this.#stored = record;
     for (const [id] of put) this.#written.set(id, now.get(id));
     for (const id of del) this.#written.delete(id);
   }
 
+  /**
+   * Refuses to write over a record this copy did not read or write last (vault-7): another tab's spend, note,
+   * counter or passphrase. Comparing the salt alone let a stale copy drop what another had just recorded, a
+   * public-note index (used twice, two notes linked) or a spend's one-time key. This copy locks instead.
+   */
   #checkUnchanged() {
     if (!this.#seed) throw new Error('the vault is locked');
-    const text = this.storage.getItem(STORAGE_KEY);
-    if (text === null) return; // nothing stored yet (a new or restored vault)
-    let salt;
-    try {
-      const rec = JSON.parse(text);
-      salt = rec.plain ? null : rec.salt;
-    } catch {
-      salt = undefined;
-    }
-    if (salt !== (this.#key ? toBase64(this.#salt) : null)) {
+    if (this.storage.getItem(STORAGE_KEY) !== this.#stored) {
       this.lock();
-      throw new Error('the vault was changed in another tab (its passphrase): this one is locked, unlock it again');
+      throw new Error('the vault was changed in another tab (a spend, a note, a counter or its passphrase): this one is locked, unlock it again');
     }
   }
 

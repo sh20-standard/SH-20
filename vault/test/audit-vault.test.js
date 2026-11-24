@@ -351,11 +351,15 @@ test('vault-7: two open copies of one vault reserve the same public-note key, an
   const first = await a.reserveNote();
   await a.addPending({ kind: 'TRANSFER', secret: '01'.repeat(32), inputs: [], status: 'prepared' });
   // the page locks a tab when it hears another one write (app.js); a save already under way is not stopped
-  const second = await b.reserveNote(); // today: accepted
-  assert.equal(second.index, first.index);
-  assert.equal(second.npk, first.npk);
+  // fixed: a copy writes over no record but the one it last read or wrote (keys.js #checkUnchanged), and locks instead
+  await assert.rejects(b.reserveNote(), /the vault was changed in another tab \(a spend, a note, a counter or its passphrase\): this one is locked/);
+  assert.equal(b.locked, true);
   const stored = JSON.parse(storage.getItem(STORAGE_KEY)).plain;
-  assert.equal(stored.pending, undefined, 'the one-time key the first copy saved is gone from the device');
+  assert.equal(stored.next, first.index + 1, 'the index the first copy reserved stays reserved');
+  assert.equal(stored.pending.length, 1, 'and so does the one-time key it saved');
+  // unlocked again, the second copy reads what the first wrote, and reserves the next key
+  const again = await Vault.open(storage);
+  assert.equal((await again.reserveNote()).index, first.index + 1);
 });
 
 // ---- vault-8 -------------------------------------------------------------------------------------
