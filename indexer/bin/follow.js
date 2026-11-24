@@ -38,6 +38,9 @@ const source = opt('rpc') !== undefined
 // What /status reports: --network, else the node's own chain name (Bitcoin Core), else "unknown" (Esplora does not say).
 const network = opt('network') ?? (opt('rpc') ? (await source.rpc('getblockchaininfo').catch(() => null))?.chain : undefined) ?? 'unknown';
 // --verifier test: the rule of the vectors (one proof, "valid-proof" padded with zeros, is valid), for differential runs
+// on regtest only: anywhere else it would accept a spend of notes that do not exist (docs/audit/2026-11-24-verifier.md,
+// verifier-4)
+if (opt('verifier') === 'test' && network !== 'regtest') opt.fail(`--verifier test only on regtest (this indexer follows ${network}): it takes one fixed string as the proof of any spend`);
 const TEST_PROOF = Buffer.concat([Buffer.from('valid-proof'), Buffer.alloc(480 - 11)]);
 let verifier;
 try {

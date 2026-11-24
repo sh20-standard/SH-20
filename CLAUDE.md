@@ -55,7 +55,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 91 tests (8 run the WebAssembly verifier, circuit/'s or the copy in vault/prover/: 4 check real proofs, 4 are the verifier audit's)
+npm test            # 92 tests (8 run the WebAssembly verifier, circuit/'s or the copy in vault/prover/: 4 check real proofs, 4 are the verifier audit's)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 npm run fuzz        # random chains through both indexers (build indexer-rs first: cargo build --release)
 npm run bench       # timings of the hot paths: Poseidon, the tree, a replay, the codec, the API

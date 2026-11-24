@@ -155,7 +155,7 @@ A proof alone does not make a spend valid. [`indexer/src/indexer.js`](../indexer
 | R5 | `m` is computed by the indexer from the bytes before the proof | l. 287 |
 | R6 | `(vPub, tPub)` come from the envelope type: TRANSFER `(0, 0)`, BURN `(vPub, t(ticker))`, LIST `(amount, t(ticker))`, DEPLOY with `D > 0` `(D, t("SH20"))` | l. 234, 400, 415, 358 |
 | R7 | turnstile: a spend with `vPub > pool[ticker]` is rejected before its proof is looked at | `_outOfPool` l. 326, called at l. 357, 399, 414 |
-| R8 | the verifying key must hash to the pinned digest | `adapters/plonk.js` l. 26–27 |
+| R8 | the verifying key must hash to the pinned digest | `adapters/plonk.js` l. 27–28 |
 | R9 | one envelope per transaction, or a batch: several in the witness, all of them TRANSFERs, each accepted or refused alone (`SPEC-WIRE.md` §3); the default verifier rejects every spend | `carrier.js`; `rejectAllVerifier` l. 22 |
 | R10 | the lock of a LIST is the output `OP_1 <lockKey>`, for the `lockKey` its body names (PR #20, §6.1) | `_list` l. 412; `codec.js` l. 223 |
 

@@ -132,3 +132,10 @@ test('--help and -h print the usage with exit 0, and a verifier file that is not
   const follow = spawnSync(process.execPath, [join(dirname(bin), 'follow.js'), '--esplora', 'http://127.0.0.1:1', '--activation', '1', '--deploy-burn', '1000', '--verifier', missing], { encoding: 'utf8' });
   refused(follow, /error: --verifier: no file .*sh20-no-such-verifier\.wasm/, 'follow.js, no verifier file');
 });
+
+test('follow.js takes --verifier test on regtest only (docs/audit/2026-11-24-verifier.md, verifier-4)', () => {
+  const follow = (args) => spawnSync(process.execPath, [join(dirname(bin), 'follow.js'), '--esplora', 'http://127.0.0.1:1', '--activation', '1', '--deploy-burn', '1000', '--verifier', 'test', ...args], { encoding: 'utf8' });
+  refused(follow(['--network', 'main']), /--verifier test only on regtest \(this indexer follows main\)/, 'mainnet');
+  refused(follow(['--network', 'signet']), /--verifier test only on regtest/, 'signet');
+  refused(follow([]), /--verifier test only on regtest \(this indexer follows unknown\)/, 'no network named');
+});
