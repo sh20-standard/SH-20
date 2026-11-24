@@ -33,14 +33,15 @@ test('the vault computes the public inputs of the circuit\'s own TRANSFER and BU
   const p = nodeProver();
   assert.equal(p.vkDigest, SPEND_VK_DIGEST, 'the committed module and the shipped key give the pinned verifying key');
   const tree = new NoteTree();
-  for (const m of scenario.mints) tree.append(noteLeaf(GENE, 1000n, BigInt(m.npk), 0n));
+  const T = tickerT(scenario.ticker); // the fixture's notes are of its own ticker
+  for (const m of scenario.mints) tree.append(noteLeaf(T, 1000n, BigInt(m.npk), 0n));
   const transfer = parts(scenario.transfer);
   assert.equal(transfer.env.spend.anchorHeight, 2);
   const tp = publicInputs({ root: tree.root, ...transfer });
   assert.equal(await p.verify(tp, transfer.env.spend.proof), true);
   for (const o of transfer.env.spend.outs) tree.append(o.leaf);
   const burn = parts(scenario.burn);
-  const bp = publicInputs({ root: tree.root, ...burn, vPub: burn.env.vPub, tPub: GENE });
+  const bp = publicInputs({ root: tree.root, ...burn, vPub: burn.env.vPub, tPub: T });
   assert.equal(await p.verify(bp, burn.env.spend.proof), true);
   bp[7 * 32] ^= 1; // another vPub
   assert.equal(await p.verify(bp, burn.env.spend.proof), false);

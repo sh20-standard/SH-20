@@ -10,7 +10,7 @@
 //!   sh20-circuit verify <vk> <proof-hex> <public>×9 (decimal)
 //!   sh20-circuit verify-snarkjs <vk.json> <proof.json> <public.json>   check a PLONK proof made by snarkjs (any circuit)
 //!   sh20-circuit bench <pk> [runs]               key loading, key generation, prove and verify timings (RAYON_NUM_THREADS=1 for one thread)
-//!   sh20-circuit scenario <pk> <out.json>        two mints, a TRANSFER and a BURN with real proofs, for the indexer's end-to-end test
+//!   sh20-circuit scenario <pk> <out.json>        two mints, then a TRANSFER, a BURN, a LIST and a DEPLOY with real proofs, for the indexers' end-to-end tests
 //!
 //! <pk> is artifacts/spend.pk, the shipped proving key; <srs> is the file `srs` writes.
 
@@ -61,19 +61,40 @@ fn circom_input(w: &SpendWitness) -> String {
     )
 }
 
-/// A chain an indexer can replay, made the way wallets make it (docs/SPEC-NOTES.md): in block 2 a
-/// payer mints two public notes of 1,000 "GENE" (leaves 0 and 1, opening npk alone, rho = 0); in block 3 it transfers them as
-/// 1,500 and 400 to a recipient and 100 back to itself (anchor 2); in block 4 the recipient, having
-/// found its two notes by scanning, burns 900 of them and keeps 1,000 (anchor 3). Field elements
-/// are decimal strings, bytes are hex.
+/// What every DEPLOY burns in the scenario's chain, in units of the genesis token: `D` of the
+/// indexer's default profile. The DEPLOY's proof is made for it, so the chain is replayed with it.
+const DEPLOY_BURN: u64 = 1000;
+
+/// The key the LIST locks to: the public key of BIP340's first test vector, whose secret key is 3,
+/// so that a test can sign for the lock. This crate has no secp256k1.
+const LOCK_KEY: &str = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+
+/// A chain an indexer can replay under `D = 1000`, made the way wallets make it (docs/SPEC-NOTES.md),
+/// with one spend of each kind. Every note is of "SH20", the genesis token: a DEPLOY burns it, and
+/// with `D > 0` no other token exists before one does.
+///
+///   block 1  nothing
+///   block 2  a payer mints two public notes of 1,000 (leaves 0 and 1, opening npk alone, rho = 0)
+///   block 3  TRANSFER, anchor 2: 1,500 and 400 to a recipient, 100 back to the payer (leaves 2 to 4)
+///   block 4  BURN, anchor 3: the recipient, having found its two notes by scanning, burns 900 of
+///            them and keeps 1,000 (leaves 5 to 7)
+///   block 5  nothing that enters the tree
+///   block 6  LIST, anchor 5: the payer lists 60 of its 100 for 5,000 sats and keeps 40 (leaves 8 to 10)
+///   block 7  DEPLOY of "GENE", anchor 6: the recipient burns the 1,000 it kept (leaves 11 to 13)
+///
+/// The LIST and the DEPLOY have one note to spend: their second input is an unused one. Field
+/// elements are decimal strings, bytes are hex.
 fn scenario(pk: &sh20_circuit::ProvingKey) -> String {
+    use ark_ff::UniformRand;
     use rand_core::RngCore;
-    use sh20_circuit::model::{InputNote, OutputNote, Tree};
-    use sh20_circuit::notes::{self, Sealed};
+    use sh20_circuit::model::{InputNote, OutputNote, Tree, TREE_DEPTH};
+    use sh20_circuit::notes::{self, Address, Opened, Sealed, WalletKeys};
     use sh20_circuit::wire;
 
-    let rng = &mut OsRng;
-    let ticker = b"GENE";
+    /// The body of an envelope around the nullifiers and the outputs of its spend.
+    type BodyOf<'a> = &'a dyn Fn(&[Fr; 2], &[wire::Output; 3]) -> Vec<u8>;
+
+    let ticker = b"SH20";
     let t = model::ticker_t(ticker).expect("ticker");
     let tf = Fr::from(t as u64);
     let d = plonk::json::dr;
@@ -85,55 +106,115 @@ fn scenario(pk: &sh20_circuit::ProvingKey) -> String {
     let wallet = || notes::wallet_keys(&fresh()).expect("keys");
     let (payer, recipient) = (wallet(), wallet());
 
+    // A note a wallet owns, at its place in the tree; and an unused input: a note of 0 outside the
+    // tree, with fresh keys and rho (SPEC-NOTES §3).
+    let owned = |who: &WalletKeys, secrets: &notes::NoteSecrets, v: u64, pos: usize, tree: &Tree| InputNote {
+        keys: notes::spend_keys(who, secrets).expect("keys"),
+        v,
+        rho: secrets.rho,
+        index: pos as u64,
+        path: tree.path(pos),
+    };
+    let unused = || InputNote { keys: fixture::random_keys(&mut OsRng), v: 0, rho: Fr::rand(&mut OsRng), index: 0, path: [Fr::from(0u64); TREE_DEPTH] };
+    // What a wallet finds by scanning three outputs published from leaf `first` on.
+    let scan = |who: &WalletKeys, outs: &[Sealed], first: usize| -> Vec<(usize, Opened)> {
+        outs.iter().enumerate().filter_map(|(k, o)| notes::scan(&who.ivk, &who.address, o).map(|found| (first + k, found))).collect()
+    };
+    // One spend: the outputs sealed, the body `body_of` writes around them, and its proof. `v_pub`
+    // units leave the pool, in public when there are any.
+    let spend = |root: Fr, inputs: [InputNote; 2], pay: [(&Address, u64); 3], v_pub: u64, body_of: BodyOf| {
+        let sealed: Vec<(Sealed, notes::NoteSecrets, Fr)> =
+            pay.iter().map(|(to, v)| notes::seal(to, ticker, *v, &fresh()).unwrap_or_else(|e| fail(&e))).collect();
+        let outputs: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: sealed[k].2, v: pay[k].1, rho: sealed[k].1.rho });
+        let nf: [Fr; 2] = std::array::from_fn(|i| {
+            let n = &inputs[i];
+            model::nullifier(&n.keys.nk, &model::note_leaf(&tf, &Fr::from(n.v), &n.keys.npk, &n.rho), n.index)
+        });
+        let body = body_of(&nf, &std::array::from_fn(|k| sealed[k].0.into()));
+        let w = model::build_spend(t, root, &inputs, &outputs, v_pub, if v_pub > 0 { t } else { 0 }, model::body_hash(&body));
+        assert_eq!(w.nf, nf);
+        let envelope = wire::envelope(body, &prove(pk, &w, &mut OsRng).unwrap_or_else(|e| fail(&e)));
+        (envelope, sealed.iter().map(|o| o.0).collect::<Vec<Sealed>>())
+    };
+
     // block 2: the payer's public notes 0 and 1, of 1,000 units each
     let minted: Vec<_> = (0..2).map(|i| notes::public_opening(&payer.ivk, &payer.address, i).expect("opening")).collect();
     let mut leaves: Vec<Fr> = minted.iter().map(|(npk, sec)| model::note_leaf(&tf, &Fr::from(1000u64), npk, &sec.rho)).collect();
 
-    // block 3: TRANSFER 1,000 + 1,000 → 1,500 and 400 to the recipient, 100 of change, anchored at block 2
+    // block 3: TRANSFER 1,000 + 1,000 → 1,500 and 400 to the recipient, 100 of change
     let tree = Tree::new(&leaves);
-    let inputs: [InputNote; 2] = std::array::from_fn(|i| InputNote {
-        keys: notes::spend_keys(&payer, &minted[i].1).expect("keys"),
-        v: 1000,
-        rho: minted[i].1.rho,
-        index: i as u64,
-        path: tree.path(i),
-    });
-    let pay = [(&recipient.address, 1500u64), (&recipient.address, 400), (&payer.address, 100)];
-    let sealed: Vec<(Sealed, notes::NoteSecrets, Fr)> = pay.iter().map(|(to, v)| notes::seal(to, ticker, *v, &fresh()).unwrap_or_else(|e| fail(&e))).collect();
-    let outputs: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: sealed[k].2, v: pay[k].1, rho: sealed[k].1.rho });
-    let nf: [Fr; 2] = std::array::from_fn(|i| model::nullifier(&inputs[i].keys.nk, &leaves[i], i as u64));
-    let body = wire::transfer_body(2, &nf, &std::array::from_fn(|k| sealed[k].0.into()));
-    let w = model::build_spend(t, tree.root, &inputs, &outputs, 0, 0, model::body_hash(&body));
-    assert_eq!(w.nf, nf);
-    let transfer = wire::envelope(body, &prove(pk, &w, rng).unwrap_or_else(|e| fail(&e)));
-    leaves.extend(sealed.iter().map(|o| o.0.leaf));
+    let (transfer, paid) = spend(
+        tree.root,
+        std::array::from_fn(|i| owned(&payer, &minted[i].1, 1000, i, &tree)),
+        [(&recipient.address, 1500), (&recipient.address, 400), (&payer.address, 100)],
+        0,
+        &|nf, outs| wire::transfer_body(2, nf, outs),
+    );
+    leaves.extend(paid.iter().map(|o| o.leaf));
 
-    // block 4: the recipient scans, finds leaves 2 and 3, and burns 900 of them, anchored at block 3
-    let found: Vec<(usize, notes::Opened)> =
-        (2..5).filter_map(|pos| notes::scan(&recipient.ivk, &recipient.address, &sealed[pos - 2].0).map(|o| (pos, o))).collect();
+    // block 4: the recipient scans, finds leaves 2 and 3, and burns 900 of them. The 1,000 it keeps
+    // and its two unused outputs, notes of 0, are sealed to itself.
+    let found = scan(&recipient, &paid, 2);
     assert_eq!(found.iter().map(|(pos, o)| (*pos, o.v)).collect::<Vec<_>>(), vec![(2, 1500), (3, 400)], "the recipient finds its two notes and not the change");
     let tree = Tree::new(&leaves);
-    let inputs: [InputNote; 2] = std::array::from_fn(|i| {
-        let (pos, o) = &found[i];
-        InputNote { keys: notes::spend_keys(&recipient, &o.secrets).expect("keys"), v: o.v, rho: o.secrets.rho, index: *pos as u64, path: tree.path(*pos) }
-    });
-    // 1,000 kept; the two unused outputs are notes of 0 sealed to the recipient itself
-    let keep = [1000u64, 0, 0];
-    let sealed: Vec<(Sealed, notes::NoteSecrets, Fr)> =
-        keep.iter().map(|v| notes::seal(&recipient.address, ticker, *v, &fresh()).unwrap_or_else(|e| fail(&e))).collect();
-    let change: [OutputNote; 3] = std::array::from_fn(|k| OutputNote { npk: sealed[k].2, v: keep[k], rho: sealed[k].1.rho });
-    let nf: [Fr; 2] = std::array::from_fn(|i| model::nullifier(&inputs[i].keys.nk, &leaves[found[i].0], found[i].0 as u64));
-    let body = wire::burn_body(ticker, 900, 3, &nf, &std::array::from_fn(|k| sealed[k].0.into()));
-    let w = model::build_spend(t, tree.root, &inputs, &change, 900, t, model::body_hash(&body));
-    let burn = wire::envelope(body, &prove(pk, &w, rng).unwrap_or_else(|e| fail(&e)));
+    let (burn, kept) = spend(
+        tree.root,
+        std::array::from_fn(|i| owned(&recipient, &found[i].1.secrets, found[i].1.v, found[i].0, &tree)),
+        [(&recipient.address, 1000), (&recipient.address, 0), (&recipient.address, 0)],
+        900,
+        &|nf, outs| wire::burn_body(ticker, 900, 3, nf, outs),
+    );
+    leaves.extend(kept.iter().map(|o| o.leaf));
+
+    // block 6: the payer finds its change at leaf 4 and lists 60 of the 100
+    let found = scan(&payer, &paid, 2);
+    assert_eq!(found.iter().map(|(pos, o)| (*pos, o.v)).collect::<Vec<_>>(), vec![(4, 100)], "the payer finds its change");
+    let lock_key: [u8; 32] = hex::decode(LOCK_KEY).expect("hex").try_into().expect("32 bytes");
+    let pay_script = [&[0x00, 0x14][..], &fresh()[..20]].concat(); // a P2WPKH script nobody holds the key of
+    let listing = wire::Listing { ticker, amount: 60, price: 5000, lock_vout: 0, lock_key: &lock_key, pay_script: &pay_script };
+    let tree = Tree::new(&leaves);
+    let (list, listed) = spend(
+        tree.root,
+        [owned(&payer, &found[0].1.secrets, 100, 4, &tree), unused()],
+        [(&payer.address, 40), (&payer.address, 0), (&payer.address, 0)],
+        listing.amount,
+        &|nf, outs| wire::list_body(&listing, 5, nf, outs),
+    );
+    leaves.extend(listed.iter().map(|o| o.leaf));
+
+    // block 7: the recipient finds the 1,000 it kept at leaf 5, and burns them to deploy GENE. The
+    // team's note, 1,000,000 GENE from block 8 on, goes to the recipient's first public opening.
+    let found = scan(&recipient, &kept, 5);
+    assert_eq!(found.iter().map(|(pos, o)| (*pos, o.v)).collect::<Vec<_>>(), vec![(5, 1000), (6, 0), (7, 0)], "the recipient finds what it kept");
+    let team = notes::public_opening(&recipient.ivk, &recipient.address, 0).expect("opening").0;
+    let token = wire::Deploy {
+        ticker: b"GENE",
+        max: 21_000_000,
+        lim: 1000,
+        pre: 1_000_000,
+        start: 8,
+        end: 0,
+        unlock: 8,
+        price: 1000,
+        pay_mode: 1,
+        pay_script: &[],
+        team,
+    };
+    let tree = Tree::new(&leaves);
+    let (deploy, _) =
+        spend(tree.root, [owned(&recipient, &found[0].1.secrets, 1000, 5, &tree), unused()], [(&recipient.address, 0); 3], DEPLOY_BURN, &|nf, outs| {
+            wire::deploy_body(&token, 6, nf, outs)
+        });
 
     format!(
-        r#"{{"ticker":"GENE","vkDigest":"{}","vk":"{}","mints":[{}],"transfer":"{}","burn":"{}"}}"#,
+        r#"{{"ticker":"SH20","deployBurn":"{DEPLOY_BURN}","vkDigest":"{}","vk":"{}","mints":[{}],"transfer":"{}","burn":"{}","list":"{}","lockKey":"{LOCK_KEY}","deploy":"{}"}}"#,
         hex::encode(pk.vk.digest()),
         hex::encode(pk.vk.to_bytes()),
         minted.iter().map(|(npk, _)| format!(r#"{{"npk":"{}"}}"#, d(npk))).collect::<Vec<_>>().join(","),
         hex::encode(transfer),
         hex::encode(burn),
+        hex::encode(list),
+        hex::encode(deploy),
     )
 }
 
