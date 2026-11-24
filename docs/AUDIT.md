@@ -681,7 +681,7 @@ tree's root (against the root rebuilt from the leaves) and on the digest at the 
 the count is shown next to the balance.
 
 Checked: `digestAgreement` (`consensus.js` l. 250), called at every sync (`ui/notes-panel.js`
-l. 163). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
+l. 167). Test "8.5 every sync compares the root and the digest…". Left: this informs and does not
 refuse. A balance is still shown when the indexers disagree, with the count marked as an error. What
 a disagreement stops is a mint (`crossCheck`), a TAKE (`listingCheck`) and, since #38, giving back
 the notes of a spend that looks refused (`refusalAgreed`, `consensus.js` l. 88). #38 also has the
