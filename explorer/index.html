@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-jcCzf6EAG9YFZItmRkCiM8eHuF+2lzxvxGFkoEsKUHc='; style-src 'unsafe-inline'; connect-src http: https:; img-src data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-hJyREhGf9JLxVoXpvQmqAeheTjSkofk/+u+Yl8Og/lg='; style-src 'unsafe-inline'; connect-src http: https:; img-src data:; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>SH-20 Explorer</title>
 <style>
@@ -471,8 +471,11 @@ footer { border-top: 1px solid var(--line); padding: 18px 0 28px; color: var(--m
     const st = await Promise.all(clients.map((c) => c.get('/status').then((s) => s, () => null)));
     const hs = st.filter((s) => s && Number.isInteger(s.height)).map((s) => s.height);
     const h = hs.length ? Math.min(...hs) : null;
-    const ds = await Promise.all(clients.map((c, i) => (st[i] && h !== null ? c.get('/digest/' + h).then((d) => d.digest, () => null) : Promise.resolve(null))));
-    S.compare = { height: h, rows: clients.map((c, i) => ({ url: c.name, digest: ds[i], same: ds[i] !== null && ds[i] === ds[0] })) };
+    // Before block A no indexer has a height: the digest each reports is digest_{A−1}, the same for one profile
+    // (docs/API.md, "Status"), so that is what is compared.
+    const ds = await Promise.all(clients.map((c, i) => (!st[i] ? Promise.resolve(null) : h === null ? Promise.resolve(st[i].digest) : c.get('/digest/' + h).then((d) => d.digest, () => null))));
+    const start = st.find((s) => s)?.activationHeight ?? null;
+    S.compare = { height: h, start, rows: clients.map((c, i) => ({ url: c.name, reached: !!st[i], digest: ds[i], same: ds[i] !== null && ds[i] === ds[0] })) };
     renderCompare();
     if (route.current === 'dashboard') route();
   }
@@ -496,7 +499,7 @@ footer { border-top: 1px solid var(--line); padding: 18px 0 28px; color: var(--m
     const m = !S.error && S.client.mirror;
     if (m) {
       const age = Math.max(0, Math.round((Date.now() - Date.parse(m.built)) / 60000));
-      notes.push(html`<div class="notice"><div class="wrap">${S.siteMirrors ? "Reading this site's copy of both indexers" : html`Reading a copy of ${m.implementation}`}, as of block ${n(m.height)}, made ${age < 1 ? 'less than a minute' : age === 1 ? '1 minute' : `${age} minutes`} ago.${S.siteMirrors ? ' It is remade about every 10 minutes and runs up to half an hour behind the chain.' : ''}</div></div>`);
+      notes.push(html`<div class="notice"><div class="wrap">${S.siteMirrors ? "Reading this site's copy of both indexers" : html`Reading a copy of ${m.implementation}`}, ${m.height === null ? `before its first block (SH-20 starts at block ${n(m.activationHeight)})` : `as of block ${n(m.height)}`}, made ${age < 1 ? 'less than a minute' : age === 1 ? '1 minute' : `${age} minutes`} ago.${S.siteMirrors ? ' It is remade about every 10 minutes and runs up to half an hour behind the chain.' : ''}</div></div>`);
     }
     put($('#notices'), html`${notes}`);
   }
@@ -546,7 +549,7 @@ footer { border-top: 1px solid var(--line); padding: 18px 0 28px; color: var(--m
   function viewDashboard() {
     const s = S.status;
     const stats = html`<div class="stats">
-      <div class="stat"><small>Block height</small><b>${s ? n(s.height) : '–'}</b></div>
+      <div class="stat"><small>Block height</small><b>${!s ? '–' : s.height === null ? html`<span class="muted">starts at ${n(s.activationHeight)}</span>` : n(s.height)}</b></div>
       <div class="stat"><small>Notes in the pool</small><b>${s ? n(s.leaves) : '–'}</b></div>
       <div class="stat"><small>Spent notes</small><b>${s ? n(s.nullifiers) : '–'}</b></div>
       <div class="stat"><small>Tokens</small><b>${s ? n(s.tokens) : '–'}</b></div>
@@ -770,7 +773,8 @@ footer { border-top: 1px solid var(--line); padding: 18px 0 28px; color: var(--m
     const c = S.compare;
     if (!c) { put($('#cmp'), html``); return; }
     if (c.pending) { put($('#cmp'), html`<li class="muted">Comparing…</li>`); return; }
-    put($('#cmp'), html`${c.rows.map((r) => html`<li><span class="pill ${r.same ? 'ok' : 'bad'}">${r.digest === null ? 'Unreachable' : r.same ? `Same state at ${n(c.height)}` : `Different state at ${n(c.height)}`}</span><span class="mono break">${r.url}</span></li>`)}`);
+    const at = c.height === null ? `before block ${n(c.start)}` : `at ${n(c.height)}`;
+    put($('#cmp'), html`${c.rows.map((r) => html`<li><span class="pill ${r.same ? 'ok' : 'bad'}">${!r.reached ? 'Unreachable' : r.digest === null ? `No state ${at} yet` : r.same ? `Same state ${at}` : `Different state ${at}`}</span><span class="mono break">${r.url}</span></li>`)}`);
   }
   function openSettings() {
     $('#ixList').value = S.indexers.join('\n');

@@ -9,7 +9,8 @@ import { join } from 'node:path';
 import { Indexer } from '../src/indexer.js';
 import { listen } from '../src/api.js';
 import { fromBitcoindBlock } from '../src/adapters/bitcoind.js';
-import { buildMirror } from '../src/mirror.js';
+import { buildMirror, waitForTip } from '../src/mirror.js';
+import { createServer } from 'node:http';
 import { mirrorGet, MIRROR_FORMAT, NotInMirror } from '../src/mirror-read.js';
 import { chain, blockJson, PROOF } from '../bin/chain-gen.js';
 
@@ -120,5 +121,24 @@ test('the mirror of an indexer before its first block, and one built while the i
     assert.equal(readdirSync(join(out, '..')).length, 1, 'no folder left from the attempts');
   } finally {
     server.close();
+  }
+});
+
+test('waiting for the tip: an indexer with no block is at the tip until the chain reaches A, and behind it after', async () => {
+  const serve = (body) => {
+    const s = createServer((req, res) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body(req.url))));
+    return new Promise((r) => s.listen(0, '127.0.0.1', () => r(s)));
+  };
+  let tip = 8;
+  const esplora = await serve(() => tip);
+  const api = await serve(() => ({ height: null, activationHeight: 20 }));
+  const url = (s) => `http://127.0.0.1:${s.address().port}`;
+  try {
+    assert.equal(await waitForTip({ api: url(api), esplora: url(esplora), timeoutMs: 2000, everyMs: 50 }), null);
+    tip = 20; // block A is mined and the indexer has not read it
+    await assert.rejects(() => waitForTip({ api: url(api), esplora: url(esplora), timeoutMs: 300, everyMs: 50 }), /did not reach the tip/);
+  } finally {
+    esplora.close();
+    api.close();
   }
 });

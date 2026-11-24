@@ -2,7 +2,8 @@
 // The site's mirror end to end, as pages.yml builds it (bin/mirror-site.js): a random chain served as an Esplora API,
 // both followers from empty block files, both mirrors; every route the vault and the explorer read is then answered
 // from each mirror (src/mirror-read.js) and compared with a reference indexer that applied the chain itself. Then the
-// chain grows and a second run starts from the block files, as the next scheduled run does.
+// chain grows and a second run starts from the block files, as the next scheduled run does. First of all, a run on a
+// profile whose A the chain has not reached: what the site serves between the launch commit and block A.
 //
 //   node bin/mirror-check.js --rs <sh20-indexer-rs> [--seed mirror] [--blocks 60] [--chrome <binary>]
 //
@@ -106,8 +107,7 @@ async function check(label, blocks) {
 }
 
 // The site as pages.yml lays it out, served from a folder; the explorer opened in headless Chrome, its DOM read back.
-async function explorer(chromePath, tip) {
-  const site = join(work, 'site');
+async function explorer(chromePath, tip, site = join(work, 'site')) {
   mkdirSync(join(site, 'explorer'), { recursive: true });
   copyFileSync(fileURLToPath(new URL('../../explorer/index.html', import.meta.url)), join(site, 'explorer', 'index.html'));
   const types = { '.html': 'text/html; charset=utf-8', '.json': 'application/json' };
@@ -126,8 +126,8 @@ async function explorer(chromePath, tip) {
     ], { maxBuffer: 1 << 26, timeout: 60_000 });
     const dom = stdout.replace(/<script[\s\S]*?<\/script>/g, ''); // what the page shows, not the code that shows it
     const want = [
-      ["the site's copy of both indexers", /Reading this site's copy of both indexers, as of block/],
-      [`block ${tip}`, new RegExp(`as of block ${tip.toLocaleString('en-US')}`)],
+      ["the site's copy of both indexers", /Reading this site's copy of both indexers, (as of block|before its first block)/],
+      [tip === null ? 'before block A' : `block ${tip}`, tip === null ? /before its first block/ : new RegExp(`as of block ${tip.toLocaleString('en-US')}`)],
       ['both mirrors agree', /2 of 2 agree/],
       ['not the demo data', /^(?![\s\S]*<b>Demo data\.<\/b>)/],
     ];
@@ -143,6 +143,14 @@ async function explorer(chromePath, tip) {
 let differ = 0;
 const run = (label) => mirrorSite({ esplora: esplora.url, rs: opt('rs'), profile: PROFILE, network: 'regtest', verifierJs: 'test', verifierRs: 'test', data, out, waitMs: 120_000, log: quiet });
 try {
+  // before A: the chain is at block BLOCKS, A is 1,000 blocks on
+  const beforeA = join(work, 'before', 'api');
+  await mirrorSite({ esplora: esplora.url, rs: opt('rs'), profile: ['--activation', String(BLOCKS + 1000), ...PROFILE.slice(2)], network: 'regtest', verifierJs: 'test', verifierRs: 'test', data: join(work, 'before-data'), out: beforeA, waitMs: 60_000, log: quiet });
+  const st = ['js', 'rs'].map((n) => JSON.parse(readFileSync(join(beforeA, n, 'status.json'), 'utf8')));
+  const ok = st.every((s) => s.height === null && s.digest === st[0].digest);
+  if (!ok) differ++;
+  console.log(`before A: both mirrors ${ok ? 'have no block and the same starting digest' : `differ: ${JSON.stringify(st.map((s) => [s.height, s.digest]))}`}`);
+  if (opt('chrome') !== undefined) differ += await explorer(opt('chrome'), null, join(work, 'before'));
   await run('first run');
   differ += await check('first run, from empty block files', all.slice(0, BLOCKS));
   const before = esplora.asked.get('/block/:hash') ?? 0;

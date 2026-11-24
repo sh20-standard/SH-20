@@ -98,7 +98,8 @@ export async function buildMirror({ api, out, notePage = MIRROR_NOTE_PAGE, block
 
 /**
  * Waits until the indexer at `api` has the tip that the Esplora server at `esplora` names, polling every `everyMs`;
- * rejects after `timeoutMs`. A follower started from its block file catches up meanwhile.
+ * rejects after `timeoutMs`. A follower started from its block file catches up meanwhile. Before the chain reaches
+ * the activation height there is nothing to follow: an indexer with no block yet is then at the tip.
  */
 export async function waitForTip({ api, esplora, timeoutMs = 900_000, everyMs = 2000, log = () => {} }) {
   api = api.replace(/\/+$/, '');
@@ -114,6 +115,7 @@ export async function waitForTip({ api, esplora, timeoutMs = 900_000, everyMs = 
     const [tip, status] = await Promise.all([json(`${esplora}/blocks/tip/height`).catch((e) => e), json(`${api}/status`).catch((e) => e)]);
     const at = status instanceof Error ? `unreachable (${status.message})` : status.height;
     if (Number.isInteger(tip) && Number.isInteger(at) && at >= tip) return at;
+    if (Number.isInteger(tip) && at === null && tip < status.activationHeight) return null; // the chain is not at A yet
     const now = `${api} at ${at}, tip ${tip instanceof Error ? `unknown (${tip.message})` : tip}`;
     if (Date.now() > deadline) throw new Error(`the indexer did not reach the tip in time: ${now}`);
     if (now !== last) log(`waiting: ${now}`);
