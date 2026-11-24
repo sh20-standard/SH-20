@@ -696,7 +696,7 @@ outputs are still null); a note whose scan fails does not stop the others, and t
 from the first that failed until the vault has scanned it.
 
 Checked: `scanOutput` (`notekeys.js` l. 36) has no catch left; `matchNotes` (`match.js` l. 17)
-goes on past a note that throws, and `Sync.scanned(from)` (`sync.js` l. 138) makes the next sync
+goes on past a note that throws, and `Sync.scanned(from)` (`sync.js` l. 151) makes the next sync
 read again from the first of them. Tests "8.6 a scan that could not be made throws…" and "8.6 a
 note whose scan throws does not stop the others…". One case was left below the vault: `x25519` in
 `circuit/js/subtle.js` answered every `OperationError` or `DataError` of WebCrypto as a low-order
@@ -878,4 +878,4 @@ flight are still missing from an older backup, so their commit outputs cannot be
 | an offer's signature commits to the lock's outpoint, amount, script and sequence, to the version and locktime, and to the output paying the price; a buyer checks it under the key of the lock output, which the txid does cover | `market.js` l. 86–116, l. 136 |
 | the BIP340 nonce is derived as specified, with fresh auxiliary randomness at every signature | `secp256k1.js` l. 358; `taproot.js` l. 135, l. 193 |
 | the state is AES-256-GCM under the passphrase key with a fresh 12-byte nonce at every save; a wrong passphrase fails the tag | `keys.js` l. 35, l. 230 |
-| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 17, l. 49; `ui/context.js` l. 33; `ui/spends.js` l. 30 and `ui/tokens-panel.js` l. 177 |
+| the page refuses to run in a frame and without X25519; servers named in a link need a confirmation and keep a warning on screen; the wallet's signed transaction must be the one that was built | `app.js` l. 17, l. 49; `ui/context.js` l. 33; `ui/spends.js` l. 30 and `ui/tokens-panel.js` l. 186 |

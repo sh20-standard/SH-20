@@ -29,7 +29,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 146 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 149 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 npm run release          # a verifiable release from the current commit, on the signet profile (below)
@@ -207,11 +207,13 @@ vout n  change to the payer                                     only if above du
   servers, the tests, the CI); `PROFILES.signet` is the same with the public signet's activation
   height, `SIGNET_ACTIVATION_HEIGHT`, the only parameter, fixed at launch (`RELEASES.md`). The page
   follows the one `src/profile-name.js` names: `test` in the source tree, with a warning on screen;
-  `signet` in a release. Its signet indexers run `follow.js --activation <that height>`.
-- **Default servers** (`src/servers.js`), for the profile the page follows: on signet, an indexer on
-  your own machine (`follow.js`, port 8020) and mempool.space's signet Esplora; on the test profile,
-  the two dev indexers and their Esplora. None is run by the SH-20 contributors, and
-  `test/signet.test.js` names every host a URL in the site may use. Settings replaces them.
+  `signet` in a release. Its signet indexers run `follow.js --activation <that height> --deploy-burn 1000`.
+- **Default servers** (`src/servers.js`), for the profile the page follows: on signet, the two mirrors
+  the site serves beside the page (`../api/js/` and `../api/rs/`, `docs/API.md`, "The static mirror")
+  and mempool.space's signet Esplora; on the test profile, the two dev indexers and their Esplora.
+  None is run by the SH-20 contributors, and `test/signet.test.js` names every host a URL in the site
+  may use. Settings replaces them; your own `follow.js` is fresher than a mirror, which lags the chain
+  by 10 to 30 minutes.
 - For every other token the vault does not take the mint terms from the indexer alone: it fetches `deployTxid` from Esplora,
   checks its txid and confirmation height, decodes the DEPLOY with the indexer's own `carrier.js`
   and `codec.js`, and refuses the mint if `ticker`, `max`, `lim`, `pre`, `start`, `end`, `price`,
@@ -461,7 +463,10 @@ has a random `m` and no words: its backup file restores it.
 
 ## Indexer API
 
-The vault reads the API of `indexer/bin/follow.js` ([`docs/API.md`](../docs/API.md), default port 8020); `src/api.js` is the only file that knows its shape:
+The vault reads the API of `indexer/bin/follow.js` ([`docs/API.md`](../docs/API.md), default port 8020), or a static
+mirror of it: a base whose `mirror.json` has the format `sh20-api-mirror/1` is read through
+`indexer/src/mirror-read.js`, which answers each route below from the mirror's files, each fetched with
+`cache: 'no-cache'`. `src/api.js` is the only file that knows its shape:
 
 - `GET /status` → `height`, `digest`, `verifier`, and the profile it follows, compared with the
   vault's: `network`, `activationHeight`, `deployBurn`, `deployMaturity`, `anchorWindow`, `genesis`

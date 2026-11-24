@@ -36,7 +36,7 @@ test('notes: follows pages until total, reads kind / t / leaf, skips nothing', a
   });
   const notes = await new IndexerApi('http://x').notes();
   assert.equal(notes.length, 7);
-  assert.equal(calls.length, 3);
+  assert.deepEqual(calls.map((c) => new URL(c).pathname), ['/mirror.json', '/notes', '/notes', '/notes'], 'is it a mirror? (404: an indexer), then three pages');
   assert.equal(notes[0].kind, 'MINT');
   assert.equal(notes[0].ticker, 'GENE');
   assert.equal(notes[0].v, 1000n);

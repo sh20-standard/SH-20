@@ -5,6 +5,8 @@
 //
 //   node vault/dev/regtest.js --isolate &   then   node vault/dev/e2e.js [path to Chrome]
 //     on Bitcoin Core regtest: every transaction is checked by Bitcoin Core (what the CI runs)
+//   node vault/dev/regtest.js --isolate --mirror &   then   E2E_MIRROR=1 node vault/dev/e2e.js
+//     the same, the page reading the indexers' static mirrors only (indexer/bin/mirror.js after each block)
 //   node vault/dev/serve.js &   then   node vault/dev/e2e.js [path to Chrome]
 //     on the demo chain of serve.js, which takes any transaction (and the variants below)
 //   (after `npm run build`, E2E_PATH=/vault/dist/vault/ tests the IPFS build)
@@ -34,7 +36,12 @@ const RECIPIENT = JSON.parse(readFileSync(new URL('../../circuit/js/vectors.json
 // a fresh ticker each run: the dev chain lives as long as serve.js, across runs
 const NEW_TICKER = 'T' + Array.from(crypto.getRandomValues(new Uint8Array(3)), (x) => String.fromCharCode(65 + (x % 26))).join('');
 const LONG = 3000; // × 100 ms: a proof on one thread in a browser takes about half a minute
-const INDEXERS = ['http://127.0.0.1:8020', 'http://127.0.0.1:8030', ...(LIAR ? ['http://127.0.0.1:8031'] : [])].join(',');
+// E2E_MIRROR=1 (regtest.js --mirror): the page reads the two indexers' static mirrors (docs/API.md, "The
+// static mirror"), served beside it at /api/js/ and /api/rs/ as on the site; the live indexers refuse it.
+const MIRROR = !!process.env.E2E_MIRROR;
+const INDEXERS = (MIRROR
+  ? [`http://${process.env.E2E_HOST || 'localhost'}:8000/api/js/`, `http://${process.env.E2E_HOST || 'localhost'}:8000/api/rs/`]
+  : ['http://127.0.0.1:8020', 'http://127.0.0.1:8030', ...(LIAR ? ['http://127.0.0.1:8031'] : [])]).join(',');
 // E2E_HOST=<cid>.ipfs.localhost: a subdomain gateway (the page isolates itself with its service worker)
 // E2E_PATH=/ipfs/<cid>/vault/: a path gateway (the page refuses to run there: docs/AUDIT.md §8.1)
 const HOST = process.env.E2E_HOST || 'localhost';
@@ -166,8 +173,12 @@ async function main() {
     return;
   }
   await waitFor(`document.querySelector('#warnings')?.innerText.includes('servers from the link')`, 'URL servers warning');
-  if (!dialogs.some((d) => d.includes('127.0.0.1:8020'))) throw new Error('URL servers applied without confirmation');
+  if (!dialogs.some((d) => d.includes(INDEXERS.split(',')[0]))) throw new Error('URL servers applied without confirmation');
   step('URL servers confirmed by a dialog and flagged on the page');
+  if (MIRROR) {
+    await waitFor(`!!document.querySelector('#mirror-age')`, 'the primary read as a mirror');
+    step('indexers: two static mirrors' + (await evaluate(`document.querySelector('#mirror-age').innerText`)));
+  }
   const row = `[...document.querySelectorAll('#tokens-body tbody tr')].find((r) => r.querySelector('strong')?.textContent === '${TICKER}')`;
   await waitFor(`!!${row}`, 'ticker table');
   if (!(await evaluate(`document.querySelector('#tokens-body tbody tr').innerText.includes('SH20 genesis')`))) throw new Error('SH20 is not first, or not marked genesis');
@@ -452,8 +463,9 @@ async function main() {
   step('locked itself after 10 minutes without use, its words gone from the screen; unlocked again with the passphrase');
 
   ws.close();
-  // a 404 on /nullifiers is expected from an indexer without the route (before PR #5): spends shown as unknown
-  const real = problems.filter((p) => !/favicon/.test(p) && !/404.*\/nullifiers\?from=/.test(p));
+  // a 404 on /nullifiers is expected from an indexer without the route (before PR #5): spends shown as unknown;
+  // one on /mirror.json is how a live indexer says it is not a mirror (docs/API.md, "The static mirror")
+  const real = problems.filter((p) => !/favicon/.test(p) && !/404.*\/nullifiers\?from=/.test(p) && !/404.*\/mirror\.json$/.test(p));
   if (real.length) {
     throw new Error('page problems:\n' + real.join('\n'));
   }

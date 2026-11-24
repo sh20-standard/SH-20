@@ -15,7 +15,8 @@ import { DEFAULT_PROFILE } from '../../indexer/src/constants.js';
 import { PROFILE_NAME } from './profile-name.js';
 
 // The public signet's activation height: the first block SH-20 counts there. null until the launch
-// fixes it; every signet indexer then runs `indexer/bin/follow.js --activation <this height>`.
+// fixes it; every signet indexer then runs `indexer/bin/follow.js --activation <this height> --deploy-burn 1000`
+// (D, below: follow.js requires it).
 export const SIGNET_ACTIVATION_HEIGHT = null;
 
 /** DEFAULT_PROFILE with the activation height `A`, its only parameter. */

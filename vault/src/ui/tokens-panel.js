@@ -19,13 +19,14 @@ const payText = (t) => (t.payMode === PAY_MODE.NONE ? 'free' : `${sats(t.price)}
 
 export async function refresh() {
   try {
-    const [status, tokens] = await Promise.all([indexer.status(), indexer.tokens()]);
+    const [status, tokens, mirror] = await Promise.all([indexer.status(), indexer.tokens(), indexer.mirrorInfo()]);
     st.status = status;
     st.tokens = tokens;
     const wrongNet = status.network && status.network !== PROFILE.network;
     fill('indexer-status',
       wrongNet ? h('span', { class: 'err' }, `Indexer follows ${status.network}, not ${PROFILE.network}. `) : null,
       `Indexer at block ${status.height ?? '?'}`,
+      mirror ? h('span', { id: 'mirror-age' }, ` (a mirror of it, ${mirrorAge(mirror.built)})`) : '',
       status.digest ? ` · digest ${short(String(status.digest))}` : '',
       status.verifier === 'reject-all' ? ' · spends not verified yet' : '',
       ` · ${indexers.length} indexer${indexers.length > 1 ? 's' : ''} configured`,
@@ -46,6 +47,14 @@ export async function refresh() {
   renderTokens();
   renderDeploy();
   processDeploys().catch(report);
+}
+
+/** How old a mirror is (docs/API.md, "The static mirror"): its mirror.json's `built`, against this device's clock. */
+export function mirrorAge(built, now = Date.now()) {
+  const t = Date.parse(built);
+  if (!Number.isFinite(t)) return 'built at an unknown time';
+  const min = Math.max(0, Math.round((now - t) / 60000));
+  return min < 1 ? 'built less than a minute ago' : `built ${min} minute${min > 1 ? 's' : ''} ago: blocks since then show after the next build`;
 }
 
 export function chainHeight() {

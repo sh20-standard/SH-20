@@ -85,9 +85,19 @@ export class Sync {
    * Returns the notes read in this sync (for matching the vault's own notes),
    * the height and whether the spent-nullifier list is available.
    */
-  async sync(api, { full = false } = {}) {
+  async sync(api, { full = false, tries = 3 } = {}) {
     if (full) this.reset();
     const status = await api.status();
+    // the tip must be the same after the reads as before (docs/API.md, "Reorgs" and "The static mirror":
+    // a mirror rebuilt between two of its files, an indexer that took a block): else everything again
+    const moved = async () => {
+      const after = await api.status();
+      return after.height !== status.height || after.hash !== status.hash || after.digest !== status.digest;
+    };
+    const again = () => {
+      if (tries <= 1) throw new Error('the indexer moved to another tip during each sync: try again in a moment');
+      return this.sync(api, { full, tries: tries - 1 });
+    };
     const H = status.height;
     if (!Number.isInteger(H)) throw new Error('the indexer reports no height');
     if (this.height !== null && H < this.height - REORG_MARGIN) this.reset(); // indexer far behind us: start again
@@ -110,7 +120,8 @@ export class Sync {
 
     const want = String(status.root).toLowerCase();
     if (frHex(this.tree.root) !== want || (Number.isInteger(status.leaves) && status.leaves !== this.tree.size)) {
-      if (keep > 0) return this.sync(api, { full: true }); // a reorg deeper than the margin, or a stale cache
+      if (await moved()) return again();
+      if (keep > 0) return this.sync(api, { full: true, tries }); // a reorg deeper than the margin, or a stale cache
       throw new Error(`the indexer's leaves do not hash to its own root at block ${H}: it is inconsistent or lying`);
     }
 
@@ -124,6 +135,8 @@ export class Sync {
       for (const { nullifier, height } of list) if (height <= H) this.nullifiers.set(nullifier, height);
       this.nullifiersKnown = true;
     }
+
+    if (await moved()) return again();
 
     this.height = H;
     this.unscanned = keep < this.tree.size ? keep : null; // the notes returned stay unscanned until the vault says so
