@@ -91,7 +91,8 @@ test('sync rebuilds the tree, computes paths locally and never asks per-note rou
   assert.deepEqual(w.siblings, ix.ref().path(pos));
   assert.equal(s.spentAt('ab'.repeat(32)), 7);
   assert.equal(s.spentAt('cd'.repeat(32)), null);
-  assert.ok(ix.requests.every((p) => /^\/(status|notes|nullifiers)\?|^\/status$/.test(p)), ix.requests.join(' '));
+  assert.ok(ix.requests.every((p) => /^\/(status|notes|nullifiers)\?|^\/(status|mirror\.json)$/.test(p)), ix.requests.join(' '));
+  assert.equal(ix.requests.filter((p) => p === '/mirror.json').length, 1, 'is it a mirror? asked once');
   assert.ok(!ix.requests.some((p) => p.startsWith('/path') || p.startsWith('/nullifier/')));
 });
 

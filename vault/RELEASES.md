@@ -16,8 +16,8 @@ for others, signed or published from a contributor's own machine, and no step ne
    profile. Every indexer of the signet runs with the same height:
    `node indexer/bin/follow.js --rpc <your signet node> --activation A --deploy-burn 1000 --verifier vault/prover/sh20_circuit.wasm`.
    The vault refuses any indexer that reports another one, and names it.
-2. **Default servers.** `vault/src/servers.js`: on signet, indexers on the user's own machine
-   (`follow.js`, port 8020) and a public Esplora. An indexer run by someone else goes in only with
+2. **Default servers.** `vault/src/servers.js`: on signet, the two mirrors the site serves itself
+   (`/api/js/` and `/api/rs/`, beside the page) and a public Esplora. An indexer run by someone else goes in only with
    its operator's agreement, and with its host added in `test/signet.test.js` in the same pull
    request. Never a server run by the SH-20 contributors: the standard needs none, and a default of
    ours would make us one, seeing every vault that asks it first.

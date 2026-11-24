@@ -1,4 +1,7 @@
-// Read-only clients: the SH-20 indexer API (docs/API.md) and an Esplora server.
+// Read-only clients: the SH-20 indexer API (docs/API.md) and an Esplora server. An indexer's base
+// may also be a static mirror of one (docs/API.md, "The static mirror"): the files a host serves,
+// with no query string. Each base is asked for its mirror.json once; with the mirror's format, every
+// route is worked out from the files by indexer/src/mirror-read.js, as the indexer would answer it.
 // Only bulk routes are used for wallet state (/notes, /nullifiers): per-note
 // routes (/path/:pos, /nullifier/:hex) would tell the indexer which notes are yours.
 // Both URLs are settings; any honest indexer and any Esplora work.
@@ -9,8 +12,10 @@ const trim = (u) => u.replace(/\/+$/, '');
 const NOTE_PAGE = 5000; // the API's maximum page
 export const MAX_FEE_RATE = 200; // sat/vB, cap on a server's suggestion
 
-async function getJson(url) {
-  const r = await fetch(url, { headers: { accept: 'application/json' } });
+import { MIRROR_FORMAT, mirrorGet } from '../../indexer/src/mirror-read.js';
+
+async function getJson(url, init = {}) {
+  const r = await fetch(url, { ...init, headers: { accept: 'application/json' } });
   if (!r.ok) throw Object.assign(new Error(`${url}: HTTP ${r.status}`), { status: r.status });
   return r.json();
 }
@@ -93,17 +98,64 @@ const list = (j, key) => {
   throw new Error('unexpected response shape from the indexer');
 };
 
+/**
+ * What `base` is: its mirror.json with the mirror's format makes it a mirror ({ kind: 'mirror', mirror });
+ * a live indexer answers that path 404 ({ kind: 'indexer' }). Anything else (a server down, a 5xx)
+ * throws, and the next request asks again.
+ */
+async function probe(base) {
+  try {
+    const m = await getJson(`${base}/mirror.json`, { cache: 'no-cache' });
+    return m?.format === MIRROR_FORMAT ? { kind: 'mirror', mirror: m } : { kind: 'indexer' };
+  } catch (e) {
+    if (e.status === 404) return { kind: 'indexer' };
+    if (e instanceof SyntaxError) return { kind: 'indexer' }; // an answer that is not JSON names no mirror
+    throw e;
+  }
+}
+
 export class IndexerApi {
+  #kind = null;
   constructor(base) {
     this.base = trim(base);
   }
+  /** { kind: 'mirror' | 'indexer', mirror? }, asked once per base (again after a failure). */
+  kind() {
+    this.#kind ??= probe(this.base).catch((e) => {
+      this.#kind = null;
+      throw e;
+    });
+    return this.#kind;
+  }
+  /** For a mirror, its mirror.json read again (its tip, and when it was built); null for a live indexer. */
+  async mirrorInfo() {
+    const k = await this.kind();
+    if (k.kind !== 'mirror') return null;
+    const m = await getJson(`${this.base}/mirror.json`, { cache: 'no-cache' });
+    if (m?.format === MIRROR_FORMAT) k.mirror = m;
+    return k.mirror;
+  }
+  /**
+   * The answer to a route of docs/API.md (a path with its query). A mirror's files are each asked for
+   * with revalidation (cache: 'no-cache'), so a file the browser kept from an older build is not
+   * read with a newer one; mirror.json is read again, for its tip and its time.
+   */
+  async get(route) {
+    const k = await this.kind();
+    if (k.kind === 'indexer') return getJson(this.base + route);
+    return mirrorGet(route, async (name) => {
+      const j = await getJson(`${this.base}/${name}`, { cache: 'no-cache' });
+      if (name === 'mirror.json' && j?.format === MIRROR_FORMAT) k.mirror = j;
+      return j;
+    });
+  }
   async status() {
-    return getJson(`${this.base}/status`);
+    return this.get('/status');
   }
   /** The note tree's root after block `height` (hex), or null when the indexer does not report it. */
   async rootAt(height) {
     if (!Number.isInteger(height) || height < 0) throw new Error('bad height');
-    const j = list(await getJson(`${this.base}/roots?from=${height}`), 'roots');
+    const j = list(await this.get(`/roots?from=${height}`), 'roots');
     const r = j.find((x) => x?.height === height);
     if (!r) return null;
     if (!/^[0-9a-f]{64}$/i.test(String(r.root))) throw new Error(`${this.base}: a malformed /roots answer`);
@@ -113,7 +165,7 @@ export class IndexerApi {
   async digest(height) {
     if (!Number.isInteger(height) || height < 0) throw new Error('bad height');
     try {
-      const j = await getJson(`${this.base}/digest/${height}`);
+      const j = await this.get(`/digest/${height}`);
       if (j?.height !== height || !/^[0-9a-f]{64}$/i.test(String(j.digest))) throw new Error(`${this.base}: a malformed /digest answer`);
       return String(j.digest).toLowerCase();
     } catch (e) {
@@ -122,13 +174,13 @@ export class IndexerApi {
     }
   }
   async tokens() {
-    return list(await getJson(`${this.base}/tokens`), 'tokens').map(normToken);
+    return list(await this.get(`/tokens`), 'tokens').map(normToken);
   }
   /** One listing (docs/API.md /listing/:txid), or null if the indexer does not know it. */
   async listing(listTxid) {
     if (!/^[0-9a-f]{64}$/.test(listTxid)) throw new Error('bad listing id');
     try {
-      return normListing(await getJson(`${this.base}/listing/${listTxid}`));
+      return normListing(await this.get(`/listing/${listTxid}`));
     } catch (e) {
       if (e.status === 404) return null;
       throw e;
@@ -136,11 +188,11 @@ export class IndexerApi {
   }
   /** Every listing, optionally in one state (ACTIVE, SOLD, CANCELLED, CLOSED, CLAIMED). */
   async listings(state) {
-    return list(await getJson(`${this.base}/listings${state ? `?state=${state}` : ''}`), 'listings').map(normListing);
+    return list(await this.get(`/listings${state ? `?state=${state}` : ''}`), 'listings').map(normListing);
   }
   async token(ticker) {
     if (!/^[A-Z0-9]{4}$/.test(ticker)) throw new Error('bad ticker');
-    const j = await getJson(`${this.base}/token/${ticker}`);
+    const j = await this.get(`/token/${ticker}`);
     return normToken(j.token ?? j);
   }
   /**
@@ -151,7 +203,7 @@ export class IndexerApi {
   async notes(from = 0) {
     const out = [];
     for (;;) {
-      const j = await getJson(`${this.base}/notes?from=${from}&limit=${NOTE_PAGE}`);
+      const j = await this.get(`/notes?from=${from}&limit=${NOTE_PAGE}`);
       const page = list(j, 'notes');
       out.push(...page.map(normNote));
       from += page.length;
@@ -168,7 +220,7 @@ export class IndexerApi {
   async nullifiers(from = 0) {
     let j;
     try {
-      j = await getJson(`${this.base}/nullifiers?from=${from}`);
+      j = await this.get(`/nullifiers?from=${from}`);
     } catch (e) {
       if (e.status === 404) return null;
       throw e;

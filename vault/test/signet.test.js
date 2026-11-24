@@ -75,18 +75,23 @@ test('1. a signet build refuses until the activation height is fixed; then only 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost']);
 const THIRD_PARTY = new Set(['mempool.space', 'dweb.link']); // a public signet Esplora; the IPFS gateway of isolation.js
 
-test('2. the default servers are signet indexers you configure, and none leads to us', () => {
+test('2. the default servers are the site\'s own mirrors on signet, and none leads to us', () => {
   assert.deepEqual(Object.keys(SERVERS), ['test', 'signet'], 'one set per profile');
-  assert.deepEqual(defaultSettings('signet'), { indexer: 'http://127.0.0.1:8020', esplora: 'https://mempool.space/signet/api' });
-  assert.deepEqual(defaultSettings('test'), { indexer: 'http://127.0.0.1:8020\nhttp://127.0.0.1:8030', esplora: 'http://127.0.0.1:8020/esplora' });
+  // the mirrors beside the page (docs/API.md, "The static mirror"), resolved against the page's URL
+  assert.deepEqual(defaultSettings('signet', 'https://sh-20.github.io/SH-20/vault/'), { indexer: 'https://sh-20.github.io/SH-20/api/js/\nhttps://sh-20.github.io/SH-20/api/rs/', esplora: 'https://mempool.space/signet/api' });
+  assert.deepEqual(defaultSettings('signet', 'http://localhost:8000/vault/?x=1'), { indexer: 'http://localhost:8000/api/js/\nhttp://localhost:8000/api/rs/', esplora: 'https://mempool.space/signet/api' });
+  assert.deepEqual(defaultSettings('signet', undefined), { indexer: '../api/js/\n../api/rs/', esplora: 'https://mempool.space/signet/api' }, 'no page: as written');
+  assert.deepEqual(defaultSettings('test', 'https://sh-20.github.io/SH-20/vault/'), { indexer: 'http://127.0.0.1:8020\nhttp://127.0.0.1:8030', esplora: 'http://127.0.0.1:8020/esplora' });
   assert.throws(() => defaultSettings('mainnet'), /no servers for the mainnet profile/);
+  const PAGE = 'https://page.invalid/vault/';
   for (const [name, s] of Object.entries(SERVERS)) {
     for (const u of [...s.indexers, s.esplora]) {
-      const { hostname } = new URL(u);
-      assert.ok(LOOPBACK.has(hostname) || THIRD_PARTY.has(hostname), `${name}: ${u}`);
+      const { hostname } = new URL(u, PAGE);
+      assert.ok(hostname === 'page.invalid' || LOOPBACK.has(hostname) || THIRD_PARTY.has(hostname), `${name}: ${u}`);
     }
-    assert.ok(s.indexers.every((u) => LOOPBACK.has(new URL(u).hostname)), `${name}: every default indexer is your own`);
+    assert.ok(s.indexers.every((u) => ['page.invalid', ...LOOPBACK].includes(new URL(u, PAGE).hostname)), `${name}: every default indexer is the page's own origin or your machine`);
   }
+  assert.ok(SERVERS.signet.indexers.every((u) => new URL(u, PAGE).origin === new URL(PAGE).origin), 'on signet, the page\'s own origin only');
   // the page takes them from servers.js, for its profile; Settings and a confirmed link replace them
   const context = readFileSync(new URL('../src/ui/context.js', import.meta.url), 'utf8');
   assert.match(context, /const DEFAULTS = defaultSettings\(PROFILE_NAME\);/);
@@ -97,7 +102,7 @@ test('2. the default servers are signet indexers you configure, and none leads t
     if (!/\.(html|js|css)$/.test(p)) continue;
     for (const [, host] of bytes.toString('utf8').matchAll(/https?:\/\/(?:\$\{[^}]+\}\.)*([a-z0-9.-]+)/gi)) {
       const base = host.replace(/^.*?((?:[a-z0-9-]+\.)?[a-z0-9-]+\.[a-z]+|localhost|127\.0\.0\.1)$/i, '$1');
-      assert.ok(LOOPBACK.has(host) || THIRD_PARTY.has(host) || THIRD_PARTY.has(base) || /\.localhost$/.test(host), `${p}: ${host}`);
+      assert.ok(LOOPBACK.has(host) || THIRD_PARTY.has(host) || THIRD_PARTY.has(base) || /\.(localhost|invalid)$/.test(host), `${p}: ${host}`); // .invalid never resolves (RFC 2606): mirror-read.js parses routes against it
     }
   }
 });

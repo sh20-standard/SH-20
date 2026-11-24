@@ -26,8 +26,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 
-// The indexer modules reachable from vault/src/sh20.js.
-export const INDEXER = ['carrier.js', 'codec.js', 'constants.js', 'notes.js', 'poseidon.js', 'schnorr.js', 'tree.js'];
+// The indexer modules reachable from vault/src/sh20.js, and the mirror reader of vault/src/api.js.
+export const INDEXER = ['carrier.js', 'codec.js', 'constants.js', 'mirror-read.js', 'notes.js', 'poseidon.js', 'schnorr.js', 'tree.js'];
 // The circuit/js modules reachable from vault/src/sh20.js (docs/SPEC-NOTES.md).
 export const CIRCUIT_JS = ['address.js', 'babyjub.js', 'eddsa.js', 'notes.js', 'seal.js', 'subtle.js', 'webcrypto.js'];
 // The prover's host side and pool thread, unchanged (circuit/web), and the shipped proving key.

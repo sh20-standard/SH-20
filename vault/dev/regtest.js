@@ -2,7 +2,7 @@
 // transaction the page and its wallet sign (scripts, signatures, standardness, fees); two reference
 // indexers follow the chain over RPC, as indexer/bin/follow.js does, with the real PLONK verifier.
 //
-//   node vault/dev/regtest.js [--isolate] [--bitcoind <path>]   then   E2E_CHAIN=regtest node vault/dev/e2e.js
+//   node vault/dev/regtest.js [--isolate] [--mirror] [--bitcoind <path>]   then   E2E_CHAIN=regtest node vault/dev/e2e.js
 //
 //   :8000            the repository root (open http://localhost:8000/vault/)
 //   :8020, :8030     two indexers (indexer/src/api.js), each following the chain on its own
@@ -11,12 +11,18 @@
 //                    A broadcast is mined at once, in a block of its own; POST /esplora/mine?n=N mines N
 //                    empty blocks (time passes: a DEPLOY's commit matures).
 //
+// --mirror: the page reads static mirrors instead (docs/API.md, "The static mirror"), as on the site.
+//   :8000/api/js/, :8000/api/rs/   indexer/bin/mirror.js of :8020 and of :8030, written again after every
+//                    block (before a broadcast's answer returns, so the page reads the new tip), served as
+//                    files; and the live indexers refuse any request a page makes (one with an Origin):
+//                    only Esplora is read live. Run E2E_MIRROR=1 node vault/dev/e2e.js against it.
+//
 // The chain starts at the test profile's activation height (vault/src/profile.js PROFILES.test,
 // block 0): the genesis token SH20 is open from there. The wallet of dev/test-wallet.js gets ten
 // coinbases, matured by 100 blocks. bitcoind comes from vault/tools/bitcoind.sh (a pinned release,
 // its SHA-256 checked) unless --bitcoind names one; its data lives in a temporary folder, removed on exit.
 
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, execFile, execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -39,6 +45,7 @@ const RPC_PORT = Number(arg('--rpc-port', 18543));
 const PORTS = [8020, 8030];
 const A = PROFILES.test.activationHeight;
 const BURN = 'raw(51)'; // OP_TRUE: where the blocks that only pass time pay their coinbase
+const MIRROR = process.argv.includes('--mirror');
 
 const BITCOIND = arg('--bitcoind', null) ?? execFileSync(join(here, '..', 'tools', 'bitcoind.sh')).toString().trim();
 const datadir = mkdtempSync(join(tmpdir(), 'sh20-regtest-'));
@@ -97,9 +104,23 @@ const indexers = PORTS.map(() => {
   });
   return { indexer, follower };
 });
+// --mirror: each indexer's mirror, written again by indexer/bin/mirror.js when its tip has moved
+const site = join(datadir, 'site', 'api');
+const mirrorOf = PORTS.map((port, k) => ({ api: `http://127.0.0.1:${port}`, out: join(site, ['js', 'rs'][k]), tip: null }));
+let serving = false; // the mirrors are read from the indexers' HTTP API, once it listens
+async function mirrors() {
+  for (const m of mirrorOf) {
+    const { height, digest } = await (await fetch(`${m.api}/status`)).json();
+    if (m.tip === `${height}:${digest}`) continue;
+    await new Promise((resolve, reject) => execFile(process.execPath, [join(root, 'indexer', 'bin', 'mirror.js'), '--api', m.api, '--out', m.out], (e, out, err) => (e ? reject(new Error(`mirror.js: ${err || e.message}`)) : resolve(out))));
+    m.tip = `${height}:${digest}`;
+  }
+}
+
 let following = Promise.resolve(); // one step at a time: a step that overlapped another would apply a block twice
 const follow = () => (following = following.catch(() => {}).then(async () => {
   for (const { follower } of indexers) await follower.step();
+  if (MIRROR && serving) await mirrors();
 }));
 await follow();
 
@@ -185,13 +206,23 @@ const serve = (handler) => (req, res) => {
   if (pathname.startsWith('/esplora/')) {
     return esplora(req, pathname.slice('/esplora'.length), res).catch((e) => res.writeHead(500).end(String(e.message)));
   }
+  // --mirror: a page reads the mirrors, never the live indexer (the tools here send no Origin)
+  if (MIRROR && req.headers.origin) {
+    console.error(`refused a page's ${pathname}: with --mirror the page reads /api/js/ and /api/rs/`);
+    return res.writeHead(403, { 'access-control-allow-origin': '*', 'content-type': 'application/json' }).end(JSON.stringify({ error: 'regtest.js --mirror: read the mirror' }));
+  }
   return handler(req, res);
 };
 const servers = indexers.map(({ indexer }, k) => createServer(serve(apiHandler(indexer))).listen(PORTS[k], '127.0.0.1'));
-servers.push(staticServer({ root, isolate: process.argv.includes('--isolate') }).listen(8000, '127.0.0.1'));
+servers.push(staticServer({ root, isolate: process.argv.includes('--isolate'), mounts: MIRROR ? { '/api/': site } : {} }).listen(8000, '127.0.0.1'));
+if (MIRROR) {
+  serving = true;
+  await follow();
+}
 // blocks the page did not cause (none here, but a follower must not depend on it)
 const timer = setInterval(() => follow().catch((e) => console.error(e.message)), 2000);
 process.on('exit', () => clearInterval(timer));
 
 console.log(`vault http://localhost:8000/vault/ on Bitcoin Core regtest (${(await rpc('getnetworkinfo')).subversion}), height ${await rpc('getblockcount')}`);
 console.log(`indexers http://127.0.0.1:${PORTS.join(' and :')}, Esplora at /esplora; wallet ${WALLET.address}`);
+if (MIRROR) console.log('their mirrors at http://localhost:8000/api/js/ and /api/rs/, written again after every block; the live indexers refuse the page');
