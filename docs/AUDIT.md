@@ -241,7 +241,7 @@ would tell the indexer which notes are its own. None of this is cryptographicall
 | a second verifier agrees | `bench/cross-check.sh`: snarkjs verifies a spend proof made here and rejects a tampered input; this verifier accepts a snarkjs proof and rejects tampered ones (also `a_proof_made_by_snarkjs_is_accepted`) | the snarkjs proof is of a toy circuit (`circom/cubic.circom`), not of the spend relation |
 | a second statement of the relation agrees | `bench/cross-check.sh` step 3: circomlib's `spend.circom` accepts a witness built by the Rust model, with the same nine public signals. Step 4 (`bench/circom-cases.mjs`): the five honest witnesses of `fixture::valid` are accepted by both, and the 35 adversarial ones refused by both, at matching places (`--verbose` prints circom's failed assertion next to the part of the relation the Rust circuit names) | altered inputs through an honest computation on both sides; not an equivalence of the two constraint systems |
 | the keys are the pinned ones and reproducible | `shipped_key_is_reproducible` (key generation gives `artifacts/spend.pk` byte for byte, the SRS is a consistent sequence of powers), `a_key_file_that_is_not_the_pinned_one_is_refused`; `I/plonk.test.js` `a verifying key other than the pinned one is refused` | that the powers are Hermez' is shown by rebuilding from the pinned file (§5), not by a test |
-| real proofs through the indexer | `I/plonk.test.js`: `real TRANSFER and BURN proofs are accepted, and only once`, `a proof does not carry over to an altered envelope`, `a TRANSFER proof cannot be replayed as a BURN` | no real LIST or DEPLOY-burn proof |
+| real proofs through the indexer | `I/plonk.test.js`: `real proofs of the four kinds of spend are accepted, and only once` (a TRANSFER, a BURN, a LIST and the burn of a DEPLOY, under `D = 1000`), `a proof does not carry over to an altered envelope` (among them a LIST rewritten to another `lockKey`, and a DEPLOY to another ticker), `a spend proved for one type cannot be replayed as another`. `indexer/vectors/plonk-v0.3.json` is the same chain for a second indexer, and `indexer-rs` replays it | every note of that chain is SH20: a spend of a deployed token under a real proof is only in `vault/test/spend.test.js` (a TRANSFER) |
 | the rules around a proof | `I/indexer.test.js` `TRANSFER: anchor window, nullifiers, proof`; `the default verifier accepts no proof at all`; `I/codec.test.js` `strict parsing rejects malformed envelopes`, `carrier rules: one envelope per transaction` | with a test verifier that accepts a tag |
 | the turnstile (PR #16) | `I/indexer.test.js` `turnstile: no spend takes more of a ticker out of the pool than went in, even with a broken circuit` and `turnstile: TAKE, CLAIM and team unlocks bring units back into the pool, and a rollback restores it` | it bounds what leaves in public, not who loses (§6.5) |
 | a copied LIST cannot take the lock (PR #20) | `I/indexer.test.js` `a LIST copied into another transaction cannot point its lock at the copier`, `LIST needs a P2TR lock to its lockKey, of at least 330 sats`; `I/codec.test.js` | with the test verifier. That a rewritten `lockKey` changes the body hash is shown for other fields by `a proof does not carry over to an altered envelope`; no real LIST proof exists |
@@ -277,9 +277,9 @@ The three digests are constants of `circuit/src/lib.rs` (`SRS_SHA256`, `VK_DIGES
 **Tests.**
 
 ```sh
-cd circuit && cargo test --release           # 38 tests
+cd circuit && cargo test --release           # 41 tests
 ./build-wasm.sh                              # needs the targets wasm32-unknown-unknown and wasm32-wasip1-threads
-cd ../indexer && npm test                    # 72 tests; those of plonk.test.js need the module just built
+cd ../indexer && npm test                    # 74 tests; those of plonk.test.js need the module just built
 cd ../circuit/js && npm test                 # 48 tests
 npm run test:browser                         # the WebCrypto primitives in headless Chrome
 ```
@@ -291,9 +291,10 @@ cd circuit && cargo run --release --example vectors -- js/vectors.json
 cd ../indexer && npm run vectors             # vectors/v0.3.json
 ```
 
-`indexer/test/fixtures/plonk-scenario.json` holds real proofs
-(`sh20-circuit scenario artifacts/spend.pk <out>`). Proofs are randomised, so regenerating it gives
-other bytes that verify the same.
+`indexer/test/fixtures/plonk-scenario.json` holds real proofs, one spend of each kind: a TRANSFER, a
+BURN, a LIST and the burn of a DEPLOY (`sh20-circuit scenario artifacts/spend.pk <out>`). Proofs are
+randomised, so regenerating it gives other bytes that verify the same; `npm run vectors` then writes
+`indexer/vectors/plonk-v0.3.json` from it.
 
 **Cross-check with snarkjs and circom.**
 

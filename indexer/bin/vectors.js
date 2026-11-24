@@ -450,42 +450,51 @@ writeFileSync(new URL('../vectors/v0.3.json', import.meta.url), JSON.stringify(o
 console.log(`wrote vectors/v0.3.json: ${Object.keys(ser).length} envelopes, ${blocks.length} blocks, final digest ${results.at(-1).digest}`);
 
 // ---------------------------------------------------------------------------------------------------------------------
-// vectors/plonk-v0.3.json: a chain whose spends carry real proofs, for an implementation that wires the PLONK verifier.
-// The TRANSFER and the BURN are those of test/fixtures/plonk-scenario.json (written by `sh20-circuit scenario`); they
-// were proved against the tree that a DEPLOY of GENE without a burn and its two MINTs leave. The verifier is the one the
-// vault ships (vault/prover/sh20_circuit.wasm, the build of circuit/ the CI checks byte for byte).
+// vectors/plonk-v0.3.json: a chain whose spends carry real proofs, one of each kind, for an implementation that wires
+// the PLONK verifier. The TRANSFER, the BURN, the LIST and the DEPLOY are those of test/fixtures/plonk-scenario.json
+// (written by `sh20-circuit scenario`); they were proved for this chain: D = 1000, nothing in block 1, two MINTs of the
+// genesis token in block 2, and each spend in its block. The verifier is the one the vault ships
+// (vault/prover/sh20_circuit.wasm, the build of circuit/ the CI checks byte for byte).
 const fixture = JSON.parse(readFileSync(new URL('../test/fixtures/plonk-scenario.json', import.meta.url), 'utf8'));
 const realVerifier = plonkVerifier({
   wasm: new URL('../../vault/prover/sh20_circuit.wasm', import.meta.url).pathname,
   vk: Buffer.from(fixture.vk, 'hex'),
 });
+// One bit of a proof's first scalar (eval_a, after its nine points) flipped: still a field element, so the pairing runs.
+const flipped = (envelope) => {
+  const out = Buffer.from(envelope);
+  out[out.length - 480 + 9 * 32] ^= 1;
+  return out;
+};
 const P = {
-  deploy: serializeEnvelope({
-    type: 'DEPLOY', ticker: fixture.ticker, max: 21000000n, lim: 1000n, pre: 0n, start: 2, end: 0, unlock: 2,
-    price: 1000n, payMode: 1, payScript: Buffer.alloc(0), team: null, spend: null,
-  }),
   mints: fixture.mints.map((m) => serializeEnvelope({ type: 'MINT', ticker: fixture.ticker, npk: BigInt(m.npk) })),
   transfer: Buffer.from(fixture.transfer, 'hex'),
   burn: Buffer.from(fixture.burn, 'hex'),
+  list: Buffer.from(fixture.list, 'hex'),
+  deploy: Buffer.from(fixture.deploy, 'hex'),
 };
-// One bit of the proof's first scalar (eval_a, after its nine points) flipped: still a field element, so the pairing runs.
-P.tampered = Buffer.from(P.transfer);
-P.tampered[P.tampered.length - 480 + 9 * 32] ^= 1;
-const pTx = (name, bytes, prevHeight) => ({
+P.tampered = flipped(P.transfer);
+P.tamperedList = flipped(P.list);
+P.tamperedDeploy = flipped(P.deploy);
+const pTx = (name, bytes, { prevHeight, vout = [] } = {}) => ({
   txid: txid('plonk/' + name),
   vin: [{ txid: txid('plonk/fund-' + name), vout: 0, witness: witness(bytes), ...(prevHeight !== undefined ? { prevHeight } : {}) }],
-  vout: [],
+  vout,
 });
-const pMint = (i) => ({ txid: txid(`plonk/mint${i}`), vin: [input(`plonk/mint${i}`)], vout: [{ value: 1000n, script: opReturn(P.mints[i]) }] });
+const pMint = (i) => ({ txid: txid(`plonk/mint${i}`), vin: [input(`plonk/mint${i}`)], vout: [{ value: 0n, script: opReturn(P.mints[i]) }] });
+// The lock of a LIST: output 0, P2TR to the key its body names. The refused LIST pays one too, and leaves no listing.
+const pLock = () => [{ value: 330n, script: p2tr(Buffer.from(fixture.lockKey, 'hex')) }];
 const pBlocks = [
-  [pTx('deploy', P.deploy, 0)],
+  [],
   [pMint(0), pMint(1)],
   [pTx('tampered', P.tampered), pTx('transfer', P.transfer)],
   [pTx('burn', P.burn)],
   [pTx('transfer-again', P.transfer), pTx('burn-again', P.burn)],
+  [pTx('tampered-list', P.tamperedList, { vout: pLock() }), pTx('list', P.list, { vout: pLock() })],
+  [pTx('tampered-deploy', P.tamperedDeploy, { prevHeight: 6 }), pTx('deploy', P.deploy, { prevHeight: 6 })],
 ].map((t, i) => ({ height: i + 1, hash: `p${i + 1}`, txs: t }));
 const pCalls = [];
-const P_PROFILE = { activationHeight: 1, deployBurn: 0n, deployMaturity: 0, anchorWindow: 100 };
+const P_PROFILE = { activationHeight: 1, deployBurn: BigInt(fixture.deployBurn), deployMaturity: 0, anchorWindow: 100 };
 const pix = new Indexer({
   profile: P_PROFILE,
   verifier: {
@@ -503,27 +512,42 @@ const pExpected = [
   { height: 3, txid: txid('plonk/tampered'), reason: 'invalid proof' },
   { height: 5, txid: txid('plonk/transfer-again'), reason: 'nullifier already spent' },
   { height: 5, txid: txid('plonk/burn-again'), reason: 'nullifier already spent' },
+  { height: 6, txid: txid('plonk/tampered-list'), reason: 'invalid proof' },
+  { height: 7, txid: txid('plonk/tampered-deploy'), reason: 'invalid proof' },
 ];
 if (JSON.stringify(pRejected) !== JSON.stringify(pExpected)) throw new Error(`plonk chain: unexpected rejections ${JSON.stringify(pRejected)}`);
-if (pCalls.map((c) => c.accepted).join() !== 'false,true,true') throw new Error(`plonk chain: verifier answers ${pCalls.map((c) => c.accepted)}`);
+if (pCalls.map((c) => c.accepted).join() !== 'false,true,true,false,true,false,true') throw new Error(`plonk chain: verifier answers ${pCalls.map((c) => c.accepted)}`);
+const pEvents = pResults.map((r) => r.events.map((e) => e.type).join());
+if (pEvents.join(' | ') !== 'GENESIS | MINT,MINT | TRANSFER | BURN |  | LIST | DEPLOY') throw new Error(`plonk chain: events ${pEvents.join(' | ')}`);
+const pTok = (t) => ({ mints: pix.token(t).mints.toString(), burned: pix.token(t).burned.toString(), pool: pix.token(t).pool.toString() });
 const pOut = {
   version: 'SH-20 draft v0.3',
-  notes: 'A chain whose spends carry real PLONK proofs, checked by the pinned verifier (docs/SPEC-WIRE.md §4). Same conventions as v0.3.json: field elements are hex, big-endian here, 32-byte little-endian on the wire; the reason of a refusal is informative, only the refusal is normative.',
+  notes: 'A chain whose spends carry real PLONK proofs, one of each kind (TRANSFER, BURN, LIST, and the burn of a DEPLOY), checked by the pinned verifier (docs/SPEC-WIRE.md §4). Same conventions as v0.3.json: field elements are hex, big-endian here, 32-byte little-endian on the wire; the reason of a refusal is informative, only the refusal is normative.',
   sections: {
+    profile: 'D = deployBurn is 1000: every DEPLOY burns 1,000 units of the genesis token SH20, which is the token of every note of this chain (with D > 0 no other token exists before a DEPLOY has burned some). N = deployMaturity is 0 here, and the two DEPLOY reveals give prevHeight 6.',
     verifyingKey: 'The verifying key the proofs verify under, as circuit/artifacts/spend.vk holds it, and its digest SHA256("sh20/v0/vk" ‖ key), which must be VK_DIGEST.',
-    envelopes: 'The envelopes of the chain, with the bodyHash of each spend. tampered is transfer with one bit of its proof flipped: the low bit of eval_a, the first scalar after the nine points, so that the proof still decodes and the pairing check is what refuses it.',
-    blocks: 'Block 1 deploys GENE without a burn (deployBurn 0) and block 2 mints it twice: the two leaves the TRANSFER spends. Block 3 holds the tampered TRANSFER, refused, then the TRANSFER (its anchor is block 2); block 4 the BURN of 900 GENE (anchored at block 3, so the spends must stay at these heights); block 5 the TRANSFER and the BURN again.',
-    verifierCalls: 'Every call to the verifier, in order: the nine public inputs (R[anchorHeight], nf0, nf1, leaf0, leaf1, leaf2, bodyHash, vPub, tPub) and what the verifier answered. The replays of block 5 are refused before their proofs are checked.',
+    envelopes: 'The envelopes of the chain, with the bodyHash of each spend. tampered, tamperedList and tamperedDeploy are transfer, list and deploy with one bit of the proof flipped: the low bit of eval_a, the first scalar after the nine points, so that the proof still decodes and the pairing check is what refuses it.',
+    blocks: 'Block 1 is empty and block 2 mints SH20 twice: the two leaves the TRANSFER spends. Block 3 holds the tampered TRANSFER, refused, then the TRANSFER (its anchor is block 2); block 4 the BURN of 900 SH20 (anchor 3); block 5 the TRANSFER and the BURN again. Block 6 holds the tampered LIST, refused, then the LIST of 60 SH20 for 5,000 sats (anchor 5): output 0 of each is the lock, P2TR to the lockKey of the body, and the refused one leaves no listing. Block 7 holds the tampered DEPLOY of GENE, refused, then the DEPLOY (anchor 6): it burns 1,000 SH20, and the refused one leaves no token, or the second would be refused for its ticker. The anchors fix the heights: each spend must stay in its block. The LIST and the DEPLOY spend one note each: their second nullifier is that of an unused input (SPEC-WIRE §4).',
+    lockKey: 'The key the LIST locks to: the public key of the first test vector of BIP340, whose secret key is 3.',
+    verifierCalls: 'Every call to the verifier, in order: the nine public inputs (R[anchorHeight], nf0, nf1, leaf0, leaf1, leaf2, bodyHash, vPub, tPub) and what the verifier answered. vPub is 0 for the TRANSFER, 900 for the BURN, 60 for the LIST and D for the DEPLOY, with tPub = t("SH20") for the last three. The replays of block 5 are refused before their proofs are checked.',
     after: 'For each block: root R[H], the event types, eventsH, and digest_H.',
+    final: 'The tree, the number of nullifiers, the turnstile of SH20 (2,000 minted = 1,900 burned + 60 listed + 40 in the pool) and of GENE, and the state of the listing by its txid.',
   },
   profile: { activationHeight: P_PROFILE.activationHeight, deployBurn: String(P_PROFILE.deployBurn), anchorWindow: P_PROFILE.anchorWindow, anchorMinDepth: 1, deployMaturity: P_PROFILE.deployMaturity },
   verifyingKey: { hex: fixture.vk, digest: createHash('sha256').update(DOMAIN.VK, 'utf8').update(Buffer.from(fixture.vk, 'hex')).digest('hex') },
-  envelopes: Object.fromEntries(Object.entries({ deploy: P.deploy, mint0: P.mints[0], mint1: P.mints[1], transfer: P.transfer, burn: P.burn, tampered: P.tampered }).map(([k, v]) => [k, { bytes: v.length, hex: v.toString('hex'), ...(bodyHash(v) ? { bodyHash: bodyHash(v) } : {}) }])),
+  lockKey: fixture.lockKey,
+  envelopes: Object.fromEntries(Object.entries({
+    mint0: P.mints[0], mint1: P.mints[1], transfer: P.transfer, burn: P.burn, list: P.list, deploy: P.deploy,
+    tampered: P.tampered, tamperedList: P.tamperedList, tamperedDeploy: P.tamperedDeploy,
+  }).map(([k, v]) => [k, { bytes: v.length, hex: v.toString('hex'), ...(bodyHash(v) ? { bodyHash: bodyHash(v) } : {}) }])),
   blocks: pBlocks.map((b) => ({ height: b.height, txs: b.txs.map(txJson) })),
   rejected: pRejected,
   verifierCalls: pCalls,
   after: pResults.map((r) => ({ height: r.height, root: hexFr(r.root), events: r.events.map((e) => e.type), eventsH: encodeEvents(r.events).toString('hex'), digest: r.digest })),
-  final: { treeSize: pix.tree.size, gene: { burned: pix.token('GENE').burned.toString(), pool: pix.token('GENE').pool.toString() }, nullifiers: pix.nullifiers.size },
+  final: {
+    treeSize: pix.tree.size, nullifiers: pix.nullifiers.size, sh20: pTok('SH20'), gene: pTok('GENE'),
+    listings: Object.fromEntries([...pix.listings.values()].map((l) => [l.listTxid, l.state])),
+  },
 };
 writeFileSync(new URL('../vectors/plonk-v0.3.json', import.meta.url), JSON.stringify(pOut, null, 2) + '\n');
 console.log(`wrote vectors/plonk-v0.3.json: ${pBlocks.length} blocks, ${pCalls.length} verifier calls, final digest ${pResults.at(-1).digest}`);

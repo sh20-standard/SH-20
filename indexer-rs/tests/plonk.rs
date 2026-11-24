@@ -110,8 +110,8 @@ fn the_verifying_key_is_the_pinned_one() {
     assert!(PlonkVerifier::with_key(&[]).is_err());
 }
 
-/// The envelopes of the vectors: their sizes, the `bodyHash` of each spend, and `tampered`,
-/// which is `transfer` with the low bit of the first scalar of its proof flipped.
+/// The envelopes of the vectors: their sizes, the `bodyHash` of each spend, and the three
+/// tampered ones, each a spend with the low bit of the first scalar of its proof flipped.
 #[test]
 fn the_envelopes() {
     let v = vectors();
@@ -126,12 +126,14 @@ fn the_envelopes() {
             None => assert!(envelope.spend().is_none(), "{name}"),
         }
     }
-    let transfer = unhex(s(&e["transfer"], "hex")).unwrap();
-    let tampered = unhex(s(&e["tampered"], "hex")).unwrap();
-    let mut mended = tampered.clone();
-    mended[transfer.len() - PROOF_LEN + 9 * 32] ^= 1;
-    assert_ne!(tampered, transfer);
-    assert_eq!(mended, transfer);
+    for (good, bad) in [("transfer", "tampered"), ("list", "tamperedList"), ("deploy", "tamperedDeploy")] {
+        let spend = unhex(s(&e[good], "hex")).unwrap();
+        let tampered = unhex(s(&e[bad], "hex")).unwrap();
+        let mut mended = tampered.clone();
+        mended[spend.len() - PROOF_LEN + 9 * 32] ^= 1;
+        assert_ne!(tampered, spend, "{bad}");
+        assert_eq!(mended, spend, "{bad}");
+    }
     // every block's envelopes are among them
     let known: Vec<Vec<u8>> = e.as_object().unwrap().values().map(|x| unhex(s(x, "hex")).unwrap()).collect();
     for b in list(&v, "blocks") {
@@ -166,12 +168,22 @@ fn the_chain() {
         nf0.reverse();
         assert_eq!(hex(&nf0), want_inputs[1]);
     }
-    // the vectors do hold what they are for: a proof accepted with no public value, one with a
-    // burn's `vPub` and `tPub`, and one refused by the pairing alone
+    // the vectors do hold what they are for: one spend of each kind accepted (a TRANSFER with no
+    // public value, then a BURN, a LIST and a DEPLOY with their `vPub` and `tPub`), and before
+    // three of them the same spend refused by the pairing alone
     let answers: Vec<bool> = r.calls.iter().map(|c| c.2).collect();
-    assert_eq!(answers, [false, true, true]);
-    assert_eq!(r.calls[0].1, r.calls[1].1, "the tampered proof comes with the inputs of the good one");
-    assert_ne!(r.calls[2].1[7], "0".repeat(64));
+    assert_eq!(answers, [false, true, true, false, true, false, true]);
+    for (tampered, good) in [(0, 1), (3, 4), (5, 6)] {
+        assert_eq!(r.calls[tampered].1, r.calls[good].1, "a tampered proof comes with the inputs of the good one");
+    }
+    let zero = "0".repeat(64);
+    assert_eq!((&r.calls[1].1[7], &r.calls[1].1[8]), (&zero, &zero));
+    for call in [2, 4, 6] {
+        assert_ne!(r.calls[call].1[7], zero, "vPub of call {call}");
+        assert_eq!(r.calls[call].1[8], r.calls[2].1[8], "tPub of call {call}: one ticker");
+    }
+    let kinds: Vec<&str> = r.events.iter().map(|e| e.name()).filter(|n| !["GENESIS", "MINT"].contains(n)).collect();
+    assert_eq!(kinds, ["TRANSFER", "BURN", "LIST", "DEPLOY"]);
 
     let want_rejected: Vec<(u64, String)> =
         list(&v, "rejected").iter().map(|x| (x["height"].as_u64().unwrap(), s(x, "txid").to_string())).collect();
@@ -188,17 +200,29 @@ fn the_chain() {
         assert_eq!(digest, s(want, "digest"), "digest of block {h}");
     }
 
-    // the final state: eight leaves, four nullifiers, and the turnstile of GENE after the burn
+    // the final state: the leaves, the nullifiers, the turnstile of SH20 after the BURN, the LIST
+    // and the DEPLOY's burn, the token the DEPLOY made, and the listing
     let f = &v["final"];
     assert_eq!(r.indexer.tree_size(), f["treeSize"].as_u64().unwrap());
-    let gene = r.indexer.token(&Ticker::parse("GENE").unwrap()).unwrap();
-    assert_eq!(gene.burned.to_string(), s(&f["gene"], "burned"));
-    assert_eq!(gene.pool.to_string(), s(&f["gene"], "pool"));
+    for (ticker, key) in [("SH20", "sh20"), ("GENE", "gene")] {
+        let token = r.indexer.token(&Ticker::parse(ticker).unwrap()).unwrap();
+        assert_eq!(token.mints.to_string(), s(&f[key], "mints"), "{ticker}");
+        assert_eq!(token.burned.to_string(), s(&f[key], "burned"), "{ticker}");
+        assert_eq!(token.pool.to_string(), s(&f[key], "pool"), "{ticker}");
+    }
+    let listings: Vec<(String, &str)> = r.indexer.listings().map(|(id, l)| (hex(id), l.status.name())).collect();
+    let want_listings: Vec<(String, &str)> =
+        f["listings"].as_object().unwrap().iter().map(|(id, state)| (id.clone(), state.as_str().unwrap())).collect();
+    assert_eq!(listings, want_listings);
+    assert_eq!(listings.len(), 1);
+    let listing = r.indexer.listings().next().unwrap().1;
+    assert_eq!(hex(&listing.lock_key), s(&v, "lockKey"));
     let spent: Vec<[u8; 32]> = r
         .events
         .iter()
         .filter_map(|e| match e {
-            Event::Transfer { spent, .. } | Event::Burn { spent, .. } => Some(spent.nf),
+            Event::Transfer { spent, .. } | Event::Burn { spent, .. } | Event::List { spent, .. } => Some(spent.nf),
+            Event::Deploy { burn, .. } => burn.as_ref().map(|spent| spent.nf),
             _ => None,
         })
         .flatten()

@@ -213,7 +213,9 @@ fn replay_checks_real_proofs() {
         .iter()
         .map(|a| format!("{} {}", a["height"], a["digest"].as_str().unwrap()))
         .collect();
-    let profile = ["--activation", "1", "--deploy-burn", "0", "--maturity", "0"];
+    // the profile of the vectors: its DEPLOY burns, so `D` is not the command's default
+    let (burn, maturity) = (v["profile"]["deployBurn"].as_str().unwrap(), v["profile"]["deployMaturity"].to_string());
+    let profile = ["--activation", "1", "--deploy-burn", burn, "--maturity", maturity.as_str()];
 
     let (ok, stdout, stderr) = replay(&dir, &[&profile[..], &["--verifier", "plonk-bn254-hermez"]].concat());
     assert!(ok, "{stderr}");

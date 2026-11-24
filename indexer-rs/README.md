@@ -20,9 +20,9 @@ indexers and no comparison of the two will show it.
 
 **Result.** It reproduces every value of `indexer/vectors/v0.3.json`: the 17 blocks of the scenario and its reorg, the `bodyHash`
 of every spend envelope, the nine inputs of every verifier call, the 32 carrier cases and the CLAIM. And every value of
-`indexer/vectors/plonk-v0.3.json`, a chain with real proofs: the three calls to the verifier with their inputs and
-answers (a TRANSFER and a BURN accepted, a TRANSFER with one bit of its proof flipped refused), and the root,
-`eventsH` and digest of its five blocks.
+`indexer/vectors/plonk-v0.3.json`, a chain with real proofs: the seven calls to the verifier with their inputs and
+answers (a TRANSFER, a BURN, a LIST and a DEPLOY that burns accepted; a TRANSFER, a LIST and a DEPLOY with one bit of
+the proof flipped refused), and the root, `eventsH` and digest of its seven blocks.
 [`docs/SPEC-GAPS.md`](../docs/SPEC-GAPS.md) lists the 28 points the first draft of the spec left open and the six a
 recheck still found, all settled in the spec since, and what the vectors still do not pin.
 

@@ -279,6 +279,9 @@ Two points are not gaps of the text but decide whether the two indexers can be c
   and "The proof" of §4 were enough to build the call. What the vectors do not hold: a LIST or a DEPLOY burn with a
   real proof, and a proof refused for its public inputs rather than for its own bytes (the tests of `indexer-rs`
   move each input of the TRANSFER's call by one; all nine are refused).
+  **Since 2026-11-24** the vectors hold the first two: a LIST and a DEPLOY that burns `D = 1000` SH20, each after a
+  copy with one bit of its proof flipped, refused (seven verifier calls in seven blocks, under `D = 1000`, every note
+  in SH20). `indexer-rs` replays them with no change to `src/`.
 - **The same profile.** `A`, `D`, `W`, `K_min` and `N` come from the command line on both sides; `D`, `W`, `K_min`
   and `N` are in the GENESIS record, so a difference shows in the digest of block `A`. Only `A` is not committed to:
   two indexers started at different heights agree on nothing and no digest says why. `follow` asks for `A` and `D`

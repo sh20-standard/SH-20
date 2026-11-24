@@ -426,7 +426,7 @@ alone. The one ephemeral key for several recipients waits for the audit of the p
 
 ## How the result is checked
 
-- `cargo test --release`: 38 tests (three of them, `tests/audit.rs`, from the audit of 2026-11-23). Model against the indexer's constants; 35 adversarial witnesses
+- `cargo test --release`: 41 tests (three of them, `tests/audit.rs`, from the audit of 2026-11-23; three, `tests/wire.rs`, hold the bodies `src/wire.rs` writes to the envelopes of `indexer/vectors/v0.3.json`). Model against the indexer's constants; 35 adversarial witnesses
   (inflation, wrong ticker, double-spend attempts, bad ranges, wrong or swapped signatures, aliased
   keys, points off the curve) rejected by the gates; proofs end to end with every public input and
   proof byte bound; the shipped proving key reproduced by key generation.
@@ -508,9 +508,13 @@ let ok = verify(&vk, &publics, &proof); // publics: [Fr; 9] in the order above
 ```
 
 `indexer/vectors/plonk-v0.3.json` is a chain whose spends carry real proofs: every call to the verifier
-with its nine inputs and the answer it must get (a TRANSFER and a BURN accepted, a TRANSFER with one bit
-of its proof flipped refused), and the root, `eventsH` and digest after each block. Checked on
-2026-11-23 with this interface from a separate crate (`default-features = false`): the three answers match.
+with its nine inputs and the answer it must get, and the root, `eventsH` and digest after each block.
+It holds one spend of each kind, accepted: a TRANSFER, a BURN, a LIST and a DEPLOY that burns `D = 1000`
+SH20; and a TRANSFER, a LIST and a DEPLOY with one bit of the proof flipped, refused. `indexer-rs` calls
+this interface from its own crate (`default-features = false`) and gets the seven answers
+(`indexer-rs/tests/plonk.rs`). The spends are made by `sh20-circuit scenario` (`src/bin/sh20-circuit.rs`
+lists the chain block by block above `scenario`), which writes `indexer/test/fixtures/plonk-scenario.json`;
+`npm run vectors` in `indexer/` puts them in their blocks.
 
 Reproducing the measurements (`bench/`, needs `npm ci` there, and circom 2.2.3 for the circom rows):
 

@@ -37,7 +37,7 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 | `docs/SPEC-NOTES.md` | wallet keys, addresses, note sealing (`pk_eph`, `ct`) and scanning, draft v0.3 (normative for wallets; reviewed once by the circuit session, §8 lists the changes; not audited) |
 | `indexer/` | reference indexer, Node ≥ 20, zero dependencies |
 | `indexer/vectors/v0.3.json` | deterministic vectors for a second implementation: primitives, envelopes with `bodyHash`, carrier cases, a CLAIM, a 17-block scenario with every root, `eventsH`, digest, refusal and verifier input, and a reorg of its last two blocks; `sections` says what each part means |
-| `indexer/vectors/plonk-v0.3.json` | a chain whose TRANSFER and BURN carry real proofs, with each verifier call, its nine inputs and its answer (one tampered proof refused), and every root and digest: for an implementation that wires the PLONK verifier (`circuit/README.md`, "The verifier as a library") |
+| `indexer/vectors/plonk-v0.3.json` | a chain with one spend of each kind under a real proof (a TRANSFER, a BURN, a LIST and the burn of a DEPLOY, with `D = 1000` and every note in SH20), with each verifier call, its nine inputs and its answer (a tampered TRANSFER, LIST and DEPLOY refused), and every root and digest: for an implementation that wires the PLONK verifier (`circuit/README.md`, "The verifier as a library") |
 | `indexer-rs/` | a second indexer in Rust, written from the spec alone (clean room): `cargo test --release` replays the vectors |
 | `docs/SPEC-GAPS.md` | what the clean-room indexer found open in the spec, and where each point is now settled |
 | `docs/AUDIT.md` | the dossier for an external zero-knowledge auditor: scope, the relation constraint by constraint, threat model, open doubts; §8 is a first reading of the vault's cryptography, with its findings |
@@ -55,14 +55,14 @@ Design rationale: [`docs/DESIGN.md`](docs/DESIGN.md). Normative bytes and rules:
 
 ```sh
 cd indexer
-npm test            # 72 tests (4 check real proofs, with circuit/'s WebAssembly verifier or the copy in vault/prover/)
+npm test            # 74 tests (4 check real proofs, with circuit/'s WebAssembly verifier or the copy in vault/prover/)
 npm run vectors     # regenerate the vectors (must be byte-identical across runs)
 npm run fuzz        # random chains through both indexers (build indexer-rs first: cargo build --release)
 npm run bench       # timings of the hot paths: Poseidon, the tree, a replay, the codec, the API
 node bin/replay.js <folder of `bitcoin-cli getblock <hash> 3` JSON files>
 
 cd circuit
-cargo test --release    # 38 tests, with the shipped proving key (artifacts/spend.pk)
+cargo test --release    # 41 tests, with the shipped proving key (artifacts/spend.pk)
 ./build-wasm.sh         # two WebAssembly builds: one thread with no imports, and a thread pool over Web Workers
 bench/cross-check.sh    # snarkjs against our verifier, both ways (hard requirement 4)
 web/build.sh            # the phone test page, in web/dist/ (see circuit/web/README.md)

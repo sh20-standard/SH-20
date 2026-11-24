@@ -335,18 +335,24 @@ fn follow_command_names_its_verifier() {
 
 /// `follow --verifier plonk-bn254-hermez` over the chain of `indexer/vectors/plonk-v0.3.json`:
 /// the digests of the vectors, the name `docs/API.md` gives the verifier, and in the API what
-/// the accepted TRANSFER and BURN left.
+/// the accepted spends left.
 #[test]
 fn follow_command_checks_real_proofs() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../indexer/vectors/plonk-v0.3.json");
     let v: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let api = http_server(esplora(Chain::new(chain_of(&v["blocks"]))));
-    let args = ["--esplora", api.as_str(), "--activation", "1", "--deploy-burn", "0", "--maturity", "0"];
+    // the profile of the vectors: its DEPLOY burns, so `D` is not zero
+    let (burn, maturity) = (v["profile"]["deployBurn"].as_str().unwrap(), v["profile"]["deployMaturity"].to_string());
+    let args = ["--esplora", api.as_str(), "--activation", "1", "--deploy-burn", burn, "--maturity", maturity.as_str()];
     let running = start(&[&args[..], &["--verifier", "plonk-bn254-hermez"]].concat());
-    let s = wait_for(&running, "block 5", |s| s["height"] == 5);
     let after = v["after"].as_array().unwrap();
-    assert_eq!(s["digest"], after[4]["digest"]);
-    assert_eq!((&s["verifier"], &s["nullifiers"], &s["leaves"]), (&json!("plonk-bn254-hermez"), &json!(4), &json!(8)));
+    let last = after.len();
+    let s = wait_for(&running, "the last block", |s| s["height"] == last);
+    assert_eq!(s["digest"], after[last - 1]["digest"]);
+    assert_eq!(
+        (&s["verifier"], &s["nullifiers"], &s["leaves"]),
+        (&json!("plonk-bn254-hermez"), &v["final"]["nullifiers"], &v["final"]["treeSize"])
+    );
     for a in after {
         let (status, block) = http_get(&format!("{}/block/{}", running.url, a["height"]));
         assert_eq!(status, 200);
@@ -354,8 +360,24 @@ fn follow_command_checks_real_proofs() {
             assert_eq!(block[key], a[key], "{key} of block {}", a["height"]);
         }
     }
-    let gene = http_get(&format!("{}/token/GENE", running.url)).1;
-    assert_eq!((&gene["burned"], &gene["pool"]), (&v["final"]["gene"]["burned"], &v["final"]["gene"]["pool"]));
+    for (ticker, key) in [("SH20", "sh20"), ("GENE", "gene")] {
+        let token = http_get(&format!("{}/token/{ticker}", running.url)).1;
+        let want = &v["final"][key];
+        assert_eq!((&token["burned"], &token["pool"]), (&want["burned"], &want["pool"]), "{ticker}");
+    }
+    // the LIST and the DEPLOY: a listing locked to the key of the vectors, and a spend of three notes each
+    for (id, state) in v["final"]["listings"].as_object().unwrap() {
+        let listing = http_get(&format!("{}/listing/{id}", running.url)).1;
+        assert_eq!((&listing["state"], &listing["lockKey"]), (state, &v["lockKey"]));
+    }
+    for (call, kind) in [(4, "LIST"), (6, "DEPLOY")] {
+        let txid = v["verifierCalls"][call]["txid"].as_str().unwrap();
+        let tx = http_get(&format!("{}/tx/{txid}", running.url)).1;
+        assert_eq!(
+            (&tx["event"]["type"], &tx["rejected"], tx["notes"].as_array().unwrap().len()),
+            (&json!(kind), &Value::Null, 3)
+        );
+    }
     // the tampered TRANSFER: refused, and the good one of the same block accepted
     let refused = v["rejected"][0]["txid"].as_str().unwrap();
     let tx = http_get(&format!("{}/tx/{refused}", running.url)).1;
