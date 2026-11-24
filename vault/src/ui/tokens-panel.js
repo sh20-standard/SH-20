@@ -3,7 +3,7 @@
 
 import { finalizePsbt, sameUnsignedTx, scriptType } from '../btc.js';
 import { toHex } from '../bytes.js';
-import { TERMS, crossCheck, profileCheck } from '../consensus.js';
+import { TERMS, crossCheck, profileCheck, unverifiedSpends } from '../consensus.js';
 import { verifyMintTerms } from '../deploy.js';
 import { buildMint, mintProblems, mintsLeft } from '../mint.js';
 import { PROFILE, PROFILE_NAME } from '../profile.js';
@@ -21,7 +21,7 @@ export async function refresh() {
   if (!indexer) {
     st.status = null;
     st.tokens = [];
-    st.profile = { answered: 0, problems: ['no indexer configured'] };
+    st.profile = { answered: 0, problems: ['no indexer configured'], unverified: [] };
     fill('indexer-status', h('span', { class: 'err', id: 'no-indexer' }, NO_INDEXER));
     renderTokens();
     renderDeploy();
@@ -37,7 +37,8 @@ export async function refresh() {
       status.height === null ? `Indexer before block ${PROFILE.activationHeight.toLocaleString('en-US')}, where SH-20 starts` : `Indexer at block ${status.height ?? '?'}`,
       mirror ? h('span', { id: 'mirror-age' }, ` (a mirror of it, ${mirrorAge(mirror.built)})`) : '',
       status.digest ? ` · digest ${short(String(status.digest))}` : '',
-      status.verifier === 'reject-all' ? ' · spends not verified yet' : '',
+      // any verifier but the pinned PLONK one verifies no spend (verifier-4); what it means is said beside the balance
+      unverifiedSpends(status) ? h('span', { class: 'err', id: 'spends-unverified' }, ` · spends not verified (verifier ${status.verifier || 'not named'})`) : '',
       ` · ${indexers.length} indexer${indexers.length > 1 ? 's' : ''} configured`,
       ` · ${PROFILE_NAME} profile, from block ${PROFILE.activationHeight}`);
     if (wrongNet) st.tokens = [];
@@ -48,6 +49,7 @@ export async function refresh() {
   // every indexer against the vault's own profile (profile.js): one that differs is named, and nothing is done
   st.profile = await profileCheck(indexers);
   if (st.profile.problems.length) $('indexer-status')?.append(h('span', { class: 'err', id: 'profile-problems' }, ` · This vault acts on nothing: ${st.profile.problems.join('. ')}.`));
+  renderNotes(); // beside the balance: the indexers that do not verify spends
   try {
     st.tip = await esplora.tipHeight();
   } catch {

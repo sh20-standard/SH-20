@@ -11,12 +11,13 @@
 // leaves it, the signet Esplora of the defaults included. It creates a vault, syncs, and reads what it shows.
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Indexer } from '../../indexer/src/indexer.js';
 import { listen } from '../../indexer/src/api.js';
 import { buildMirror } from '../../indexer/src/mirror.js';
+import { plonkVerifier } from '../../indexer/src/adapters/plonk.js';
 import { DEFAULT_PROFILE } from '../../indexer/src/constants.js';
 import { fsReader, site, writeSite } from '../build.js';
 import { staticServer } from './static.js';
@@ -34,10 +35,11 @@ const reader = { ...fs, read: (p) => (p === 'vault/src/profile.js' ? Buffer.from
 const dir = mkdtempSync(join(tmpdir(), 'sh20-before-a-'));
 writeSite([...site(reader, { signet: true })], dir);
 
-// two indexers on the signet profile of that A, with no block counted, and their mirrors beside the page
+// two indexers on the signet profile of that A, with the pinned PLONK verifier and no block counted, and their mirrors beside the page
+const verifier = plonkVerifier({ wasm: new Uint8Array(readFileSync(new URL('../prover/sh20_circuit.wasm', import.meta.url))) });
 const live = [];
 for (const name of ['js', 'rs']) {
-  const server = await listen(new Indexer({ profile: { ...DEFAULT_PROFILE, activationHeight: A }, verifier: { name: 'none', verifySpend: () => false } }), { port: 0 });
+  const server = await listen(new Indexer({ profile: { ...DEFAULT_PROFILE, activationHeight: A }, verifier }), { port: 0 });
   live.push(server);
   await buildMirror({ api: `http://127.0.0.1:${server.address().port}`, out: join(dir, 'api', name) });
 }
@@ -99,6 +101,7 @@ try {
   step(`indexer line: ${await waitFor('#indexer-status', new RegExp(`before block ${AT}`), 'the indexer line before A')}`);
   if (!/a mirror of it/.test(await text('#indexer-status'))) throw new Error('the primary is not read as a mirror');
   if (await evaluate(`!!document.querySelector('#profile-problems')`)) throw new Error(`a profile problem: ${await text('#profile-problems')}`);
+  if (await evaluate(`!!document.querySelector('#spends-unverified')`)) throw new Error(`spends said not verified: ${await text('#indexer-status')}`);
   step(`tickers: ${await waitFor('#tokens-body', new RegExp(`No ticker yet: SH20 exists from block ${AT} on`), 'the tickers before A')}`);
 
   await evaluate(`document.querySelector('#vault-body input[type=password]').value = 'before A'`);
@@ -112,10 +115,12 @@ try {
   const warnings = await text('#warnings');
   if (/no height|reports no|bad height|error/i.test(warnings)) throw new Error(`the sync failed: ${warnings}`);
   if (exceptions.length) throw new Error(`exceptions: ${exceptions.join(' | ')}`);
+  if (await evaluate(`!!document.querySelector('#balance-unverified')`)) throw new Error(`spends said not verified: ${await text('#balance-unverified')}`);
   step(`no error on screen${warnings.trim() ? ` (it shows: ${warnings.replace(/\s+/g, ' ').trim()})` : ''}`);
 
-  // a primary that says "no block" while another indexer has counted block A: the page does not believe it
-  const ahead = new Indexer({ profile: { ...DEFAULT_PROFILE, activationHeight: A }, verifier: { name: 'none', verifySpend: () => false } });
+  // a primary that says "no block" while another indexer has counted block A: the page does not believe it. That
+  // one runs the vectors' rule (--verifier test, verifier-4): the page says, beside the balance, that it verifies no spend
+  const ahead = new Indexer({ profile: { ...DEFAULT_PROFILE, activationHeight: A }, verifier: { name: 'test', verifySpend: () => false } });
   ahead.applyBlock({ height: A, hash: 'a'.repeat(64), txs: [] });
   const server = await listen(ahead, { port: 0 });
   await buildMirror({ api: `http://127.0.0.1:${server.address().port}`, out: join(dir, 'api', 'rs') });
@@ -125,8 +130,10 @@ try {
   await evaluate(`(() => { document.querySelector('#vault-body input[type=password]').value = 'before A'; document.querySelector('#vault-body form').requestSubmit(); })()`);
   await waitFor('#vault-body', /Unlocked/, 'the vault unlocked');
   step(`/api/rs/ at block ${AT}, /api/js/ still before it: ${await waitFor('#sync-status', /cannot be right/, 'the refusal of a primary behind another indexer')}`);
+  step(`beside the balance: ${await waitFor('#notes-body', /Spends not verified: \S*\/api\/rs\/?: it does not check the proofs of spends \(verifier "test"\)/, 'the indexer that verifies no spend')}`);
+  if (/\/api\/js/.test(await text('#balance-unverified'))) throw new Error('the indexer with the PLONK verifier is named too');
   ws.close();
-  console.log(`\nOK: before block ${AT}, the signet release reads both mirrors, says where SH-20 starts and syncs without an error; a primary that says it has no block while another indexer has one is not believed`);
+  console.log(`\nOK: before block ${AT}, the signet release reads both mirrors, says where SH-20 starts and syncs without an error; a primary that says it has no block while another indexer has one is not believed, and an indexer that verifies no spend is named beside the balance`);
 } catch (e) {
   failed = e;
 } finally {

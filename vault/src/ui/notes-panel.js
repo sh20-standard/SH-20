@@ -38,12 +38,17 @@ export function renderNotes() {
     fill('notes-body', h('p', { class: 'muted' }, 'Unlock the vault to see your notes.'));
     return;
   }
+  // an indexer whose verifier is not the pinned PLONK one verifies no spend (consensus.js unverifiedSpends)
+  const unverified = st.profile?.unverified?.length
+    ? h('p', { class: 'err', id: 'balance-unverified' }, `Spends not verified: ${st.profile.unverified.map(({ base, why }) => `${base}: ${why}`).join('. ')}.`)
+    : null;
   const notes = st.vault.state.notes;
   if (!notes.length) {
-    fill('notes-body', h('p', { class: 'muted' }, 'No note yet.'));
+    fill('notes-body', h('p', { class: 'muted' }, 'No note yet.'), unverified);
     return;
   }
   fill('notes-body', h('p', { id: 'balance' }, h('strong', {}, 'Balance: '), bal || 'nothing spendable yet', agreement ? ' — ' : null, agreement),
+    unverified,
     h('div', { class: 'table-wrap' }, h('table', {},
     h('thead', {}, h('tr', {}, ['Ticker', 'Amount', 'Status', 'Position', 'Merkle path', 'Spent', 'Transaction', 'Key'].map((x) => h('th', {}, x)))),
     h('tbody', {}, notes.map((n) => h('tr', {},
