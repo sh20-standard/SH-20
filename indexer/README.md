@@ -18,7 +18,7 @@ Node 20 or newer, no dependencies.
 
 ```sh
 (cd ../circuit && ./build-wasm.sh)   # optional: the 4 tests of real proofs use this build, else the copy in ../vault/prover/
-npm test                  # 84 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, block file, API, real proofs
+npm test                  # 87 tests: primitives, codec, carriers, every rule, reorgs, two-indexer agreement, follower, block file, API, real proofs
 npm run vectors           # regenerates vectors/v0.3.json and vectors/plonk-v0.3.json (deterministic)
 node bin/replay.js <dir> --deploy-burn D   # replays a folder of `bitcoin-cli getblock <hash> 3` JSON files
 node bin/follow.js --rpc http://127.0.0.1:38332 --rpcuser U --rpcpass P --activation A --deploy-burn D   # live, own node
@@ -41,6 +41,7 @@ The live follower serves a read-only JSON API for wallets: see [`docs/API.md`](.
 | `src/indexer.js` | the state machine: tickers, mints, team unlocks, spends, listings, digest, rollback |
 | `src/events.js` | the byte encoding of accepted events, hashed into the digest (`SPEC-WIRE.md` §6) |
 | `src/adapters/bitcoind.js` | Bitcoin Core `getblock 3` JSON → indexer blocks |
+| `src/adapters/rawblock.js` | a block as Bitcoin serializes it (Esplora's `/block/:hash/raw`) → indexer transactions: one request for a block of thousands |
 | `src/adapters/plonk.js` | the pinned spend verifier (WebAssembly build of `circuit/`), keyed by the pinned digest |
 | `src/follower.js` | live chain follower (Bitcoin Core RPC or Esplora) with reorg handling |
 | `src/blockfile.js` | the blocks a follower read, kept on disk so that a restart applies them again (`follow.js --data`) |
