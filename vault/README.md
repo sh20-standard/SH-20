@@ -215,6 +215,13 @@ vout n  change to the payer                                     only if above du
   would be dust. The mint screen and the dialog before a commit name each coin spent.
 - Before anything is signed, the vault checks what the indexers will check (window open at the
   next block, not sold out, `k` not above what is left, payment present), because a rejected mint is not refunded.
+- **A DEPLOY committed under one leaf only.** Before a mint of any ticker but SH20, the vault reads
+  its DEPLOY from Esplora and takes it only if the commit's taproot tree is that one leaf
+  (`src/witness.js` `witnessProblem`, vault-6, below). The spec lets a DEPLOY reveal a commit of
+  several leaves, and indexers accept it, but this vault cannot mint such a token: it refuses it,
+  saying so. The same holds for a LIST before a TAKE. The vault page builds one-leaf commits itself.
+  Checking the reveal's wtxid against the witness commitment of its block (its coinbase) would bind
+  the envelope for any tree and lift this limit; not done yet.
 - **The genesis token SH20** is part of the profile, not a DEPLOY (`/tokens` lists it first, with
   `genesis: true` and `deployTxid: null`). Its terms are checked against constants in the vault
   (`src/profile.js`: `SH20`, max 21,000,000, 1,000 per mint, no team, price 0, payMode 0, no end,
