@@ -33,7 +33,7 @@ What works today, without proofs:
 ## Run
 
 ```sh
-npm test                 # 218 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
+npm test                 # 222 tests (one skipped: SH20_PROVER_CHECK=1 rebuilds the prover), Node ≥ 20, zero dependencies
 npm run build            # vault/dist/ from the working tree (development, the test profile)
 node build.js --signet   # the same on the signet profile (once its activation height is fixed)
 node build.js --mainnet --activation A   # the same on the mainnet profile from block A (or the A fixed in src/profile.js)
@@ -482,6 +482,13 @@ mistyped word or a wrong checksum is refused, never turned into other keys. `src
 English list in `src/bip39-english.js` (checked against its SHA-256) and the BIP39 vectors
 (`test/bip39.test.js`). The device passphrase only encrypts the vault in this browser; it is not
 part of the words.
+
+The same 12 words give another wallet on mainnet than on the test networks: the address prefix is in
+`m`. A vault records how its `m` came from its words (`derivation`, `src/keys.js` `DERIVATION`), which
+every vault made or restored from words writes. One made before that (#98) keeps its `m` and works as
+before, but its words now give another, empty vault: on its first unlock the page says so once, and
+its words box says it too. Keep its backup file, or send its notes to a vault made from new words
+(`test/derivation.test.js`).
 
 ## Private sync: tree, paths and spends on the device
 

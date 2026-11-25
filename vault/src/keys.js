@@ -71,6 +71,14 @@ export async function noteOpening(seed, index) {
   return { index, npk, rho: PUBLIC_RHO, secrets, scheme: NOTE_SCHEME };
 }
 
+/**
+ * How the master secret came from the words: m = HMAC-SHA512("sh20/v0/seed", BIP39 seed ‖ hrp)[0..32], the
+ * network's address prefix in it (docs/SPEC-NOTES.md §1, since #98). Every vault made or restored from words writes
+ * it. A record without it, with words, was made before: it keeps its m and works, and its words now give another
+ * vault (derivationNotice).
+ */
+export const DERIVATION = 'sh20/v0/seed+hrp';
+
 /** Restore scans public notes until this many unused indices in a row (SPEC-NOTES §5). */
 export const RESTORE_GAP = 50;
 
@@ -177,9 +185,25 @@ export class Vault {
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const key = passphrase ? await aesKey(passphrase, salt) : null;
     await notes.clear(); // records of a vault no longer stored here are not this one's
-    const v = await new Vault(storage, { v: 0, network: CHAIN.bitcoin, scheme: NOTE_SCHEME, next: 0, notes: [], ...(restored ? { unchecked: Vault.#unchecked() } : {}) }, m, key, salt, words.normalize('NFKD').trim().toLowerCase().split(/\s+/).join(' '), notes).#init();
+    const v = await new Vault(storage, { v: 0, network: CHAIN.bitcoin, scheme: NOTE_SCHEME, derivation: DERIVATION, next: 0, notes: [], ...(restored ? { unchecked: Vault.#unchecked() } : {}) }, m, key, salt, words.normalize('NFKD').trim().toLowerCase().split(/\s+/).join(' '), notes).#init();
     await v.save();
     return v;
+  }
+
+  /** Whether this vault's 12 words restore it: words, derived the way they are now (DERIVATION). */
+  get wordsRestoreIt() {
+    return this.words !== null && this.state.derivation === DERIVATION;
+  }
+
+  /**
+   * Once for a vault whose words no longer restore it (made before #98): the text the page shows, then never again
+   * (the record remembers it said so). Null for any other vault, and after the first time.
+   */
+  async derivationNotice() {
+    if (this.words === null || this.state.derivation === DERIVATION || this.state.derivationNoticed) return null;
+    this.state.derivationNoticed = true;
+    await this.save();
+    return 'This vault was made before the network became part of the key derivation (SPEC-NOTES §1). It keeps its keys and works as before, but its 12 words no longer restore it: entered again, they give another, empty vault. Keep its backup file (Download backup), or send its notes to a new vault made from new words.';
   }
 
   /** The recovery words, or null for a vault made before them (its backup file restores it). */

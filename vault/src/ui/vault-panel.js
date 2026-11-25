@@ -20,6 +20,7 @@ export function lockVault(note) {
   st.vault?.lock();
   st.vault = null;
   st.showWords = false;
+  st.derivationNotice = null;
   st.vaultForm = null;
   st.vaultFormNode = null;
   unloadProver();
@@ -70,10 +71,13 @@ export function renderVault() {
       st.vaultForm === 'words' ? keep('words', () => wordsForm(v)) : null,
       st.vaultForm === 'pass' ? keep('pass', () => passphraseForm(v)) : null,
       resultBox('vault-out'),
+      st.derivationNotice ? h('p', { class: 'warn', id: 'derivation-notice' }, st.derivationNotice) : null,
       st.showWords && v.words ? wordsBox(v.words) : null,
-      h('p', { class: 'muted' }, v.words
-        ? 'The 12 recovery words restore everything (keys, notes, address) in any wallet that follows SPEC-NOTES. Write them on paper; anyone who reads them owns your notes. A new version of this page on IPFS has a new origin and an empty storage: restore there from the words or the backup.'
-        : 'This vault was made before recovery words existed: only its backup file restores it (encrypted with your passphrase).'));
+      h('p', { class: 'muted' }, !v.words
+        ? 'This vault was made before recovery words existed: only its backup file restores it (encrypted with your passphrase).'
+        : v.wordsRestoreIt
+          ? `The 12 recovery words restore everything (keys, notes, address) in any wallet that follows SPEC-NOTES, on ${NET}: they give another wallet on mainnet than on the test networks. Write them on paper; anyone who reads them owns your notes. A new version of this page on IPFS has a new origin and an empty storage: restore there from the words or the backup.`
+          : 'These words were written before the network became part of the key derivation: they no longer restore this vault. Its backup file does; or send its notes to a new vault made from new words.'));
     return;
   }
   if (Vault.exists(localStorage)) {
@@ -84,6 +88,7 @@ export function renderVault() {
       ev.preventDefault();
       busy(btn, async () => {
         st.vault = await Vault.open(localStorage, pass.value);
+        st.derivationNotice = await st.vault.derivationNotice(); // said once, for a vault made before #98
         renderAll();
         // a note record the store no longer holds (site data cleared in part): a full rescan finds the note again
         syncNotes({ full: st.vault.missingNotes > 0 }).catch(report);
@@ -111,6 +116,7 @@ export function renderVault() {
   restore.addEventListener('click', busy(restore, async () => {
     if (!file.files[0]) throw new Error('choose a backup file');
     st.vault = await Vault.restore(localStorage, await file.files[0].text(), rpass.value);
+    st.derivationNotice = await st.vault.derivationNotice(); // a backup of a vault made before #98
     renderAll();
     syncNotes({ full: true }).catch(report); // a restored vault looks for its notes in every leaf
   }));
